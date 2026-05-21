@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-ai-cost-sim"
+version = "0.1.0"
+description = "Monte Carlo simulation of AI agent / human developer team dynamics (Phase 4 of docs/FRAMEWORK.md)."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.25",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+agent-sim = "src.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

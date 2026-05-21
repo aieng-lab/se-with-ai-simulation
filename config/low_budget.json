@@ -1,0 +1,122 @@
+{
+  "sweep": {
+    "T": 52,
+    "K": 100,
+    "master_seed": 20260423,
+    "N_PO": 1
+  },
+
+  "scenario": {
+
+    "productivity": {
+      "lambda_F":    {"dist": "lognormal", "mean": 2.0,  "cv": 0.25},
+      "r_req":       {"dist": "lognormal", "mean": 2.0,  "cv": 0.20},
+      "r_arch":      {"dist": "lognormal", "mean": 0.5,  "cv": 0.25},
+      "r_F":         {"dist": "lognormal", "mean": 3.0,  "cv": 0.20},
+      "r_fix_minor": {"dist": "lognormal", "mean": 5.0,  "cv": 0.20},
+      "r_fix_major": {"dist": "lognormal", "mean": 2.0,  "cv": 0.20},
+      "r_refactor":  {"dist": "lognormal", "mean": 4.0,  "cv": 0.25},
+      "r_review":    {"dist": "lognormal", "mean": 5.0,  "cv": 0.20},
+      "r_security":  {"dist": "lognormal", "mean": 3.0,  "cv": 0.20},
+      "r_UT":        {"dist": "lognormal", "mean": 3.0,  "cv": 0.20},
+      "r_IT":        {"dist": "lognormal", "mean": 1.5,  "cv": 0.25},
+      "r_ST":        {"dist": "lognormal", "mean": 0.5,  "cv": 0.30},
+      "r_doc":       {"dist": "lognormal", "mean": 2.0,  "cv": 0.20}
+    },
+
+    "human_capacity": {
+      "H_capacity":             40.0,
+      "H_monitoring_overhead":   2.0,
+      "H_review_time":           4.0,
+      "H_escalation_time":       2.0,
+      "h_feature":  {"dist": "lognormal", "mean": 8.0, "cv": 0.30},
+      "c_comm":                  1.0,
+      "f_code":                  0.30
+    },
+
+    "bug_injection": {
+      "lambda_impl":        {"dist": "lognormal", "mean": 0.10, "cv": 0.30},
+      "lambda_human_scale": {"dist": "beta",      "mean": 0.80, "std": 0.08},
+      "phi_max":            {"dist": "lognormal", "mean": 2.0,  "cv": 0.20},
+      "kappa":               1.0,
+      "theta":              {"dist": "beta",      "mean": 0.20, "std": 0.05},
+      "p_sec":              {"dist": "beta",      "mean": 0.10, "std": 0.04},
+      "epsilon_spec":       {"dist": "beta",      "mean": 0.05, "std": 0.02},
+      "alpha_spec":         {"dist": "lognormal", "mean": 1.0,  "cv": 0.20},
+      "q_arch":             {"dist": "beta",      "mean": 0.80, "std": 0.08},
+      "q_arch_floor":        0.50
+    },
+
+    "regressions": {
+      "p_regress":          {"dist": "beta", "mean": 0.05, "std": 0.02},
+      "p_regress_refactor": {"dist": "beta", "mean": 0.03, "std": 0.01}
+    },
+
+    "detection": {
+      "d_CR":        {"dist": "beta", "mean": 0.70, "std": 0.08},
+      "d_SA":        {"dist": "beta", "mean": 0.85, "std": 0.06},
+      "d_UT":        {"dist": "beta", "mean": 0.50, "std": 0.08},
+      "d_IT":        {"dist": "beta", "mean": 0.40, "std": 0.08},
+      "d_ST":        {"dist": "beta", "mean": 0.30, "std": 0.08},
+      "c_UT_ceil":    2.0,
+      "c_IT_ceil":    1.0,
+      "c_ST_ceil":    0.5,
+      "alpha_size":  {"dist": "lognormal", "mean": 0.10, "cv": 0.25},
+      "baseline_size": 2.0
+    },
+
+    "ci_cd": {
+      "tau_CI_base":   {"dist": "lognormal", "mean": 0.5, "cv": 0.25},
+      "alpha_F_CI":     0.002,
+      "alpha_test_CI":  0.0005,
+      "beta_UT":        1.0,
+      "beta_IT":        2.0,
+      "beta_ST":        4.0
+    },
+
+    "debt": {
+      "psi_min":      {"dist": "beta",      "mean": 0.30,  "std": 0.06},
+      "gamma":         1.5,
+      "delta_impl":   {"dist": "lognormal", "mean": 0.010, "cv": 0.30},
+      "delta_fix":    {"dist": "lognormal", "mean": 0.005, "cv": 0.30},
+      "delta_refactor": {"dist": "lognormal", "mean": 0.050, "cv": 0.25}
+    },
+
+    "documentation": {
+      "Gamma_doc": {"dist": "beta", "mean": 0.50, "std": 0.10},
+      "zeta_doc":  {"dist": "beta", "mean": 0.02, "std": 0.01}
+    },
+
+    "quality_degradation": {
+      "eta_min_rev":   0.50,
+      "alpha_eta_rev": 0.05,
+      "Q_thr_rev":     3,
+      "eta_min_esc":   0.60,
+      "alpha_eta_esc": 0.10,
+      "Q_thr_esc":     5,
+      "Q_thr_block":   10
+    },
+
+    "escalation": {
+      "rho_esc": {"dist": "beta", "mean": 0.01, "std": 0.005}
+    },
+
+    "initial_conditions": {
+      "D0":       0.0,
+      "R_warmup": 5
+    },
+
+    "costs": {
+      "c_token": [0.05, 0.10, 0.05, 0.05, 0.05, 0.05, 0.075, 0.05, 0.06, 0.06, 0.04, 0.04, 0.025],
+      "c_salary":        75000.0,
+      "c_PO":            60000.0,
+      "C_fix_minor":       500.0,
+      "C_fix_major":      2000.0,
+      "C_prod_min":        200.0,
+      "C_prod_maj":       5000.0,
+      "C_DevOps_setup":  50000.0,
+      "C_DevOps_maint":   1000.0,
+      "C_user_doc":       5000.0
+    }
+  }
+}

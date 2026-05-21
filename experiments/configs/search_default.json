@@ -1,0 +1,13 @@
+{
+  "description": "Random search over agent compositions under default scenario (λ_F = 2 features/sprint)",
+  "scenario": "config/default_scenario.json",
+  "sweep": { "K": 50, "T": 52 },
+  "search": {
+    "strategy": "random",
+    "N_values": [1, 2, 3],
+    "M_max": 20,
+    "R_values": [2, 4],
+    "n_samples": 500,
+    "seed": 42
+  }
+}
