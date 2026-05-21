@@ -215,10 +215,15 @@ def _run_replication(
     # §8.1 Fixed costs (scenario-level, computed once after sprint loop)
     # ------------------------------------------------------------------
     C_human = (config.N * params.c_salary + settings.N_PO * params.c_PO) * settings.T / 52
+    # Agent costs are split by phase: dev sprints use A, freeze sprints use A_qa.
+    qa_sprint_count = sum(
+        1 for t in range(settings.T)
+        if (t % config.R) >= (config.R - config.F_freeze)
+    )
+    dev_sprint_count = settings.T - qa_sprint_count
     C_agents = (
-        sum(config.agent_count(role + 1) * params.c_token[role]
-            for role in range(AGENT_ROLE_COUNT))
-        * settings.T
+        sum(config.A[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
+        + sum(config.A_qa[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
     )
     C_total = C_human + C_agents + C_bugs + C_production + C_devops + C_userdoc
 

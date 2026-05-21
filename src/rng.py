@@ -16,13 +16,10 @@ if TYPE_CHECKING:
 
 
 def _config_hash(config: "TeamConfiguration") -> int:
-    """Stable integer hash of (N, M, A, R) that does not depend on Python's PYTHONHASHSEED."""
-    key = (config.N, config.M, tuple(config.A), config.R)
-    # Python's hash on tuples of ints is stable within a process but not across
-    # processes when PYTHONHASHSEED is randomized; use a deterministic mix instead.
+    """Stable integer hash of (N, M, A, R, F_freeze, A_qa) independent of PYTHONHASHSEED."""
     h = 1469598103934665603  # FNV-1a 64-bit offset basis
     prime = 1099511628211
-    for value in (config.N, config.M, config.R, *config.A):
+    for value in (config.N, config.M, config.R, config.F_freeze, *config.A, *config.A_qa):  # type: ignore[union-attr]
         h = ((h ^ (value & 0xFFFFFFFFFFFFFFFF)) * prime) & 0xFFFFFFFFFFFFFFFF
     return h
 

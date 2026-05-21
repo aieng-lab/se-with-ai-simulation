@@ -1,8 +1,9 @@
-"""Team configuration (N, M, A, R) per FRAMEWORK.md §2.1."""
+"""Team configuration (N, M, A, R, F_freeze, A_qa) per FRAMEWORK.md §2.1."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 AGENT_ROLE_COUNT = 13
 
@@ -25,24 +26,38 @@ AGENT_ROLE_NAMES: tuple[str, ...] = (
 
 @dataclass(frozen=True, slots=True)
 class TeamConfiguration:
-    """Configuration tuple (N, M, A, R) fixed across replications of one sweep point.
+    """Configuration tuple (N, M, A, R, F_freeze, A_qa) fixed across replications.
 
-    A = (a_1, ..., a_13) counts AI agents only. Human developers are specified by N;
-    the Product Owner is a fixed singleton (cost via c_PO) and is not part of A.
+    A     = (a_1, ..., a_13) — development-phase composition (sum == N*M, a_3 >= 1).
+    A_qa  = (a_1, ..., a_13) — QA/stabilisation-phase composition (sum == N*M).
+            Defaults to A when omitted.  Expected to have a_1=a_2=a_3=0 so the
+            full N×M agent budget is redeployed to bug-fixing, testing, and
+            refactoring during the feature-freeze window.
+    F_freeze — number of sprints at the end of each release cycle in which the
+            team uses A_qa instead of A.  Sprints satisfying
+            (t % R) >= (R - F_freeze) are "frozen".  Range: [1, R].
     """
 
-    N: int              # Human Developer count
-    M: int              # Span of control (agents per human)
-    A: tuple[int, ...]  # Agent composition, length == AGENT_ROLE_COUNT, sum == N*M
-    R: int              # Release cadence (sprints)
+    N: int                              # Human Developer count
+    M: int                              # Span of control (agents per human)
+    A: tuple[int, ...]                  # Dev-phase composition, length == AGENT_ROLE_COUNT
+    R: int                              # Release cadence (sprints)
+    F_freeze: int = 1                   # QA-phase length per release cycle, in [1, R]
+    A_qa: Optional[tuple[int, ...]] = None  # QA-phase composition; None → defaults to A
 
     def __post_init__(self) -> None:
+        # Resolve A_qa before validation so subsequent checks can use it.
+        if self.A_qa is None:
+            object.__setattr__(self, "A_qa", self.A)
+
         if self.N < 1:
             raise ValueError(f"N must be >= 1, got {self.N}")
         if self.M < 1:
             raise ValueError(f"M must be >= 1, got {self.M}")
         if self.R < 1:
             raise ValueError(f"R must be >= 1, got {self.R}")
+
+        # Validate development composition A
         if len(self.A) != AGENT_ROLE_COUNT:
             raise ValueError(f"A must have length {AGENT_ROLE_COUNT}, got {len(self.A)}")
         if any(a < 0 for a in self.A):
@@ -54,11 +69,33 @@ class TeamConfiguration:
         if self.A[2] < 1:
             raise ValueError("a_3 (Feature Implementation Agent) must be >= 1")
 
+        # Validate F_freeze
+        if not (1 <= self.F_freeze <= self.R):
+            raise ValueError(
+                f"F_freeze must be in [1, R={self.R}], got {self.F_freeze}"
+            )
+
+        # Validate QA composition A_qa
+        if len(self.A_qa) != AGENT_ROLE_COUNT:  # type: ignore[arg-type]
+            raise ValueError(
+                f"A_qa must have length {AGENT_ROLE_COUNT}, got {len(self.A_qa)}"  # type: ignore[arg-type]
+            )
+        if any(a < 0 for a in self.A_qa):  # type: ignore[union-attr]
+            raise ValueError(f"A_qa entries must be >= 0, got {self.A_qa}")
+        if sum(self.A_qa) != self.N * self.M:  # type: ignore[union-attr]
+            raise ValueError(
+                f"sum(A_qa) must equal N*M = {self.N * self.M}, got {sum(self.A_qa)}"  # type: ignore[union-attr]
+            )
+
     def agent_count(self, role_k: int) -> int:
-        """1-indexed access: role_k in {1, ..., 13}."""
+        """1-indexed access to the DEVELOPMENT composition A: role_k in {1, ..., 13}."""
         if not 1 <= role_k <= AGENT_ROLE_COUNT:
             raise ValueError(f"role_k must be in [1, {AGENT_ROLE_COUNT}], got {role_k}")
         return self.A[role_k - 1]
+
+    def active_A(self, is_frozen: bool) -> tuple[int, ...]:
+        """Return A_qa during freeze sprints, A otherwise."""
+        return self.A_qa if is_frozen else self.A  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)

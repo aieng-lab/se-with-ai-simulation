@@ -74,12 +74,23 @@ def _sample_composition_with_impl(
     return tuple(A)
 
 
+def _sample_qa_composition(
+    total: int, n_roles: int, rng: np.random.Generator
+) -> tuple[int, ...]:
+    """Sample a QA-phase composition: a_1=a_2=a_3=0; distribute total across roles 4–13."""
+    # Roles 1-3 (indices 0-2) are forced to zero; distribute total across the remaining 10.
+    qa_roles = n_roles - 3
+    partial = _sample_composition(total, qa_roles, rng)
+    return (0, 0, 0) + partial
+
+
 # ---------------------------------------------------------------------------
 # Mutation operator (for evolutionary search)
 # ---------------------------------------------------------------------------
 
 def _mutate(config: TeamConfiguration, rng: np.random.Generator) -> TeamConfiguration:
-    """Move 1–3 agents between random roles; preserve sum(A) = N*M and a_3 >= 1."""
+    """Move 1–3 agents between random roles; preserve sum(A) = N*M and a_3 >= 1.
+    F_freeze and A_qa are inherited unchanged from the parent."""
     A = list(config.A)
     n_shifts = int(rng.integers(1, 4))
     for _ in range(n_shifts):
@@ -92,7 +103,8 @@ def _mutate(config: TeamConfiguration, rng: np.random.Generator) -> TeamConfigur
         A[src] -= 1
         A[dst] += 1
     try:
-        return TeamConfiguration(N=config.N, M=config.M, A=tuple(A), R=config.R)
+        return TeamConfiguration(N=config.N, M=config.M, A=tuple(A), R=config.R,
+                                 F_freeze=config.F_freeze, A_qa=config.A_qa)
     except ValueError:
         return config   # mutation produced invalid config; keep parent
 
@@ -106,15 +118,19 @@ def _random_configs(
     rng: np.random.Generator,
     n_samples: int,
 ) -> list[TeamConfiguration]:
-    """Draw `n_samples` random (N, M, A, R) configurations."""
+    """Draw `n_samples` random (N, M, A, R, F_freeze, A_qa) configurations."""
+    f_freeze_values: list[int] = search_spec.get("F_freeze_values", [1])
     configs: list[TeamConfiguration] = []
     for _ in range(n_samples):
         N = int(rng.choice(search_spec["N_values"]))
         M = int(rng.integers(1, search_spec["M_max"] + 1))
         R = int(rng.choice(search_spec["R_values"]))
         A = _sample_composition_with_impl(N * M, AGENT_ROLE_COUNT, rng)
+        # Sample F_freeze, clamped so it respects [1, R]
+        F_freeze = int(rng.choice([v for v in f_freeze_values if 1 <= v <= R] or [1]))
+        A_qa = _sample_qa_composition(N * M, AGENT_ROLE_COUNT, rng)
         try:
-            cfg = TeamConfiguration(N=N, M=M, A=A, R=R)
+            cfg = TeamConfiguration(N=N, M=M, A=A, R=R, F_freeze=F_freeze, A_qa=A_qa)
             configs.append(cfg)
         except ValueError:
             pass   # should not happen with correct sampling

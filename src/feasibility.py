@@ -136,9 +136,12 @@ def check_feasibility(
 
     # ------------------------------------------------------------------
     # Step 4 — Theorem 7.1 (feature backlog stability)
+    # Scale by the fraction of non-frozen sprints: features are only implemented
+    # during the (R - F_freeze) development sprints out of each R-sprint cycle.
     # ------------------------------------------------------------------
     psi_D_at_star = 1.0 - (1.0 - params.psi_min) * (D_star ** params.gamma)
-    impl_rate_star = params.r_F * psi_D_at_star * a_3 + E_impl_human
+    active_fraction = (config.R - config.F_freeze) / config.R
+    impl_rate_star = (params.r_F * psi_D_at_star * a_3 + E_impl_human) * active_fraction
     if impl_rate_star < params.lambda_F:
         return FeasibilityReport(
             feasible=False, failed_step=4,

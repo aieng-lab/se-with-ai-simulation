@@ -7,6 +7,7 @@
     "N_values": [1, 2, 3],
     "M_max": 20,
     "R_values": [2, 4],
+    "F_freeze_values": [1, 2],
     "n_samples": 500,
     "seed": 42
   }

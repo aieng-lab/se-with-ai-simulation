@@ -1,0 +1,1220 @@
+\RequirePackage{fix-cm}
+
+%\documentclass{svjour3}                     % onecolumn (standard format)
+%\documentclass[smallcondensed]{svjour3}     % onecolumn (ditto)
+\documentclass[smallextended]{svjour3}       % onecolumn (second format)
+%\documentclass[twocolumn]{svjour3}          % twocolumn
+%
+\smartqed  % flush right qed marks, e.g. at end of proof
+%
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{multirow}
+\usepackage{tabularx}
+
+
+\begin{document}
+
+\title{Modeling and Optimizing Mixed AI-Human Software Development Teams:
+       A Stochastic Simulation Framework}
+%\titlerunning{Optimizing Mixed AI-Human Development Teams}
+
+\author{Steffen Herbold}
+
+%\authorrunning{Herbold}
+
+\institute{Steffen Herbold, 0000-0001-9765-2803 \at
+University of Passau, Passau, Germany.
+\email{steffen.herbold@uni-passau.de}
+}
+
+\date{Received: date / Accepted: date}
+% The correct dates will be entered by the editor
+
+
+\maketitle
+
+\begin{abstract}
+% --- ABSTRACT (write last) ---
+% Structure: problem -- gap -- approach -- model highlights -- key findings -- implications
+%
+% - Problem: AI agents are increasingly deployed alongside human developers, yet no
+%   principled quantitative framework guides how many agents of each type to use.
+% - Gap: existing SE process models treat team headcount as a scalar and ignore
+%   role-specific quality degradation, CI/CD latency effects, and multi-objective trade-offs.
+% - Approach: we present a formal 14-dimensional discrete-time stochastic model of
+%   mixed AI-human sprint dynamics, with 11 transition steps, six proved stability
+%   conditions, and Monte Carlo + evolutionary search over agent composition vectors.
+% - Model highlights: three Pareto objectives (V = throughput, Q = escaped bugs per
+%   feature, C_F = cost per feature); 13 agent roles + 2 human roles; four degradation
+%   functions linking technical debt and review coverage to quality and productivity.
+% - Key findings: summarize after experiments are run (Pareto frontier shape,
+%   dominant configurations, sensitivity insights).
+% - Implications: practical guidance on minimum Code Review / Testing allocation,
+%   Refactoring-to-Implementation ratio, and span-of-control limits.
+%
+% Target length: 150--200 words.
+TODO: write abstract.
+\end{abstract}
+
+\keywords{AI agents \and software process simulation \and multi-objective optimization
+\and technical debt \and Pareto frontier \and team composition}
+
+
+% ============================================================
+\section{Introduction}
+\label{sec:introduction}
+% ============================================================
+%
+% CONTENT OUTLINE
+%
+% [Motivation / opening hook]
+% - Software development teams increasingly mix human developers with autonomous AI
+%   agents (coding assistants, automated reviewers, test generators, etc.).
+% - The central practical question: how many agents of each type should be deployed,
+%   and how many human developers are needed to supervise them?
+% - No principled quantitative framework currently exists to answer this question;
+%   practitioners rely on intuition or ad-hoc experiments.
+%
+% [Core tension]
+% - More agents raise throughput but also raise coordination cost, review load,
+%   technical debt pressure, and CI/CD latency -- objectives conflict and cannot
+%   be optimized in isolation.
+% - Human developers are a bottleneck resource: span-of-control M (agents per human)
+%   is bounded by human capacity, review quality degradation, and escalation load.
+%
+% [Research questions]
+% - RQ1: What agent compositions are Pareto-optimal on (V, Q, C_F) under realistic
+%        sprint dynamics?
+% - RQ2: How do degradation effects (technical debt, review quality decay,
+%        escalation overload) shift the Pareto frontier relative to a simplified
+%        no-degradation baseline?
+% - RQ3: How sensitive are optimal configurations to workload scenario
+%        (default / high-load / low-budget)?
+%
+% [Contributions -- four bullet points]
+% 1. Formal 14-dimensional state-space model of AI-human sprint dynamics with
+%    11 ordered transition steps and proved convergence properties.
+% 2. Six stability/feasibility theorems establishing conditions for bounded
+%    feature backlog, bug queue, human capacity, and technical debt.
+% 3. Monte Carlo + evolutionary Pareto search over the agent composition space,
+%    with a deterministic feasibility pre-filter to prune infeasible configurations.
+% 4. Empirical results across three parameterised scenarios identifying which
+%    agent roles drive each Pareto objective and quantifying degradation effects.
+%
+% [Optional teaser figure]
+% - Figure 1: schematic of a mixed team (human developers supervising AI agents)
+%   and a sketch of the resulting tri-objective Pareto frontier.
+%
+% [Paper structure -- one sentence per section]
+
+
+
+% ============================================================
+\section{Background and Related Work}
+\label{sec:related}
+% ============================================================
+
+% ---- 2.1 ----
+\subsection{Software Team and Process Simulation}
+\label{sec:related:process}
+%
+% - Situate within software process simulation (SPS): Abdel-Hamid \& Madnick
+%   system-dynamics model, COCOMO-derivative planning tools, agent-based SE
+%   process models (e.g., Concepcion \& Hilburn).
+% - Prior models treat headcount as a scalar; this work parameterises role
+%   composition as a 13-dimensional integer vector.
+% - Discrete-time sprint framing is closer to Scrum simulation literature
+%   (Cao et al.) than to continuous-time system dynamics.
+% - Limitations of prior models for AI-agent settings: uniform human productivity
+%   assumption, no CI/CD latency buffer, no role-specific degradation functions.
+% - Brooks' Law formulation: H_comm(N) = c_comm * (N-1) communication overhead
+%   is incorporated explicitly in the human capacity model.
+
+% ---- 2.2 ----
+\subsection{AI Agents in Software Engineering}
+\label{sec:related:agents}
+%
+% - Empirical evidence on AI-assisted coding: GitHub Copilot productivity studies,
+%   LLM-based code review (CodeReviewer, etc.), automated bug fixing (SWE-bench,
+%   Devin, SWE-agent), automated test generation (CodaMosa, ChatUniTest).
+% - Distinguish tool-assisted human work from autonomous agent roles as modelled
+%   here: agents execute full tasks independently, not merely assist.
+% - Gap: individual-agent productivity studies do not model systemic effects on
+%   backlog stability, bug escape rates, or cost per feature in mixed teams.
+% - Emerging multi-agent SE frameworks (ChatDev, MetaGPT, OpenHands) as
+%   direct industrial motivation for the team-composition question.
+% - Cost structure reality: LLM API token pricing maps naturally to per-agent
+%   per-sprint cost model used here.
+
+% ---- 2.3 ----
+\subsection{Multi-Objective Optimisation in Software Engineering}
+\label{sec:related:moea}
+%
+% - SBSE (search-based SE) for team and project planning: staffing optimisation,
+%   sprint planning, release planning under uncertainty.
+% - Pareto-based formulations in SE: NSGA-II/III applied to test prioritisation,
+%   configuration optimisation, architecture selection.
+% - Key distinction: our feasibility pre-filter (six stability conditions at prior
+%   means) dramatically prunes the search space before any simulation, a technique
+%   not present in prior SBSE team-composition work.
+% - Motivate random + evolutionary hybrid search as appropriate for discrete,
+%   high-dimensional, partially infeasible composition spaces.
+% - Hypervolume indicator as convergence metric (Zitzler \& Thiele 1998).
+
+
+% ============================================================
+\section{The Formal Model}
+\label{sec:model}
+% ============================================================
+
+% ---- 3.1 ----
+\subsection{Sprint and Release Cycle}
+\label{sec:model:cycle}
+
+The model treats software development as a discrete-time stochastic dynamical
+system. Time is indexed by sprints $t \in \{0, 1, \ldots, T-1\}$; each sprint
+represents one fixed-duration iteration. The
+simulation horizon $T$ and the team configuration
+$(N, M, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$
+are fixed across all $K$ independent Monte Carlo replications of a single run.
+Within each replication, \emph{scenario-level} parameters (throughput rates,
+bug injection rates, detection probabilities, cost coefficients) are sampled
+once at $t = 0$ and held constant for all $T$ sprints; \emph{step-level}
+randomness (Poisson feature arrivals, Binomial detection draws) is resampled at
+every sprint. This two-level sampling structure separates between-team variation
+(captured by different configurations) from within-team uncertainty (captured
+across $K$ replications).
+
+\paragraph{Within-sprint dynamics.}
+At each sprint the system executes eleven ordered steps covering feature
+arrivals and implementation, bug injection and Stage-A detection, Stage-B
+latency promotion and detection, architecture review and escalation queue
+updates, bug fixing, regression injection, technical debt evolution, test-suite
+and documentation growth, CI/CD latency recomputation, and release processing
+(Section~\ref{sec:model:transition}). All quantities within a sprint are
+computed as aggregate counts; within-sprint ordering among agents is not
+modelled. Agents of the same type are
+statistically identical within a replication, so the composition count
+$a_k$ is the only role-level degree of freedom. Each sprint selects the active
+agent composition based on its position in the release cycle: the
+\emph{development composition} $\mathbf{A}_\mathrm{dev}$ is used during the
+first $R - F_\mathrm{freeze}$ sprints of each cycle; the \emph{QA composition}
+$\mathbf{A}_\mathrm{qa}$ is used during the remaining $F_\mathrm{freeze}$
+sprints (see below).
+
+\paragraph{Two-stage detection pipeline.}
+Bug detection operates on two timescales that are central to the model's
+quality dynamics. \emph{Stage A} (Code Review and Security Audit) is
+synchronous: it acts within the same sprint a bug is introduced, because
+reviewers inspect the code change directly. Bugs surviving Stage A enter a
+per-severity FIFO latency buffer and are not testable until
+$\lceil\tau_\mathrm{CI}(t)\rceil$ sprints have elapsed, at which point
+\emph{Stage B} (Unit, Integration, and System/Acceptance tests) processes them.
+Regression bugs introduced by fixing or refactoring skip Stage A and enter the
+buffer immediately. This asymmetry means that increasing code-review
+coverage and increasing test coverage are \emph{not} interchangeable: Stage A
+prevents bugs from entering the hidden stock at all, whereas Stage B reduces the
+hidden stock with a delay that grows with codebase and test-suite size.
+
+\paragraph{Release events and feature freeze.}
+A release occurs exactly at sprint indices $R, 2R, 3R, \ldots$ where $R \geq 1$
+is the fixed release cadence. At each release all bugs remaining in the
+latency buffer (injected within the last $\lceil\tau_\mathrm{CI}\rceil$ sprints
+and therefore untested) and all Stage-B survivors (bugs that exited the latency
+buffer but evaded all three test layers) are counted as production escapes and
+added to $B_\mathrm{escaped}$. 
+
+Similar to real-world projects, a feature freeze is implemented in the model to
+stabilise the codebase before release. Additionally, this mechanism ensures that
+bugs injected near the end of a release cycle have time to propagate through the
+Stage-B pipeline before the release. The feature freeze lasts for 
+$F_\mathrm{freeze} \in [1, R-1]$ sprints before a release.
+Sprint $t$ is in the freeze window iff $(t \bmod R) \geq R - F_\mathrm{freeze}$.
+During these sprints the team switches from $\mathbf{A}_\mathrm{dev}$ to
+$\mathbf{A}_\mathrm{qa}$: the QA composition sets $a_1 = a_2 = a_3 = 0$
+(no new requirements, designs, or features) and redeploys the full $N \times M$
+agent budget to bug-fixing, testing, refactoring, and documentation roles.
+Human direct-coding capacity is also suspended during the freeze so that the
+residual human capacity is fully available for review and escalation work.
+
+% TODO: Figure -- sprint cycle and release timeline diagram
+
+% ---- 3.2 ----
+\subsection{Roles}
+\label{sec:model:roles}
+
+\subsubsection{Human roles}
+\label{sec:model:roles:human}
+
+Two human roles are included in the model. The \textbf{Product Owner} is a
+singleton who provides raw feature requirements, prioritises the backlog,
+defines acceptance criteria, and authorises releases. It is modelled as a
+fixed-overhead resource carrying an annual cost of $c_\mathrm{PO}$; new
+features arrive to the backlog as a Poisson process with rate $\lambda_F$
+features per sprint, independently of team composition. The \textbf{Human
+Developer} is the central scalable human role. Each of the $N$ developers
+supervises $M$ agents, reviews and approves architecture proposals, resolves
+escalations that agents cannot handle autonomously, and contributes direct code
+to tasks that exceed agent capability. Each developer carries an annual
+fully-loaded salary $c_\mathrm{salary}$ and a per-sprint time budget of
+$H_\mathrm{capacity}$ hours. This budget is consumed in strict priority order by
+(i)~peer communication overhead
+$H_\mathrm{comm}(N) = c_\mathrm{comm}(N-1)$,
+capturing Brooks' coordination cost~\cite{Brooks1975}, (ii)~agent monitoring,
+(iii)~architecture review queue service, (iv)~escalation queue service, and
+finally (v)~residual direct coding. As the span of control $M$ increases,
+monitoring overhead grows linearly and crowds out productive capacity, creating
+the fundamental throughput--quality--cost trade-off that the simulation is
+designed to characterise. The full capacity allocation model is given in
+Section~\ref{sec:model:transition}.
+
+\subsubsection{AI agent roles}
+\label{sec:model:roles:agent}
+
+Thirteen specialist agent types are modelled, indexed $k = 1,\ldots,13$.
+Each agent of type $k$ executes tasks autonomously at a per-sprint throughput
+rate $r_k$ drawn from a log-normal distribution, reflecting the empirically
+observed right-skew of software task durations~\cite{TODO:cite}. Routine
+outputs require no human approval; agents escalate to their supervising \textit{Human
+Developer} only when a task exceeds their capability, at a per-agent escalation
+rate $\rho_\mathrm{esc}$. Each deployed agent of type $k$ incurs a per-sprint
+API token cost $c_{\mathrm{token},k}$, reflecting current LLM pricing;
+agent costs therefore scale with deployment count whereas human costs are
+fixed salaries, making the human-to-agent ratio a primary lever for the cost
+objective $C_F$. Table~\ref{tab:roles} summarises each role's primary function,
+principal effect on the simulation state, and position in the detection
+pipeline.
+
+The thirteen roles fall into four functional groups. \emph{Production roles}
+(k = 1--5) drive or shape the feature pipeline: the Requirements Refinement
+Agent refines specifications (affecting the specification-error amplifier
+$\varepsilon_\mathrm{spec}$), the Architecture Agent generates design proposals
+that feed the human review queue, the Feature Implementation Agent is the
+primary productivity driver, the Bug Fixing Agent drains the known-bug queue,
+and the Refactoring Agent is the only role that actively \emph{reduces}
+technical debt $D(t)$. Without adequate refactoring capacity, debt converges
+to a positive equilibrium that permanently slows implementation and amplifies
+bug injection (Section~\ref{sec:stability:debt}). \emph{Stage-A detection
+roles} (k = 6--7) inspect every code change synchronously within the sprint it
+is produced: the Code Review Agent detects non-security defects at effective
+rate $d_\mathrm{CR,eff}$, and the Security Audit Agent detects security-class
+defects at rate $d_\mathrm{SA}$; bugs surviving Stage A enter the CI/CD
+latency buffer and become detectable only after $\lceil\tau_\mathrm{CI}(t)\rceil$
+sprints. \emph{Stage-B detection roles} (k = 8--10) build up automated test
+suites whose coverage grows with $N_\mathrm{UT}$, $N_\mathrm{IT}$,
+$N_\mathrm{ST}$ respectively, providing delayed but increasingly thorough
+detection as the project matures. \emph{Support roles} (k = 11--13) affect
+operational overhead and cost: the DevOps Agent reduces the base CI/CD latency
+$\tau_\mathrm{CI,base}$; the Developer Documentation Agent grows documentation
+coverage $\mathrm{doc\_cov}(t)$, which in turn reduces the per-agent monitoring
+overhead that consumes human capacity; and the User Documentation Agent
+contributes a per-release cost $C_\mathrm{user\_doc}$ that scales with the
+features shipped in each release.
+
+One modelling assumption deserves explicit note. Code Review throughput is
+treated as \emph{unbounded}: all changed
+code is reviewed regardless of $a_6$, but effective detection quality
+$d_\mathrm{CR,eff}$ degrades with change volume and with architecture-review
+queue pressure when $a_6$ is small. Each deployed Code Review Agent still
+accrues its full token cost $c_{\mathrm{token},6}$, so over-allocating agents
+to this role is penalised by the cost objective; Pareto optimality therefore
+imposes an implicit upper bound on $a_6$.
+
+\begin{table}[t]
+\caption{The thirteen AI agent roles. \emph{Det.\ stage}: A\,=\,synchronous
+  same-sprint detection; B\,=\,delayed detection via CI/CD latency buffer;
+  ---\,=\,no direct detection function.}
+\label{tab:roles}
+\footnotesize
+\begin{tabularx}{\linewidth}{cp{2.6cm}Xp{3.0cm}c}
+\toprule
+$k$ & Role & Primary Function & Principal State Effect & Det. \\
+\midrule
+1 & Requirements Refinement
+  & Transforms ambiguous requirements into unambiguous specifications
+  & Modulates spec-error amplifier $\varepsilon_\mathrm{spec}$ on bug injection
+  & --- \\[2pt]
+2 & Architecture \& Design
+  & Produces component designs and interface contracts for human approval
+  & Drives $q_\mathrm{arch}$; proposals enter review queue $Q_\mathrm{rev}$
+  & --- \\[2pt]
+3 & Feature Implementation
+  & Implements features per approved designs
+  & Drains $F_\mathrm{backlog}$; increments $F_\mathrm{completed}$; injects bugs; accumulates debt via $\delta_\mathrm{impl}$
+  & --- \\[2pt]
+4 & Bug Fixing
+  & Diagnoses and repairs defects reported by the detection pipeline
+  & Drains $B_\mathrm{known}$; regressions (prob.\ $p_\mathrm{regress}$) bypass Stage~A
+  & --- \\[2pt]
+5 & Refactoring
+  & Restructures code to reduce complexity without changing behaviour
+  & Decreases $D(t)$ at rate $\delta_\mathrm{refactor}$; regression risk $p_\mathrm{regress\_refactor}$
+  & --- \\[2pt]
+6 & Code Review
+  & Reviews all code changes for correctness, style, and design
+  & Synchronously detects fraction $d_\mathrm{CR,eff}(t)$ of non-security bugs
+  & A \\[2pt]
+7 & Security Audit
+  & Identifies security-class vulnerabilities in code and design
+  & Synchronously detects fraction $d_\mathrm{SA}$ of security bugs
+  & A \\[2pt]
+8 & Unit Test Development
+  & Writes automated unit tests; grows coverage over time
+  & Accumulates $N_\mathrm{UT}$; Stage-B detection $d_\mathrm{UT,eff}$
+  & B \\[2pt]
+9 & Integration Test Development
+  & Tests cross-component interactions and interface contracts
+  & Accumulates $N_\mathrm{IT}$; Stage-B detection $d_\mathrm{IT,eff}$
+  & B \\[2pt]
+10 & System \& Acceptance Testing
+  & Validates end-to-end behaviour against acceptance criteria
+  & Accumulates $N_\mathrm{ST}$; Stage-B detection $d_\mathrm{ST,eff}$; final release gate
+  & B \\[2pt]
+11 & DevOps / CI-CD
+  & Builds and maintains the build, test, and deployment pipeline
+  & Reduces $\tau_\mathrm{CI,base}$; incurs $C_\mathrm{DevOps,setup}$ and $C_\mathrm{DevOps,maint}$
+  & --- \\[2pt]
+12 & Developer Documentation
+  & Produces API references, architecture guides, and contributor docs
+  & Grows $\mathrm{doc\_cov}(t)$; reduces per-agent monitoring overhead via $\Gamma_\mathrm{doc}$
+  & --- \\[2pt]
+13 & User Documentation
+  & Produces user manuals, tutorials, and release notes
+  & Contributes $C_\mathrm{user\_doc}$ per release, proportional to features shipped
+  & --- \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ---- 3.3 ----
+\subsection{Project and team structure}
+\label{sec:model:team}
+
+A the project and team structure is fully specified by six control variables: the human developer count
+$N \geq 1$, the number of agents each developer can control $M \geq 1$, the number of sprints per release $R \geq 1$, the length of the feature freeze period $F_\mathrm{freeze} \in
+[1, R]$, and two 13-element agent composition vectors $\mathbf{A}_\mathrm{dev}$ and
+$\mathbf{A}_\mathrm{qa}$ described below.
+
+$\mathbf{A}_\mathrm{dev} = (a_{dev,1},\ldots,a_{dev,13}) \in \mathbb{N}^{13}$ is the
+\emph{development-phase composition}: the count of agents of each type deployed
+during the $R - F_\mathrm{freeze}$ active development sprints of each release
+cycle. $\mathbf{A}_\mathrm{qa} = (a_{qa,1},\ldots,a_{qa,13}) \in \mathbb{N}^{13}$ is
+the \emph{QA-phase composition}: the agent allocation during the
+$F_\mathrm{freeze}$ stabilisation sprints. Both vectors satisfy the same
+\emph{budget constraint}
+\begin{equation}
+  \sum_{k=1}^{13} a_{\cdot,k} = N \times M,
+  \label{eq:budget}
+\end{equation}
+ensuring the total agent headcount is fixed throughout the release cycle;
+redeployment from development to QA roles incurs no extra cost.
+$\mathbf{A}_\mathrm{dev}$ must satisfy $a_{dev,3} \geq 1$ (at least one Feature
+Implementation Agent in the development phase). $\mathbf{A}_\mathrm{qa}$ is
+required to have $a_{qa,1} = a_{qa,2} = a_{qa,3} = 0$, to ensure that no new features are added during a feature freeze and redeploy all agents to QA roles. All $a_{\cdot,k}$ agents of the
+same type are assumed to be statistically identical.
+
+
+
+% ---- 3.4 ----
+\subsection{State Space}
+\label{sec:model:state}
+
+The system state at the start of sprint $t$ is a 14-component tuple $S(t)$,
+updated at the end of each sprint by the eleven-step transition function
+described in Section~\ref{sec:model:transition}. The components fall into five
+clusters summarised in Table~\ref{tab:state}.
+
+\subsubsection{Feature pipeline.}
+$F_\mathrm{backlog}(t) \in \mathbb{N}_{\geq 0}$ counts features awaiting
+implementation at the start of sprint $t$; it grows by $\mathrm{Poisson}(\lambda_F)$
+arrivals each sprint and is drained by the \textit{Feature Implementation Agents} and the
+direct coding capacity of \textit{Human Developers}. $F_\mathrm{completed}(t) \in \mathbb{N}_{\geq 0}$
+is the cumulative count of fully implemented features; it is non-decreasing and
+appears as the normalising denominator in all three Pareto objectives.
+
+\subsubsection{Bug stocks.}
+Bugs are tracked at three pipeline stages --- hidden, known, and escaped --- and
+at each stage are split by severity: minor (fraction $1-\theta$ of injected
+bugs) and major (fraction $\theta$). The severity split is essential because
+minor and major bugs have different fix rates, fix costs, and production impact.
+
+$B_\mathrm{hid,min}(t)$ and $B_\mathrm{hid,maj}(t)$ count bugs that exist in
+the codebase but have not yet been detected by any review or test layer; they
+equal the total size of the CI/CD latency buffers described below.
+$B_\mathrm{kno,min}(t)$ and $B_\mathrm{kno,maj}(t)$ count bugs that have been
+detected and are queued for repair by the Bug Fixing Agent. The separation
+between hidden and known is load-bearing: it ensures that fixing capacity is
+consumed only by detected bugs, while hidden bugs silently degrade quality until
+they are either caught or escape to production. $B_\mathrm{escaped}(t) \in
+\mathbb{N}_{\geq 0}$ is the cumulative count of bugs that reached production
+without detection; it grows only at release events (every $R$ sprints).
+
+\subsubsection{Technical debt and human capacity queues.}
+$D(t) \in [0, 1]$ is a normalised measure of technical debt: $D = 0$ represents
+a debt-free codebase and $D = 1$ represents maximum structural degradation. It
+is the principal coupling variable in the model: through the debt amplifier
+$\phi_D(D)$ it multiplicatively increases the bug injection rate per feature,
+and through the debt slowdown $\psi_D(D)$ it multiplicatively reduces
+implementation and fix throughput (Section~\ref{sec:model:degradation}). The
+\textit{Refactoring Agent} is the only role that reduces $D(t)$.
+$Q_\mathrm{rev}(t) \in \mathbb{N}_{\geq 0}$ and $Q_\mathrm{esc}(t) \in
+\mathbb{N}_{\geq 0}$ are the lengths of the architecture proposal review backlog
+and the agent escalation queue respectively; both are bottleneck state variables
+that consume \textit{Human Developer} capacity and trigger review- and escalation-quality
+degradation when they grow large (Section~\ref{sec:model:degradation}).
+
+\subsubsection{Test infrastructure and documentation.}
+$N_\mathrm{UT}(t)$, $N_\mathrm{IT}(t)$, and $N_\mathrm{ST}(t)$ are the
+cumulative numbers of unit, integration, and system/acceptance tests written up
+to sprint $t$; they grow monotonically as the respective testing agents produce
+new test cases. Test \emph{coverage} is derived from these counts relative to
+$F_\mathrm{completed}(t)$ (see derived quantities below) and determines the
+effective Stage-B detection probability. Storing raw counts rather than coverage
+fractions avoids a circular dependency in the sprint transition, since both
+numerator and denominator change within the same sprint.
+$\mathrm{doc\_cov}(t) \in [0, 1]$ is the fraction of the codebase covered by
+developer documentation; it erodes each sprint by a factor proportional to new
+features that ship without immediate documentation, and grows when the Developer
+Documentation Agent is active. Documentation coverage reduces per-agent
+monitoring overhead through a reduction factor $\Gamma_\mathrm{doc}$, linking
+investment in documentation to human capacity savings.
+
+\begin{table}[t]
+\caption{State vector components with domains and the sprint-transition
+  steps (cf.\ Section~\ref{sec:model:transition}) that write each variable.}
+\label{tab:state}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{2.3cm}Xp{1.5cm}p{1.4cm}}
+\toprule
+Symbol & Description & Domain & Modified (step) \\
+\midrule
+$F_\mathrm{backlog}(t)$     & Features awaiting implementation                      & $\mathbb{N}_{\geq 0}$  & 1 \\[2pt]
+$F_\mathrm{completed}(t)$   & Cumulative features shipped; non-decreasing            & $\mathbb{N}_{\geq 0}$  & 1 \\[2pt]
+$B_\mathrm{hid,min}(t)$     & Hidden minor bugs (latency-buffer total)               & $\mathbb{N}_{\geq 0}$  & 2, 3, 8 \\[2pt]
+$B_\mathrm{hid,maj}(t)$     & Hidden major bugs (latency-buffer total)               & $\mathbb{N}_{\geq 0}$  & 2, 3, 8 \\[2pt]
+$B_\mathrm{kno,min}(t)$     & Known minor bugs queued for repair                     & $\mathbb{N}_{\geq 0}$  & 3, 6 \\[2pt]
+$B_\mathrm{kno,maj}(t)$     & Known major bugs queued for repair                     & $\mathbb{N}_{\geq 0}$  & 3, 6 \\[2pt]
+$B_\mathrm{escaped}(t)$     & Cumulative bugs escaped to production; non-decreasing  & $\mathbb{N}_{\geq 0}$  & 11 \\[2pt]
+$D(t)$                       & Technical debt level                                   & $[0, 1]$               & 9 \\[2pt]
+$Q_\mathrm{rev}(t)$         & Architecture review queue length                       & $\mathbb{N}_{\geq 0}$  & 4 \\[2pt]
+$Q_\mathrm{esc}(t)$         & Escalation queue length                                & $\mathbb{N}_{\geq 0}$  & 5 \\[2pt]
+$N_\mathrm{UT}(t)$          & Cumulative unit tests written                          & $\mathbb{R}_{\geq 0}$  & 10 \\[2pt]
+$N_\mathrm{IT}(t)$          & Cumulative integration tests written                   & $\mathbb{R}_{\geq 0}$  & 10 \\[2pt]
+$N_\mathrm{ST}(t)$          & Cumulative system/acceptance tests written             & $\mathbb{R}_{\geq 0}$  & 10 \\[2pt]
+$\mathrm{doc\_cov}(t)$      & Developer documentation coverage                      & $[0, 1]$               & 10 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsubsection{Latency buffers.}
+Two auxiliary FIFO structures, $\mathrm{buf\_min}$ and $\mathrm{buf\_maj}$, are
+maintained alongside $S(t)$ but are not part of it. Each maps an injection
+sprint $t_\mathrm{inj}$ to a pair $\bigl(\text{count},\,
+\lceil\tau_\mathrm{CI}(t_\mathrm{inj})\rceil\bigr)$, where the second element
+is the CI/CD latency snapshot taken at the time of injection. A cohort injected
+at sprint $t_\mathrm{inj}$ first becomes detectable by the Stage-B test layers
+at any sprint $t$ satisfying $t \geq t_\mathrm{inj} +
+\lceil\tau_\mathrm{CI}(t_\mathrm{inj})\rceil$. Storing the \emph{injection-time}
+latency per cohort is important: because $\tau_\mathrm{CI}$ grows over the
+project lifetime (see below), applying the current latency to old cohorts would
+incorrectly delay detection of bugs that were injected when the pipeline was
+faster. At each release event all cohorts remaining in the buffers --- too
+recently injected to have cleared the pipeline --- are drained directly into
+$B_\mathrm{escaped}$. The scalar state components $B_\mathrm{hid,min}(t)$ and
+$B_\mathrm{hid,maj}(t)$ are maintained as running totals equal to the respective
+buffer sums, avoiding a full buffer traversal at each sprint.
+
+\subsubsection{Derived quantities.}
+Three quantities are recomputed from $S(t)$ and the scenario parameters at
+each sprint rather than stored as state. The \emph{test coverage levels}
+\begin{equation}
+  \mathrm{cov}_k(t) = \min\!\left(c_{k,\mathrm{ceil}},\;
+    \frac{N_k(t)}{\max\!\bigl(1,\,F_\mathrm{completed}(t)\bigr)}\right),
+  \quad k \in \{\mathrm{UT},\,\mathrm{IT},\,\mathrm{ST}\},
+  \label{eq:coverage}
+\end{equation}
+express the ratio of tests written to features shipped, capped at a ceiling
+$c_{k,\mathrm{ceil}} \leq 1$ that reflects the practical limits of automated
+coverage; they govern the effective Stage-B detection probability
+$d_k \times \mathrm{cov}_k(t)$ in Step~3 of the transition. The
+\emph{weighted test count}
+\begin{equation}
+  n_\mathrm{tests}(t) =
+    \beta_\mathrm{UT}\,N_\mathrm{UT}(t)
+    + \beta_\mathrm{IT}\,N_\mathrm{IT}(t)
+    + \beta_\mathrm{ST}\,N_\mathrm{ST}(t),
+  \label{eq:ntests}
+\end{equation}
+with execution-time weights $\beta_\mathrm{UT} \leq \beta_\mathrm{IT} \leq
+\beta_\mathrm{ST}$, drives the \emph{CI/CD pipeline latency}
+\begin{equation}
+  \tau_\mathrm{CI}(t) = \min\!\left(T,\;\;
+    \tau_\mathrm{CI,base}
+    \times \bigl(1 + \alpha_{F,\mathrm{CI}}\,F_\mathrm{completed}(t)\bigr)
+    \times \bigl(1 + \alpha_{\mathrm{test},\mathrm{CI}}\,n_\mathrm{tests}(t)\bigr)%
+  \right),
+  \label{eq:tau_ci}
+\end{equation}
+where $\tau_\mathrm{CI,base}$ is the base pipeline latency, and the two
+multiplicative factors model the empirically observed growth of CI execution
+time with codebase and test-suite size. The cap at $T$ prevents detection from
+being delayed beyond the simulation horizon. 
+
+\subsubsection{Initial conditions.}
+At $t = 0$ all components of $S(0)$ are zero except $D(0) \sim
+\mathrm{Beta}(\alpha_{D_0}, \beta_{D_0})$, sampled once per replication to
+represent inherited technical debt. Setting $\alpha_{D_0} \gg \beta_{D_0}$
+models a greenfield project with minimal debt; reversing the ratio models a
+legacy codebase. An optional warm-start parameter $R_\mathrm{warmup} \in
+\mathbb{N}_{\geq 0}$ initialises the feature backlog as $F_\mathrm{backlog}(0)
+\sim \mathrm{Poisson}(\lambda_F \times R_\mathrm{warmup})$, representing a team
+whose backlog was already accumulating before the simulation window opens.
+
+% ---- 3.5 ----
+\subsection{Sprint Transition Function}
+\label{sec:model:transition}
+%
+% Ordered 11-step transition T: S(t) -> S(t+1). Order is not arbitrary:
+% latency promotion (step 3) precedes detection (step 8); human capacity
+% allocation (step 7) follows agent work (steps 4-6).
+%
+% Step 1 -- Feature arrival and implementation (Sec. 4.1 of framework):
+%   - New features: Poisson(lambda_F) arrivals added to F_backlog.
+%   - Implementation blocked if Q_review > threshold.
+%   - Throughput: r_F * psi_D(D) * a_3 + H_impl(t) features completed.
+%   - Human implementation capacity H_impl(t) = residual human capacity
+%     after monitoring/review/escalation (see Step 7).
+%
+% Step 2 -- Bug injection (Sec. 4.2):
+%   - lambda_impl_eff(t) = lambda_impl * phi_D(D) * (1 + alpha_spec*eps_spec)
+%     * (2 - q_arch_eff) bugs injected per feature completed.
+%   - Severity split: fraction theta -> major; (1-theta) -> minor.
+%   - Stage-A detection (Code Review + Security Audit) applied immediately;
+%     surviving bugs enter latency buffer buf[t].
+%
+% Step 3 -- Stage-B detection / latency promotion (Sec. 4.3, 6):
+%   - Bugs in buf[t_inj] become detectable at t >= t_inj + ceil(tau_CI(t_inj)).
+%   - Detection applied sequentially: Unit tests, Integration tests, System tests.
+%   - Coverage-weighted effective detection: d_UT_eff = d_UT * min(cov_UT, cov_ceil_UT).
+%   - Detected bugs move from hidden to B_known.
+%
+% Step 4 -- Architecture review queue update (Sec. 4.4):
+%   - q_arch_eff(t) degrades when eta_rev(Q_review) < 1.
+%   - Poor architecture quality amplifies bug injection in next sprint via Step 2.
+%
+% Step 5 -- Escalation queue update (Sec. 4.5):
+%   - Failed escalations re-queue: delta_Q_esc = (1 - eta_esc(Q_escalation)) * Q_escalation.
+%
+% Step 6 -- Bug fixing (Sec. 4.6):
+%   - Fixes: min(r_fix * psi_D(D) * a_4, B_known) bugs resolved.
+%   - Separate rates for minor (r_fix_min) and major (r_fix_maj) bugs.
+%
+% Step 7 -- Human capacity allocation (Sec. 3 of framework):
+%   Priority-order budget per human per sprint:
+%   1. Communication overhead: H_comm(N) = c_comm * (N-1)
+%   2. Agent monitoring: M * H_monitoring_overhead * (1 - Gamma_doc * doc_cov)
+%   3. Architecture review queue service
+%   4. Escalation queue service
+%   5. Residual direct coding: H_impl(t)
+%
+% Step 8 -- Regression injection (Sec. 4.7):
+%   - Each fix injects new bug with prob p_regress (enters latency buffer directly,
+%     skipping Stage A per assumption A6).
+%   - Each refactoring unit injects with prob p_regress_refactor.
+%
+% Step 9 -- Technical debt update (Sec. 4.8):
+%   D(t+1) = clip(D(t) + delta_impl*impl(t) + delta_fix*fixes(t)
+%            - delta_refactor * a_5 * r_refactor, 0, 1)
+%
+% Step 10 -- Test suite and documentation update (Sec. 4.9):
+%   - N_UT(t+1) = N_UT(t) + a_8 * r_UT; coverage cov_UT grows with N_UT.
+%   - doc_cov(t+1) erodes by factor zeta_doc then grows with a_{12} * r_doc.
+%
+% Step 11 -- CI/CD latency update (Sec. 4.10, 4.11):
+%   - tau_CI(t+1) = tau_CI_base * (1 + alpha_F_CI*F_completed)
+%                                * (1 + alpha_test_CI*weighted_tests)
+%   - Release event (every R sprints): bugs remaining in latency buffer escape
+%     to production; B_escaped updated; user documentation cost incurred.
+%
+% Figure 3: flowchart of the 11-step transition annotated with state variables
+%   modified at each step.
+
+% ---- 3.6 ----
+\subsection{Degradation Functions}
+\label{sec:model:degradation}
+%
+% Four functions governing how performance decays under stress:
+%
+% phi_D(D) = 1 + (phi_max - 1) * D^kappa
+%   -- debt AMPLIFIER on bug injection rate (strictly increasing in D).
+%   -- phi_max > 1; kappa controls curvature (default kappa=1 => linear).
+%   -- Motivation: accumulated debt causes more regressions per change.
+%
+% psi_D(D) = 1 - (1 - psi_min) * D^gamma
+%   -- debt SLOWDOWN on throughput (strictly decreasing; psi_D in [psi_min, 1]).
+%   -- gamma controls how quickly slowdown sets in.
+%   -- Motivation: navigating complex/messy code takes longer.
+%
+% eta_rev(Q_review): piecewise linear review quality decay
+%   -- eta_rev = 1 when Q_review <= Q_review_threshold (queue manageable).
+%   -- Decays linearly to eta_min_rev as queue grows beyond threshold.
+%   -- Motivation: reviewers rush when backlog is large; miss more defects.
+%
+% eta_esc(Q_escalation): piecewise linear escalation quality decay
+%   -- Analogous form to eta_rev.
+%   -- Poor resolutions cause re-escalation (feeds back into Q_escalation).
+%
+% - Discuss why all four are necessary: omitting phi_D decouples debt from quality;
+%   omitting psi_D decouples debt from speed; omitting eta_rev removes the pathway
+%   by which under-staffed Code Review saturates human capacity.
+% - Figure 4: plots of all four functions over their domain showing linear/saturation
+%   regimes. Parameter default values annotated.
+
+% ---- 3.7 ----
+\subsection{Objective Functions and Cost Model}
+\label{sec:model:objectives}
+%
+% Three Pareto objectives:
+%
+% V (maximize) = F_completed(T) / T
+%   -- average features shipped per sprint over horizon T.
+%
+% Q (minimize) = B_escaped(T) / max(1, F_completed(T))
+%   -- escaped bugs per feature delivered; quality proxy.
+%
+% C_F (minimize) = C_total / max(1, F_completed(T))
+%   -- total cost per feature; cost-efficiency proxy.
+%
+% Cost components of C_total:
+%   C_human  = (N * c_salary + c_PO) * (T / 52)      [annual salary, pro-rated]
+%   C_agents = sum_k a_k * c_token_k * T              [per-sprint token costs]
+%   C_bugs   = sum fixes: minor*C_fix_min + major*C_fix_maj
+%   C_prod   = sum releases: B_escaped * C_prod_impact [fat-tailed; dominates]
+%   C_total  = C_human + C_agents + C_bugs + C_prod
+%
+% - State the tri-objective problem: find A* in the feasible composition space
+%   such that no configuration dominates on all three objectives simultaneously.
+% - Objectives are treated symmetrically in hypervolume calculations;
+%   V maximised, Q and C_F minimised.
+
+
+% ============================================================
+\section{Stability Analysis}
+\label{sec:stability}
+% ============================================================
+
+% ---- 4.1 ----
+\subsection{Overview and Purpose}
+\label{sec:stability:overview}
+%
+% - Six stability conditions serve two purposes:
+%   (1) Theoretical guarantees: prove model behaviour is bounded in limiting cases;
+%       prevents degenerate configurations from inflating simulation runtimes.
+%   (2) Feasibility pre-filter: conditions evaluated at prior means (expected-value
+%       analysis) before any Monte Carlo run; infeasible configurations discarded.
+% - Pre-filter is conservative (sufficient, not tight): some flagged-infeasible
+%   configurations may be stable in practice due to favourable parameter draws.
+%   Quantify false-positive rate in Section 7.
+% - Conditions are checked sequentially (Steps 0-5 in src/feasibility.py);
+%   first failure terminates the check.
+
+% ---- 4.2 ----
+\subsection{Theorem 1: Feature Backlog Stability}
+\label{sec:stability:backlog}
+%
+% Statement: F_backlog(t) is stable (non-diverging) iff, at steady-state debt D*:
+%   r_F * psi_D(D*) * a_3 + E[H_impl] >= lambda_F
+%   i.e., expected implementation throughput >= feature arrival rate.
+%
+% Proof sketch:
+%   - Model F_backlog as a discrete-time G/G/1 queue.
+%   - Apply Loynes stability criterion; effective service rate is
+%     r_F * psi_D(D*) * a_3 (debt-slowed), plus human residual coding H_impl.
+%   - D* is the steady-state debt level from Theorem 4; substituting D* yields
+%     the binding constraint on a_3.
+%
+% Practical implication: minimum Feature Implementation agents is a_3 >= lambda_F /
+%   (r_F * psi_D(D*)). Violated frequently in configurations with large M and few
+%   implementation agents.
+
+% ---- 4.3 ----
+\subsection{Theorem 2: Bug Queue Stability}
+\label{sec:stability:bugs}
+%
+% Statement: bug queue B_known is stable iff:
+%   (1) traffic intensity rho_bugs < 1: (net detectable bug rate) / (fix rate) < 1.
+%   (2) regression feedback: p_regress * p_det_B < 1 (fixes don't self-sustain bugs).
+%
+% Proof sketch:
+%   - Bugs arrive to B_known from latency buffer at rate lambda_det = lambda_inj * p_det_B.
+%   - Fix throughput mu_fix = r_fix * psi_D(D*) * a_4.
+%   - Regression injection adds p_regress * mu_fix bugs back per sprint;
+%     net arrival = lambda_det + p_regress * mu_fix.
+%   - Stability requires: (lambda_det + p_regress * mu_fix) / mu_fix < 1
+%     => lambda_det / mu_fix < 1 - p_regress => rho_bugs < 1 - p_regress.
+%
+% Practical implication: most commonly triggered pre-filter condition, especially
+%   in high-debt configurations with under-staffed Bug Fixing agents.
+
+% ---- 4.4 ----
+\subsection{Theorem 3: Human Standstill Condition}
+\label{sec:stability:human}
+%
+% Statement: a configuration causes human standstill iff:
+%   N * H_capacity <= N * H_comm(N) + N*M * H_monitoring_eff + H_review + H_escalation
+%   i.e., monitoring + coordination + queue service exhausts all human capacity.
+%
+% Proof: from priority-order budget allocation (Step 7 of transition); if residual
+%   capacity H_impl <= 0, humans perform no direct coding and no architecture
+%   proposals are reviewed => Q_review grows unboundedly => no releases occur.
+%
+% Practical implication: provides explicit upper bound on M:
+%   M_max = (H_capacity - H_comm(N) - H_review - H_escalation) / H_monitoring_eff
+%   Configurations violating this are eliminated in Step 1 of pre-filter.
+%   Interaction: high eta_esc (few Code Review agents) + high debt both increase
+%   H_escalation, tightening M_max in a non-obvious way.
+
+% ---- 4.5 ----
+\subsection{Theorem 4: Debt Spiral Condition}
+\label{sec:stability:debt}
+%
+% Statement: D(t) converges to finite D* in [0,1] iff:
+%   delta_refactor * a_5 * r_refactor >
+%   delta_impl * (r_F * psi_min * a_3 + E[H_impl]) + delta_fix * a_4 * r_fix_mean
+%   i.e., refactoring removal rate > maximum debt injection rate.
+%
+% Proof:
+%   - D(t+1) = D(t) + delta_impl*impl(t) - delta_refactor*refactor(t) + delta_fix*fixes(t)
+%   - At D=1 (maximum): psi_D(1) = psi_min (minimum throughput); check if removal
+%     still exceeds injection at this worst case.
+%   - If condition holds, unique steady-state D* satisfies the fixed-point equation;
+%     otherwise D diverges to 1 and throughput collapses.
+%
+% Practical implication: minimum Refactoring agent allocation scales with
+%   Feature Implementation count; ratio a_5/a_3 must exceed a scenario-specific
+%   threshold. Yields explicit formula for D*.
+
+% ---- 4.6 ----
+\subsection{Theorem 5: CI/CD Latency Queue Stability}
+\label{sec:stability:latency}
+%
+% Statement: latency buffer L(t) remains bounded in expectation because tau_CI is
+%   finite; bugs age out deterministically. However, VARIANCE of hidden bugs
+%   E[|L|] = lambda_inj * tau_CI grows with tau_CI and bursty injection.
+%
+% Practical implication: motivates warm-up period T_warmup >= tau_CI_max before
+%   metric collection begins. Also motivates DevOps agent allocation: more DevOps
+%   agents (a_{11}) reduce tau_CI_base, shrinking E[|L|] and thus shortening the
+%   tail of undetected bugs at release events.
+
+% ---- 4.7 ----
+\subsection{Composite Feasibility Theorem}
+\label{sec:stability:composite}
+%
+% Statement: a configuration A is feasible iff it satisfies Theorems 1-5 simultaneously
+%   at prior parameter means; violation of any single condition is sufficient for infeasibility.
+%
+% - Table 2: theorem summary -- name, condition expression, violated-by scenario,
+%   pre-filter step index, frequency of violation across random samples (from Results).
+%
+% - Tightness discussion: prior-mean evaluation is conservative; Sobol' index
+%   screening (Section 6.3) identifies which parameters most affect the probability
+%   of borderline configurations being spuriously flagged infeasible.
+%
+% - The pre-filter reduces the effective search space; evolutionary search
+%   operates only over the feasible polytope.
+
+
+% ============================================================
+\section{Simulation Methodology}
+\label{sec:methodology}
+% ============================================================
+
+% ---- 5.1 ----
+\subsection{Monte Carlo Protocol}
+\label{sec:methodology:mc}
+%
+% - Per configuration: K independent replications, each with a distinct RNG stream.
+% - Reproducibility: PCG-64 generator; stream seed = SeedSequence(master_seed,
+%   spawn_key=(FNV-1a hash of config tuple, replication index k)).
+%   Guarantees: (1) independent streams per (config, k) pair;
+%               (2) identical result given same (config, K, seed).
+%
+% - Simulation horizon T sprints; warm-up T_warmup (>= tau_CI_max) sprints discarded
+%   before metric collection.
+%
+% - Per replication: scenario parameters sampled once at sprint 0 from distributions
+%   in Section 5.2 (lognormal, beta, uniform, gamma, or fixed); same parameters
+%   held fixed throughout that replication's T sprints.
+%
+% - Aggregation: V, Q, C_F computed as means over (T - T_warmup) * K sprint-pairs;
+%   95\% bootstrap confidence intervals (1000 bootstrap samples).
+%
+% - Convergence criterion for K: simulations run until CV of V (across K) < epsilon_CV;
+%   report distribution of K achieved.
+%
+% - Table 3: simulation hyperparameters (T, T_warmup, K_max, epsilon_CV, RNG scheme).
+
+% ---- 5.2 ----
+\subsection{Parameter Distributions}
+\label{sec:methodology:params}
+%
+% - ~74 scenario-level parameters drawn per replication from parameterised distributions:
+%   * Throughput rates (r_F, r_fix, r_refactor, etc.): Log-normal (right-skewed;
+%     most tasks fast, occasional long ones).
+%   * Feature arrival rate lambda_F: Gamma (natural conjugate for Poisson arrival).
+%   * Bug injection rate lambda_impl: Gamma (overdispersed positive rate).
+%   * Detection rates (d_CR, d_SA, d_UT, d_IT, d_ST): Beta (bounded [0,1]).
+%   * Fraction major bugs theta, p_regress, p_sec: Beta.
+%   * Cost parameters: Log-normal (except c_salary, c_PO: fixed).
+%   * CI/CD parameters (tau_CI_base, alpha_F_CI, alpha_test_CI): Log-normal or fixed.
+%
+% - Distribution justifications: reference empirical SE data where available
+%   (defect injection rates from Basili et al., review detection rates from
+%   Kemerer \& Paulk, CI pipeline latency from Hilton et al.); flag expert-elicited.
+%
+% - Three scenario parameterisations as shifts on the common baseline:
+%   * Default: lambda_F = 2, balanced cost structure, tau_CI_base = 0.5.
+%   * High-load: lambda_F = 4 (2x feature pressure), tau_CI_base = 0.75.
+%   * Low-budget: c_token_k halved, c_salary unchanged (AI cost advantage).
+%
+% - Table 4: full parameter table with distribution family, baseline parameters,
+%   scenario-specific overrides, and data source / justification.
+
+% ---- 5.3 ----
+\subsection{Search Strategies for Pareto-Optimal Configurations}
+\label{sec:methodology:search}
+%
+% Two-phase search over the feasible composition space:
+%
+% Phase 1 -- Stratified random sampling:
+%   - Sample N in [N_min, N_max], M in [1, M_max].
+%   - Sample A as a random composition of N*M into 13 non-negative integers
+%     using stars-and-bars (uniform over compositions), with repair to ensure a_3 >= 1.
+%   - Apply feasibility pre-filter; discard infeasible configurations.
+%   - Simulate feasible configurations; collect (V, Q, C_F) with bootstrap CIs.
+%   - Output: initial Pareto approximation from n_random samples.
+%
+% Phase 2 -- Evolutionary search (initialised from Phase 1 non-dominated set):
+%   - Mutation operator: move 1-3 agents between randomly chosen roles; repair
+%     to maintain sum(A)=N*M and a_3>=1.
+%   - Crossover: uniform crossover of two parent A vectors; repair constraints.
+%   - Selection: NSGA-II crowding-distance tournament (3-objective hypervolume).
+%   - Stopping: hypervolume improvement < epsilon_HV over last G generations,
+%     or G_max generations reached.
+%
+% - Feasibility pre-filter applied at every candidate generation (both phases).
+% - Hypervolume indicator tracks search progress; reference point = nadir of
+%   initial random sample.
+%
+% - Figure 5: pseudocode / flowchart of the combined search procedure with
+%   pre-filter integration.
+
+
+% ============================================================
+\section{Experimental Setup}
+\label{sec:setup}
+% ============================================================
+
+% ---- 6.1 ----
+\subsection{Scenarios}
+\label{sec:setup:scenarios}
+%
+% Three scenarios representing distinct industrial contexts:
+%
+% Default (src/config/default_scenario.json):
+%   - Steady-state product team; moderate feature demand lambda_F = 2.
+%   - Balanced cost structure; tau_CI_base = 0.5 sprints.
+%   - Representative of a mid-size agile product team.
+%
+% High-load (config/high_load.json):
+%   - Startup-phase feature rush; lambda_F = 4 (2x default).
+%   - Higher CI latency tau_CI_base = 0.75; larger codebase assumed.
+%   - Tests whether optimal compositions for default generalise under pressure.
+%
+% Low-budget (config/low_budget.json):
+%   - Resource-constrained team; AI token costs halved vs. default.
+%   - Human salary unchanged; incentivises heavier AI-agent utilisation.
+%   - Tests cost-efficiency frontier when API pricing is more favourable.
+%
+% - For each scenario provide the complete parameter vector (reference Table 4).
+% - Justify scenario choices as covering a representative range of practical settings.
+
+% ---- 6.2 ----
+\subsection{Experimental Variables and Sweep Settings}
+\label{sec:setup:sweep}
+%
+% - Ranges swept: N in {1,...,8}, M in {1,...,M_max(N)} where M_max from Theorem 3.
+% - Composition space size: for total budget B = N*M agents across 13 roles,
+%   number of compositions = C(B+12, 12) -- grows rapidly; motivates search.
+% - Phase 1: n_random = 5000 configurations sampled per scenario.
+% - Phase 2: pop_size = 100, G_max = 200 generations, epsilon_HV = 0.001.
+% - K_max = 200 replications per configuration; T = 52 sprints; T_warmup = 5 sprints.
+% - Hardware: [fill in after runs] CPU-hours, parallelised per configuration.
+% - Software: Python 3.x, NumPy PCG-64, src/ simulation package.
+
+% ---- 6.3 ----
+\subsection{Evaluation Metrics and Comparisons}
+\label{sec:setup:metrics}
+%
+% Primary metric: Pareto hypervolume dominated by discovered front per scenario.
+%   - Computed with normalised objective values (nadir = reference point).
+%   - Statistical test for scenario differences: Kruskal-Wallis + post-hoc.
+%
+% Secondary:
+%   - Pairwise comparison of best-V, best-Q, best-C_F configurations.
+%   - Role-composition profiles of Pareto-extreme solutions (Table 5).
+%   - Fraction of configurations eliminated by each pre-filter step (Table 2).
+%
+% Ablation -- effect of degradation functions:
+%   - Baseline: no-degradation model (phi_D = psi_D = 1, eta_rev = eta_esc = 1).
+%   - Compare hypervolume and knee-point shift vs. full model (default scenario).
+%   - Partial ablation: remove each of the four functions independently.
+%
+% Sensitivity analysis:
+%   - Sobol' indices (first-order + total) for hypervolume w.r.t. all parameters.
+%   - Report top-6 influential parameters as tornado chart.
+%   - One-at-a-time +/- 20\% perturbation of top-6 to quantify Pareto-front shift.
+
+
+% ============================================================
+\section{Results}
+\label{sec:results}
+% ============================================================
+
+% ---- 7.1 ----
+\subsection{Pareto Frontiers by Scenario}
+\label{sec:results:pareto}
+%
+% - Present tri-objective Pareto frontiers for all three scenarios:
+%   3D scatter plot (V vs. Q vs. C_F) + three 2D projections (pairs of objectives).
+%   Colour / marker distinguishes scenarios; CI-aware dominance used.
+%
+% - Report hypervolume values per scenario; statistical significance of differences.
+%
+% - Qualitative shape description:
+%   * Knee point location (balanced V/Q/C_F).
+%   * Steepness of quality-cost trade-off curve.
+%   * Whether high-load front is dominated by default (throughput sacrifice).
+%
+% - Identify the practically interesting region (C_F within 10\% of min,
+%   V >= 0.8 * V_max) and characterise it.
+%
+% - Figure 6: tri-objective Pareto scatter -- MAIN RESULT FIGURE.
+%
+% - Answer RQ1 in summary.
+
+% ---- 7.2 ----
+\subsection{Optimal Agent Compositions}
+\label{sec:results:compositions}
+%
+% - Table 5: composition vector A for 4-5 Pareto-extreme solutions per scenario:
+%   throughput-optimal, quality-optimal, cost-optimal, knee-point configuration.
+%   Include objective values (V, Q, C_F) and confidence intervals.
+%
+% - Analysis -- which roles dominate quality-optimal configurations?
+%   Hypothesis: a_6 (Code Review) + a_7 (Security Audit) + a_8-10 (Testing)
+%   are over-allocated relative to throughput-optimal.
+%
+% - Role of Refactoring agents: do configurations with higher a_5/a_3 appear
+%   more frequently near the interior (balanced) region of the Pareto front?
+%
+% - Fraction of configurations eliminated per pre-filter step; which condition
+%   is most commonly triggered per scenario.
+%
+% - Span-of-control M: distribution of M across Pareto-optimal vs. dominated configs.
+
+% ---- 7.3 ----
+\subsection{Effect of Degradation Functions}
+\label{sec:results:degradation}
+%
+% - Compare full model vs. no-degradation baseline (default scenario):
+%   hypervolume ratio; shift in knee-point location.
+%
+% - Show that no-degradation model systematically overestimates V and
+%   underestimates Q, confirming degradation functions are necessary.
+%
+% - Partial ablation: rank contribution of each degradation function to
+%   hypervolume gap (phi_D, psi_D, eta_rev, eta_esc).
+%
+% - Figure 7: side-by-side Pareto front -- full model vs. no-degradation
+%   baseline (default scenario).
+%
+% - Answer RQ2.
+
+% ---- 7.4 ----
+\subsection{Sensitivity Analysis}
+\label{sec:results:sensitivity}
+%
+% - Sobol' indices: list top-6 influential parameters with first-order and
+%   total-effect indices; discuss interaction effects.
+%
+% - Tornado chart: hypervolume sensitivity to +/- 20\% perturbation of top-6.
+%   Parameters: likely candidates are lambda_F, lambda_impl, r_F, phi_max, psi_min,
+%   p_regress.
+%
+% - Cross-scenario interpretation: high-load and low-budget scenarios as
+%   perturbations along the most sensitive parameter directions.
+%
+% - Figure 8: tornado chart (or sensitivity scatter plots).
+%
+% - Answer RQ3.
+
+
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+% ============================================================
+
+% ---- 8.1 ----
+\subsection{Interpretation of Findings}
+\label{sec:discussion:interpretation}
+%
+% - Synthesise answers to RQ1, RQ2, RQ3 in plain language:
+%   * RQ1: characterise the Pareto-optimal composition profile (e.g., heavy
+%     Feature Implementation core + proportional Code Review + at least 1
+%     Refactoring agent for balanced configurations).
+%   * RQ2: quantify the performance gap introduced by degradation functions;
+%     emphasise that ignoring technical debt dynamics leads to over-optimistic
+%     throughput predictions and under-resourced testing allocations.
+%   * RQ3: identify which aspects of optimal configurations are robust across
+%     scenarios vs. which are scenario-specific.
+%
+% - Counterintuitive findings (if any): e.g., adding more agents does NOT
+%   always improve throughput past M_max; highest-V configurations may not
+%   be cost-optimal due to escalation overhead.
+%
+% - Connect to the formal theorems: optimal a_5/a_3 ratio predicted by
+%   Theorem 4; M_max bound from Theorem 3 confirmed by empirical results.
+
+% ---- 8.2 ----
+\subsection{Practical Implications for AI-Human Team Design}
+\label{sec:discussion:implications}
+%
+% - Translate Pareto-extreme composition profiles into actionable heuristics:
+%   * Minimum Code Review + Testing allocation to avoid quality cliff in eta_rev.
+%   * Refactoring-to-Feature-Implementation ratio implied by Theorem 4.
+%   * Recommended span-of-control M range per scenario.
+%
+% - Span-of-control interaction: does higher M systematically shift the Pareto
+%   front? Is there an optimal M* below M_max?
+%
+% - Tool/platform selection guidance: high-sensitivity parameters (Section 7.4)
+%   identify the agent roles where capability improvements yield the largest
+%   Pareto-front improvement; these are the highest-value targets for model upgrades.
+%
+% - Cost operationalisation: the per-agent per-sprint cost structure maps
+%   directly to cloud LLM API pricing, making C_F directly actionable.
+%   Compare cost at Pareto-optimal vs. a naive all-human baseline.
+
+% ---- 8.3 ----
+\subsection{Threats to Validity}
+\label{sec:discussion:threats}
+%
+% INTERNAL VALIDITY
+% - Monte Carlo convergence: report that CV < epsilon_CV met in all scenarios;
+%   report actual K distribution.
+% - Local optima in evolutionary search: compare evolutionary vs. random-search
+%   hypervolume to bound sub-optimality gap.
+% - Pre-filter conservatism: estimate false-positive rate by simulating a sample
+%   of flagged-infeasible configurations.
+%
+% CONSTRUCT VALIDITY
+% - Rate parameters drawn from assumed distributions (not validated against
+%   specific industrial data); calibration strategy described in Section 5.2.
+% - Degradation function forms (power law, piecewise linear) are assumed;
+%   actual shapes may differ; ablation in Section 7.3 bounds the sensitivity.
+% - Model does not capture inter-agent communication overhead or LLM context
+%   limitations; these could be added as future extensions.
+%
+% EXTERNAL VALIDITY
+% - Three scenarios may not cover all industrial contexts; N and M ranges finite.
+% - Results may not generalise to very large teams (N > 10) where new bottlenecks
+%   (e.g., inter-team coordination) emerge.
+% - Single-project scope: multi-project portfolio settings introduce resource
+%   sharing not modelled here.
+%
+% MODEL VALIDITY
+% - 11-step sprint transition serialises steps that may overlap in practice.
+% - Single-value tau_CI approximates what is in practice a distribution over
+%   test execution times.
+% - Product Owner modelled as singleton with unlimited capacity; unrealistic
+%   at scale.
+% - Formal stability theorems partially mitigate internal-validity concerns
+%   by providing analytical guarantees in limiting cases.
+
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% ============================================================
+%
+% - Restate core contribution: first formal simulation framework for mixed
+%   AI-human software team composition, grounded in a 14-dimensional sprint-state
+%   model with proved stability guarantees and multi-objective optimisation.
+%
+% - Three main empirical findings (one sentence each, fill in after experiments).
+%
+% - Limitations not covered in threats:
+%   * Static composition A; no adaptive re-allocation between sprints.
+%   * No agent capability improvement over time (learning curves or model upgrades).
+%   * Cost structure is static (no economy-of-scale effects).
+%
+% - Four concrete future-work directions:
+%   1. Empirical calibration of rate parameters from industrial sprint logs and
+%      LLM benchmark data (SWE-bench, HumanEval, CodeContests).
+%   2. Multi-project portfolio extension: human developers shared across teams;
+%      introduces cross-project capacity contention.
+%   3. Online/adaptive composition policy: replace static A with a sprint-level
+%      reallocation policy responding to observed S(t).
+%   4. Agent capability growth: incorporate learning curves and model version
+%      transitions (agent upgrades mid-project).
+
+
+%\begin{acknowledgements}
+% This work was supported by [funding agency] under grant [number].
+%\end{acknowledgements}
+
+
+% Authors must disclose all relationships or interests that
+% could have direct or potential influence or impart bias on
+% the work:
+%
+% \section*{Conflict of interest}
+%
+% The authors declare that they have no conflict of interest.
+
+
+% ============================================================
+% APPENDICES
+% ============================================================
+\appendix
+
+\section{Proof Details}
+\label{app:proofs}
+%
+% - Full proofs of Theorems 1-5 (proof sketches in Section 4 reference here).
+% - Derivation of sprint transition equations from first principles.
+% - Derivation of D* fixed-point (Theorem 4) and closed-form expression.
+% - Proof that CI/CD latency buffer variance is bounded (Theorem 5).
+
+\section{Parameter Tables}
+\label{app:params}
+%
+% - Complete listing of all ~74 model parameters.
+% - For each: symbol, description, distribution family, default parameters,
+%   scenario-specific overrides (default / high-load / low-budget),
+%   data source / justification.
+% - Separate sub-table for team-composition control variables (N, M, A, R)
+%   with sweep ranges used in experiments.
+
+
+\bibliographystyle{spbasic}      % basic style, author-year citations
+\bibliography{literature}        % name your BibTeX data base
+
+\end{document}

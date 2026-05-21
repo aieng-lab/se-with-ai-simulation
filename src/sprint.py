@@ -59,6 +59,13 @@ def step_sprint(
     """
 
     # ------------------------------------------------------------------
+    # Preliminary: feature-freeze flag and active agent composition
+    # Sprint t is frozen iff (t % R) >= (R - F_freeze); use A_qa instead of A.
+    # ------------------------------------------------------------------
+    is_frozen = (t % config.R) >= (config.R - config.F_freeze)
+    A_active = config.active_A(is_frozen)
+
+    # ------------------------------------------------------------------
     # Preliminary: degradation functions at current debt D(t)
     # ------------------------------------------------------------------
     phi_D = 1.0 + (params.phi_max - 1.0) * (state.D ** params.kappa)
@@ -108,9 +115,9 @@ def step_sprint(
     esc_done = int(H_for_esc * config.N / params.H_escalation_time)
     H_after_esc = H_after_rev - H_for_esc
 
-    # Human coding capacity and feature output
+    # Human coding capacity and feature output (zero during feature freeze)
     H_code = params.f_code * H_after_esc
-    impl_human = int(H_code * config.N / params.h_feature)
+    impl_human = 0 if is_frozen else int(H_code * config.N / params.h_feature)
 
     # Effective architecture quality (degraded when review queue is overloaded)
     q_arch_eff = params.q_arch * eta_rev + (1.0 - eta_rev) * params.q_arch_floor
@@ -120,7 +127,7 @@ def step_sprint(
     # ------------------------------------------------------------------
     arrivals = int(rng.poisson(params.lambda_F))
     b_F = min(1.0, state.Q_rev / params.Q_thr_block) if params.Q_thr_block > 0 else 0.0
-    a_3 = config.agent_count(3)
+    a_3 = A_active[2]
     impl_agents = min(
         state.F_backlog,
         int(params.r_F * psi_D * a_3 * (1.0 - b_F)),
@@ -207,7 +214,7 @@ def step_sprint(
     # ------------------------------------------------------------------
     # §4.4 Architecture review queue update
     # ------------------------------------------------------------------
-    arch_new = int(rng.poisson(params.r_arch * config.agent_count(2)))
+    arch_new = int(rng.poisson(params.r_arch * A_active[1]))
     state.Q_rev = max(0, state.Q_rev + arch_new - rev_done)
 
     # ------------------------------------------------------------------
@@ -221,7 +228,7 @@ def step_sprint(
     # ------------------------------------------------------------------
     # §4.6 Bug fixing
     # ------------------------------------------------------------------
-    a_4 = config.agent_count(4)
+    a_4 = A_active[3]
     r_fix_min_eff = params.r_fix_minor * psi_D
     r_fix_maj_eff = params.r_fix_major * psi_D
     fixes_min = min(state.B_kno_min, int(r_fix_min_eff * a_4 * (1.0 - params.theta)))
@@ -234,7 +241,7 @@ def step_sprint(
     # ------------------------------------------------------------------
     total_fixes = fixes_min + fixes_maj
     reg_from_fixes = int(rng.binomial(total_fixes, params.p_regress)) if total_fixes > 0 else 0
-    refactor_units = round(config.agent_count(5) * params.r_refactor)
+    refactor_units = round(A_active[4] * params.r_refactor)
     reg_from_refactor = (
         int(rng.binomial(refactor_units, params.p_regress_refactor))
         if refactor_units > 0 else 0
@@ -249,18 +256,18 @@ def step_sprint(
         state.D
         + params.delta_impl * impl
         + params.delta_fix * total_fixes
-        - params.delta_refactor * config.agent_count(5) * params.r_refactor,
+        - params.delta_refactor * A_active[4] * params.r_refactor,
     ))
 
     # ------------------------------------------------------------------
     # §4.9 Test suite and documentation update
     # ------------------------------------------------------------------
-    state.tests_UT += params.r_UT * config.agent_count(8)
-    state.tests_IT += params.r_IT * config.agent_count(9)
-    state.tests_ST += params.r_ST * config.agent_count(10)
+    state.tests_UT += params.r_UT * A_active[7]
+    state.tests_IT += params.r_IT * A_active[8]
+    state.tests_ST += params.r_ST * A_active[9]
     state.doc_cov = max(0.0, min(1.0,
         state.doc_cov
-        + (params.r_doc * config.agent_count(12) - params.zeta_doc * impl)
+        + (params.r_doc * A_active[11] - params.zeta_doc * impl)
         / max(1, state.F_completed),
     ))
 
