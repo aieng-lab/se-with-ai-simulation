@@ -1,8 +1,9 @@
 """Pareto frontier construction per FRAMEWORK.md §8.3 and §9.4.
 
-Dominance: `c` dominates `c'` iff V_c >= V_c', Q_c <= Q_c', C_F_c <= C_F_c' with
-at least one strict inequality. Statistical tie-breaking uses 95% bootstrap CIs
-(§9.3): candidates whose CIs overlap on all three objectives are co-retained.
+Dominance: `c` dominates `c'` iff value_c >= value_c', quality_c <= quality_c',
+C_F_c <= C_F_c' with at least one strict inequality. Statistical tie-breaking
+uses 95% bootstrap CIs (§9.3): candidates whose CIs overlap on all three
+objectives are co-retained.
 """
 
 from __future__ import annotations
@@ -20,12 +21,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class AggregatedObjectives:
-    V_mean: float
-    Q_mean: float
-    CF_mean: float
-    V_ci: tuple[float, float]
-    Q_ci: tuple[float, float]
-    CF_ci: tuple[float, float]
+    value_mean: float
+    quality_mean: float
+    cost_mean: float
+    value_ci: tuple[float, float]
+    quality_ci: tuple[float, float]
+    cost_ci: tuple[float, float]
 
 
 def aggregate_config_result(
@@ -38,36 +39,36 @@ def aggregate_config_result(
     The bootstrap RNG is derived deterministically from master_seed and the config,
     consistent with §9.0 reproducibility requirements.
     """
-    V_arr = np.array([r.V  for r in result.replications])
-    Q_arr = np.array([r.Q  for r in result.replications])
-    CF_arr = np.array([r.C_F for r in result.replications])
+    value_arr   = np.array([r.value   for r in result.replications])
+    quality_arr = np.array([r.quality for r in result.replications])
+    cost_arr      = np.array([r.cost    for r in result.replications])
 
-    K = len(V_arr)
+    K = len(value_arr)
     boot_seed = (master_seed ^ _config_hash(result.config) ^ 0xB007_5EED) & 0xFFFF_FFFF_FFFF_FFFF
     rng = np.random.default_rng(boot_seed)
 
     idx = rng.integers(0, K, size=(n_bootstrap, K))
-    V_boot  = V_arr[idx].mean(axis=1)
-    Q_boot  = Q_arr[idx].mean(axis=1)
-    CF_boot = CF_arr[idx].mean(axis=1)
+    value_boot   = value_arr[idx].mean(axis=1)
+    quality_boot = quality_arr[idx].mean(axis=1)
+    cost_boot      = cost_arr[idx].mean(axis=1)
 
     return AggregatedObjectives(
-        V_mean=float(V_arr.mean()),
-        Q_mean=float(Q_arr.mean()),
-        CF_mean=float(CF_arr.mean()),
-        V_ci=(float(np.percentile(V_boot, 2.5)),  float(np.percentile(V_boot, 97.5))),
-        Q_ci=(float(np.percentile(Q_boot, 2.5)),  float(np.percentile(Q_boot, 97.5))),
-        CF_ci=(float(np.percentile(CF_boot, 2.5)), float(np.percentile(CF_boot, 97.5))),
+        value_mean=float(value_arr.mean()),
+        quality_mean=float(quality_arr.mean()),
+        cost_mean=float(cost_arr.mean()),
+        value_ci=(float(np.percentile(value_boot, 2.5)),   float(np.percentile(value_boot, 97.5))),
+        quality_ci=(float(np.percentile(quality_boot, 2.5)), float(np.percentile(quality_boot, 97.5))),
+        cost_ci=(float(np.percentile(cost_boot, 2.5)),          float(np.percentile(cost_boot, 97.5))),
     )
 
 
 def dominates_strict(a: AggregatedObjectives, b: AggregatedObjectives) -> bool:
     """Point-estimate strict dominance (§8.3). Does not account for CI overlap."""
     return (
-        a.V_mean >= b.V_mean
-        and a.Q_mean <= b.Q_mean
-        and a.CF_mean <= b.CF_mean
-        and (a.V_mean > b.V_mean or a.Q_mean < b.Q_mean or a.CF_mean < b.CF_mean)
+        a.value_mean >= b.value_mean
+        and a.quality_mean <= b.quality_mean
+        and a.cost_mean <= b.cost_mean
+        and (a.value_mean > b.value_mean or a.quality_mean < b.quality_mean or a.cost_mean < b.cost_mean)
     )
 
 
@@ -81,13 +82,13 @@ def _ci_significantly_better(
     configuration does not overlap with the CI of the worse configuration on at
     least one objective.
     """
-    # V (maximize): better's lower CI strictly exceeds worse's upper CI
-    v_sig = better.V_ci[0] > worse.V_ci[1]
-    # Q (minimize): better's upper CI strictly below worse's lower CI
-    q_sig = better.Q_ci[1] < worse.Q_ci[0]
+    # value (maximize): better's lower CI strictly exceeds worse's upper CI
+    value_sig = better.value_ci[0] > worse.value_ci[1]
+    # quality (minimize): better's upper CI strictly below worse's lower CI
+    quality_sig = better.quality_ci[1] < worse.quality_ci[0]
     # CF (minimize): better's upper CI strictly below worse's lower CI
-    cf_sig = better.CF_ci[1] < worse.CF_ci[0]
-    return v_sig or q_sig or cf_sig
+    cf_sig = better.cost_ci[1] < worse.cost_ci[0]
+    return value_sig or quality_sig or cf_sig
 
 
 def pareto_frontier(points: list[AggregatedObjectives]) -> list[int]:

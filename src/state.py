@@ -1,8 +1,8 @@
-"""System state vector and latency buffer per FRAMEWORK.md §2.2."""
+"""System state vector per FRAMEWORK.md §2.2."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(slots=True)
@@ -11,69 +11,38 @@ class SystemState:
 
     F_backlog: int = 0
     F_completed: int = 0
-    B_hid_min: int = 0
+    B_hid_min: int = 0     # hidden bugs (not detected; escape at next release)
     B_hid_maj: int = 0
+    B_hid_sec: int = 0
     B_kno_min: int = 0
     B_kno_maj: int = 0
+    B_kno_sec: int = 0
     B_escaped_min: int = 0
     B_escaped_maj: int = 0
+    B_escaped_sec: int = 0
+    B_rel_min: int = 0     # escaped bugs still open in production
+    B_rel_maj: int = 0
+    B_rel_sec: int = 0
     D: float = 0.0
     Q_rev: int = 0
+    Q_arch: int = 0       # pending architecture change requests (impl-generated, arch-drained)
+    Q_arch_impl: int = 0  # approved architecture proposals awaiting implementation (rev_done-filled)
     Q_esc: int = 0
-    tests_UT: float = 0.0
-    tests_IT: float = 0.0
-    tests_ST: float = 0.0
-    doc_cov: float = 0.0
+    tests: float = 0.0     # cumulative tests written by Test Development Agent
+    N_doc: float = 0.0     # cumulative documentation items written
 
     @property
     def B_escaped(self) -> int:
-        return self.B_escaped_min + self.B_escaped_maj
+        return self.B_escaped_min + self.B_escaped_maj + self.B_escaped_sec
+
+    @property
+    def B_rel(self) -> int:
+        return self.B_rel_min + self.B_rel_maj + self.B_rel_sec
 
     @property
     def B_kno(self) -> int:
-        return self.B_kno_min + self.B_kno_maj
+        return self.B_kno_min + self.B_kno_maj + self.B_kno_sec
 
     @property
     def B_hid(self) -> int:
-        return self.B_hid_min + self.B_hid_maj
-
-
-@dataclass(slots=True)
-class LatencyBuffer:
-    """Per-severity cohort store keyed by injection sprint (FRAMEWORK §2.2, §6.1).
-
-    Each cohort records the count of surviving bugs and the injection-time τ_CI(t_inj)
-    so that Definition 6.1's release criterion (t >= t_inj + ceil(τ_CI(t_inj))) can be
-    evaluated per cohort.
-    """
-
-    # maps t_inj -> (count, ceil_tau_CI_at_injection)
-    minor: dict[int, tuple[int, int]] = field(default_factory=dict)
-    major: dict[int, tuple[int, int]] = field(default_factory=dict)
-
-    def add(self, t_inj: int, n_minor: int, n_major: int, tau_ceil: int) -> None:
-        if n_minor:
-            prior = self.minor.get(t_inj, (0, tau_ceil))
-            self.minor[t_inj] = (prior[0] + n_minor, tau_ceil)
-        if n_major:
-            prior = self.major.get(t_inj, (0, tau_ceil))
-            self.major[t_inj] = (prior[0] + n_major, tau_ceil)
-
-    def pop_detectable(self, t: int) -> tuple[int, int]:
-        """Remove and return (minor, major) cohorts with t >= t_inj + ceil(τ)."""
-        c_min = _pop_matured(self.minor, t)
-        c_maj = _pop_matured(self.major, t)
-        return c_min, c_maj
-
-    def drain_all(self) -> tuple[int, int]:
-        c_min = sum(count for count, _ in self.minor.values())
-        c_maj = sum(count for count, _ in self.major.values())
-        self.minor.clear()
-        self.major.clear()
-        return c_min, c_maj
-
-
-def _pop_matured(cohorts: dict[int, tuple[int, int]], t: int) -> int:
-    matured = [t_inj for t_inj, (_, tau) in cohorts.items() if t >= t_inj + tau]
-    total = sum(cohorts.pop(t_inj)[0] for t_inj in matured)
-    return total
+        return self.B_hid_min + self.B_hid_maj + self.B_hid_sec

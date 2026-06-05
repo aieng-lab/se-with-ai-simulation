@@ -33,11 +33,11 @@ from .simulation import ConfigResult, ConfigTrace, run_configuration
 def _example_configuration() -> TeamConfiguration:
     """Example 2-human, span-3 team: 6 agents split across the most-used roles."""
     composition = [0] * AGENT_ROLE_COUNT
-    composition[2] = 2   # Feature Implementation
-    composition[3] = 1   # Bug Fixing
-    composition[5] = 1   # Code Review
-    composition[6] = 1   # Security Audit
-    composition[7] = 1   # Unit Test Development
+    composition[0] = 2   # Feature Implementation (k=1)
+    composition[2] = 1   # Bug Fixing (k=3)
+    composition[4] = 1   # Code Review (k=5)
+    composition[5] = 1   # Security Audit (k=6)
+    composition[6] = 1   # Test Development (k=7)
     return TeamConfiguration(N=2, M=3, A=tuple(composition), R=4)
 
 
@@ -83,9 +83,9 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
     print()
     print("Objectives (mean [95 % CI]):")
-    print(f"  V   features/sprint   {agg.V_mean:.3f}   [{agg.V_ci[0]:.3f}, {agg.V_ci[1]:.3f}]")
-    print(f"  Q   bugs/feature      {agg.Q_mean:.4f}   [{agg.Q_ci[0]:.4f}, {agg.Q_ci[1]:.4f}]")
-    print(f"  CF  cost/feature      {agg.CF_mean:.1f}   [{agg.CF_ci[0]:.1f}, {agg.CF_ci[1]:.1f}]")
+    print(f"  value   features/sprint       {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
+    print(f"  quality weighted-bugs/feature {agg.quality_mean:.4f}   [{agg.quality_ci[0]:.4f}, {agg.quality_ci[1]:.4f}]")
+    print(f"  CF  cost/feature      {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
     print()
     print(f"Pareto:  {'on frontier' if frontier else 'off frontier'}")
 
@@ -113,9 +113,9 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print(f"Replications: K={len(result.replications)}")
     print()
     print("Objectives (mean [95 % CI]):")
-    print(f"  V   features/sprint   {agg.V_mean:.3f}   [{agg.V_ci[0]:.3f}, {agg.V_ci[1]:.3f}]")
-    print(f"  Q   bugs/feature      {agg.Q_mean:.4f}   [{agg.Q_ci[0]:.4f}, {agg.Q_ci[1]:.4f}]")
-    print(f"  CF  cost/feature      {agg.CF_mean:.1f}   [{agg.CF_ci[0]:.1f}, {agg.CF_ci[1]:.1f}]")
+    print(f"  value   features/sprint       {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
+    print(f"  quality weighted-bugs/feature {agg.quality_mean:.4f}   [{agg.quality_ci[0]:.4f}, {agg.quality_ci[1]:.4f}]")
+    print(f"  CF  cost/feature      {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
 
     if not args.traces:
         return

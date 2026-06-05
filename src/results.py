@@ -58,16 +58,16 @@ def save_result(
             "A_qa": list(result.config.A_qa),  # type: ignore[arg-type]
         },
         "replications": [
-            {"V": r.V, "Q": r.Q, "C_F": r.C_F}
+            {"value": r.value, "quality": r.quality, "cost": r.cost}
             for r in result.replications
         ],
         "aggregated": {
-            "V_mean": agg.V_mean,
-            "Q_mean": agg.Q_mean,
-            "CF_mean": agg.CF_mean,
-            "V_ci": list(agg.V_ci),
-            "Q_ci": list(agg.Q_ci),
-            "CF_ci": list(agg.CF_ci),
+            "value_mean": agg.value_mean,
+            "quality_mean": agg.quality_mean,
+            "cost_mean": agg.cost_mean,
+            "value_ci": list(agg.value_ci),
+            "quality_ci": list(agg.quality_ci),
+            "cost_ci": list(agg.cost_ci),
         },
     }
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -88,19 +88,19 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
                                F_freeze=F_freeze, A_qa=A_qa)
 
     replications = tuple(
-        ReplicationResult(V=r["V"], Q=r["Q"], C_F=r["C_F"])
+        ReplicationResult(value=r["value"], quality=r["quality"], cost=r["cost"])
         for r in data["replications"]
     )
     result = ConfigResult(config=config, replications=replications)
 
     ag = data["aggregated"]
     agg = AggregatedObjectives(
-        V_mean=ag["V_mean"],
-        Q_mean=ag["Q_mean"],
-        CF_mean=ag["CF_mean"],
-        V_ci=tuple(ag["V_ci"]),
-        Q_ci=tuple(ag["Q_ci"]),
-        CF_ci=tuple(ag["CF_ci"]),
+        value_mean=ag["value_mean"],
+        quality_mean=ag["quality_mean"],
+        cost_mean=ag["cost_mean"],
+        value_ci=tuple(ag["value_ci"]),
+        quality_ci=tuple(ag["quality_ci"]),
+        cost_ci=tuple(ag["cost_ci"]),
     )
     return result, agg
 

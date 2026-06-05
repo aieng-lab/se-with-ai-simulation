@@ -39,7 +39,7 @@ sys.path.insert(0, str(_ROOT))
 
 from src.config import AGENT_ROLE_COUNT, SweepSettings, TeamConfiguration
 from src.feasibility import check_feasibility
-from src.io import load_mean_parameters, load_scenario_config
+from src.io import load_scenario_config
 from src.pareto import aggregate_config_result, pareto_frontier
 from src.results import save_result
 from src.simulation import ConfigResult, run_configuration
@@ -64,13 +64,13 @@ def _sample_composition(total: int, n_roles: int, rng: np.random.Generator) -> t
 def _sample_composition_with_impl(
     total: int, n_roles: int, rng: np.random.Generator
 ) -> tuple[int, ...]:
-    """Sample a composition guaranteeing a_3 (Feature Implementation, index 2) >= 1."""
+    """Sample a composition guaranteeing a_2 (Feature Implementation, index 1) >= 1."""
     if total < 1:
         raise ValueError(f"total must be >= 1, got {total}")
     # Reserve 1 for impl, distribute the rest freely
     base = _sample_composition(total - 1, n_roles, rng)
     A = list(base)
-    A[2] += 1   # role 3 = index 2
+    A[1] += 1   # role 2 = index 1 (Feature Implementation)
     return tuple(A)
 
 
@@ -89,19 +89,29 @@ def _sample_qa_composition(
 # ---------------------------------------------------------------------------
 
 def _mutate(config: TeamConfiguration, rng: np.random.Generator) -> TeamConfiguration:
-    """Move 1–3 agents between random roles; preserve sum(A) = N*M and a_3 >= 1.
+    """Perturb A by moves, additions, or removals; keep sum(A) <= N*M and a_2 >= 1.
     F_freeze and A_qa are inherited unchanged from the parent."""
     A = list(config.A)
-    n_shifts = int(rng.integers(1, 4))
-    for _ in range(n_shifts):
-        donors = [i for i in range(AGENT_ROLE_COUNT)
-                  if A[i] > 0 and (i != 2 or A[i] > 1)]
-        if not donors:
-            break
-        src = int(rng.choice(donors))
-        dst = int(rng.integers(AGENT_ROLE_COUNT))
-        A[src] -= 1
-        A[dst] += 1
+    budget = config.N * config.M
+    n_ops = int(rng.integers(1, 4))
+    for _ in range(n_ops):
+        op = int(rng.integers(3))   # 0=move, 1=add, 2=remove
+        current_sum = sum(A)
+        if op == 1 and current_sum < budget:
+            A[int(rng.integers(AGENT_ROLE_COUNT))] += 1
+        elif op == 2 and current_sum > 1:
+            donors = [i for i in range(AGENT_ROLE_COUNT)
+                      if A[i] > 0 and (i != 1 or A[i] > 1)]
+            if donors:
+                A[int(rng.choice(donors))] -= 1
+        else:
+            donors = [i for i in range(AGENT_ROLE_COUNT)
+                      if A[i] > 0 and (i != 1 or A[i] > 1)]
+            if donors:
+                src = int(rng.choice(donors))
+                dst = int(rng.integers(AGENT_ROLE_COUNT))
+                A[src] -= 1
+                A[dst] += 1
     try:
         return TeamConfiguration(N=config.N, M=config.M, A=tuple(A), R=config.R,
                                  F_freeze=config.F_freeze, A_qa=config.A_qa)
@@ -125,10 +135,14 @@ def _random_configs(
         N = int(rng.choice(search_spec["N_values"]))
         M = int(rng.integers(1, search_spec["M_max"] + 1))
         R = int(rng.choice(search_spec["R_values"]))
-        A = _sample_composition_with_impl(N * M, AGENT_ROLE_COUNT, rng)
+        budget = N * M
+        # Sample actual agent totals uniformly in [1, budget] (dev) and [0, budget] (QA)
+        B_dev = int(rng.integers(1, budget + 1))
+        B_qa  = int(rng.integers(0, budget + 1))
+        A = _sample_composition_with_impl(B_dev, AGENT_ROLE_COUNT, rng)
         # Sample F_freeze, clamped so it respects [1, R]
         F_freeze = int(rng.choice([v for v in f_freeze_values if 1 <= v <= R] or [1]))
-        A_qa = _sample_qa_composition(N * M, AGENT_ROLE_COUNT, rng)
+        A_qa = _sample_qa_composition(B_qa, AGENT_ROLE_COUNT, rng)
         try:
             cfg = TeamConfiguration(N=N, M=M, A=A, R=R, F_freeze=F_freeze, A_qa=A_qa)
             configs.append(cfg)
@@ -149,8 +163,7 @@ def _evaluate(
     config: TeamConfiguration,
     key: str,
     settings: SweepSettings,
-    mean_params,
-    priors,
+    params,
     out_dir: Path,
 ):
     """Run feasibility check + simulation.
@@ -159,7 +172,7 @@ def _evaluate(
     agg is None when the config is infeasible.
     """
     from src.pareto import AggregatedObjectives
-    report = check_feasibility(config, mean_params)
+    report = check_feasibility(config, params)
     entry: dict = {
         "feasible": report.feasible,
         "N": config.N, "M": config.M, "R": config.R,
@@ -172,7 +185,7 @@ def _evaluate(
         entry["reason"] = report.reason
         return entry, None
 
-    cr = run_configuration(config, settings, priors)
+    cr = run_configuration(config, settings, params)
     agg = aggregate_config_result(cr, master_seed=settings.master_seed)
     config_dir = out_dir / key
     config_dir.mkdir(exist_ok=True)
@@ -187,8 +200,7 @@ def _evaluate(
 def _run_random_search(
     search_spec: dict,
     settings: SweepSettings,
-    mean_params,
-    priors,
+    params,
     out_dir: Path,
     rng: np.random.Generator,
     n_samples: int,
@@ -201,14 +213,14 @@ def _run_random_search(
 
     for i, cfg in enumerate(configs):
         key = _config_key(cfg, i)
-        entry, agg = _evaluate(cfg, key, settings, mean_params, priors, out_dir)
+        entry, agg = _evaluate(cfg, key, settings, params, out_dir)
         entry["generation"] = 0
         manifest[key] = entry
         if agg is not None:
             feasible.append(cfg)
             aggs.append((key, cfg, agg))
             print(f"  [{i+1}/{len(configs)}] {key}:  "
-                  f"V={agg.V_mean:.3f}  Q={agg.Q_mean:.4f}  CF={agg.CF_mean:.0f}")
+                  f"V={agg.value_mean:.3f}  Q={agg.quality_mean:.4f}  CF={agg.cost_mean:.0f}")
         else:
             print(f"  [{i+1}/{len(configs)}] {key}:  infeasible (step {entry.get('failed_step')})")
 
@@ -218,8 +230,7 @@ def _run_random_search(
 def _run_evolutionary_search(
     search_spec: dict,
     settings: SweepSettings,
-    mean_params,
-    priors,
+    params,
     out_dir: Path,
     rng: np.random.Generator,
 ) -> tuple[dict, list, list]:
@@ -237,7 +248,7 @@ def _run_evolutionary_search(
         idx = eval_counter[0]
         eval_counter[0] += 1
         key = _config_key(cfg, idx)
-        entry, agg = _evaluate(cfg, key, settings, mean_params, priors, out_dir)
+        entry, agg = _evaluate(cfg, key, settings, params, out_dir)
         entry["generation"] = generation
         manifest[key] = entry
         if agg is not None:
@@ -308,8 +319,7 @@ def main(argv: list[str] | None = None) -> None:
     n_samples = args.n_samples if args.n_samples is not None else search_spec.get("n_samples", 500)
 
     scenario_path = exp["scenario"]
-    sweep_settings_from_json, priors = load_scenario_config(scenario_path)
-    _, mean_params = load_mean_parameters(scenario_path)
+    sweep_settings_from_json, params = load_scenario_config(scenario_path)
     settings = SweepSettings(T=T, K=K, master_seed=sweep_settings_from_json.master_seed)
 
     print(f"Search:      {cfg_path}")
@@ -327,11 +337,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if strategy == "random":
         manifest, feasible, aggs = _run_random_search(
-            search_spec, settings, mean_params, priors, out_dir, rng, n_samples
+            search_spec, settings, params, out_dir, rng, n_samples
         )
     else:
         manifest, feasible, aggs = _run_evolutionary_search(
-            search_spec, settings, mean_params, priors, out_dir, rng
+            search_spec, settings, params, out_dir, rng
         )
 
     # Pareto frontier
@@ -360,8 +370,8 @@ def main(argv: list[str] | None = None) -> None:
             key: {
                 "N": cfg.N, "M": cfg.M, "R": cfg.R,
                 "A": list(cfg.A),
-                "V_mean": agg.V_mean, "Q_mean": agg.Q_mean, "CF_mean": agg.CF_mean,
-                "V_ci": list(agg.V_ci), "Q_ci": list(agg.Q_ci), "CF_ci": list(agg.CF_ci),
+                "value_mean": agg.value_mean, "quality_mean": agg.quality_mean, "cost_mean": agg.cost_mean,
+                "value_ci": list(agg.value_ci), "quality_ci": list(agg.quality_ci), "cost_ci": list(agg.cost_ci),
             }
             for key, cfg, agg in aggs
         },
@@ -375,7 +385,7 @@ def main(argv: list[str] | None = None) -> None:
     for key in frontier_keys:
         obj = sweep_summary["objectives"][key]
         print(f"  {key}  N={obj['N']} M={obj['M']} R={obj['R']}  "
-              f"V={obj['V_mean']:.3f}  Q={obj['Q_mean']:.4f}  CF={obj['CF_mean']:.0f}")
+              f"value={obj['value_mean']:.3f}  quality={obj['quality_mean']:.4f}  CF={obj['cost_mean']:.0f}")
         print(f"         A={obj['A']}")
     print()
     print(f"Results saved to: {out_dir}")

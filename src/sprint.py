@@ -1,21 +1,20 @@
-"""Sprint transition equations per FRAMEWORK.md §4.
+"""Sprint transition equations.
 
-Within-sprint ordering (from the §4 preamble):
-  Prelim  Degradation functions, τ_CI(t), human capacity allocation (§3.1–3.5)
-  4.1     Feature arrival and implementation
-  4.2     Bug injection + Stage A detection
-  4.3     Stage B detection (test layers)
-  4.4     Architecture review queue dynamics
-  4.5     Escalation queue dynamics
-  4.6     Bug fixing
-  4.7     Regression injection
-  4.8     Technical debt update
-  4.9     Test suite and documentation update
-  4.10    CI/CD pipeline latency (τ_CI(t+1) — implicit, derived from updated state)
-  4.11    Release event
+Within-sprint ordering:
+  Step 1  Human capacity allocation (§3)
+  Step 2  Debt amplifier: D_arch, D_eff, delta_D
+  Step 3  Feature arrival and implementation (priority drain Q_arch_impl, then F_backlog)
+  Step 4  Test suite update
+  Step 5  Bug injection + detection (Test → CR → SA; all synchronous)
+  Step 6  Architecture queue dynamics (Q_rev, Q_arch_impl, Q_arch)
+  Step 7  Escalation queue dynamics
+  Step 8  Bug fixing
+  Step 9  General maintenance (technical debt + documentation update)
+  Step 10 Release event
 
-`q_arch_eff(t)` in §4.2 uses `Q_rev(t)` (start of sprint), *not* the post-4.4 queue.
-τ_CI is not stored in SystemState; it is re-derived from F_completed and tests_k each sprint.
+Detection is unified: Code Review, Security Audit, and the Test suite all act
+within the same sprint as injection. There is no CI/CD latency buffer.
+Regression bugs bypass detection and go directly to the hidden stock (A6).
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from .config import TeamConfiguration
 from .parameters import ScenarioParameters
-from .state import LatencyBuffer, SystemState
+from .state import SystemState
 
 if TYPE_CHECKING:
     from numpy.random import Generator
@@ -37,73 +36,67 @@ class SprintRecord:
     """Per-sprint output quantities needed for cost accounting (§8.1)."""
 
     impl: int               # total features implemented this sprint
-    fixes_min: int          # minor bugs fixed
-    fixes_maj: int          # major bugs fixed
+    fixes_min: int          # minor B_kno bugs fixed by agents
+    fixes_maj: int          # major B_kno bugs fixed by agents
+    fixes_sec: int          # security B_kno bugs fixed by agents
+    rel_fixes_min: int      # minor B_rel bugs fixed by agents
+    rel_fixes_maj: int      # major B_rel bugs fixed by agents
+    rel_fixes_sec: int      # security B_rel bugs fixed by agents
+    h_fixes_min: int        # minor B_kno bugs fixed by humans
+    h_fixes_maj: int        # major B_kno bugs fixed by humans
+    h_fixes_sec: int        # security B_kno bugs fixed by humans
+    h_rel_fixes_min: int    # minor B_rel bugs fixed by humans
+    h_rel_fixes_maj: int    # major B_rel bugs fixed by humans
+    h_rel_fixes_sec: int    # security B_rel bugs fixed by humans
     new_escaped_min: int    # minor bugs escaped to production (0 unless release sprint)
     new_escaped_maj: int    # major bugs escaped to production (0 unless release sprint)
+    new_escaped_sec: int    # security bugs escaped to production (0 unless release sprint)
 
 
 def step_sprint(
     t: int,
     state: SystemState,
-    buffer: LatencyBuffer,
     config: TeamConfiguration,
     params: ScenarioParameters,
     rng: "Generator",
-    T: int,
 ) -> SprintRecord:
-    """Advance `state` and `buffer` from sprint t to sprint t+1 (in place).
+    """Advance `state` from sprint t to sprint t+1 (in place).
 
-    Implements §4.1–§4.11 in the canonical order documented above.
-    `T` is the simulation horizon used to cap τ_CI per §4.10.
+    Implements the ten-step transition in canonical order.
     """
 
     # ------------------------------------------------------------------
     # Preliminary: feature-freeze flag and active agent composition
-    # Sprint t is frozen iff (t % R) >= (R - F_freeze); use A_qa instead of A.
     # ------------------------------------------------------------------
     is_frozen = (t % config.R) >= (config.R - config.F_freeze)
     A_active = config.active_A(is_frozen)
+    n_agents = sum(A_active)   # actual deployed agents (may be < N*M)
 
     # ------------------------------------------------------------------
     # Preliminary: degradation functions at current debt D(t)
+    # Architecture and escalation debts are normalised by the team's maximum
+    # throughput for the corresponding human activity (review / escalation
+    # handling) in a single sprint: H_capacity * N / H_x_time items/sprint.
+    # Both debts use the same structural formula; no threshold magic numbers.
     # ------------------------------------------------------------------
-    phi_D = 1.0 + (params.phi_max - 1.0) * (state.D ** params.kappa)
-    psi_D = 1.0 - (1.0 - params.psi_min) * (state.D ** params.gamma)
+    cap_review = params.H_capacity * config.N / params.H_review_time
+    cap_esc    = params.H_capacity * config.N / params.H_escalation_time
+    Q_arch_total = state.Q_arch + state.Q_rev + state.Q_arch_impl
+    D_arch = min(1.0, Q_arch_total / cap_review)
+    D_esc  = min(1.0, state.Q_esc  / cap_esc)
+    D_eff  = min(1.0, state.D + D_arch + D_esc)
+    delta_D = 1.0 - (1.0 - params.delta_min) * (D_eff ** params.delta_exp)
 
     # ------------------------------------------------------------------
-    # Preliminary: τ_CI(t) from current state (§4.3 / §4.10)
-    # Not stored; re-derived from F_completed and tests each sprint.
-    # ------------------------------------------------------------------
-    n_tests_now = (
-        params.beta_UT * state.tests_UT
-        + params.beta_IT * state.tests_IT
-        + params.beta_ST * state.tests_ST
-    )
-    tau_CI_now = min(
-        params.tau_CI_base
-        * (1.0 + params.alpha_F_CI * state.F_completed)
-        * (1.0 + params.alpha_test_CI * n_tests_now),
-        float(T),
-    )
-    tau_ceil_now = math.ceil(tau_CI_now)
-
-    # ------------------------------------------------------------------
-    # Preliminary: human capacity allocation (§3.1–3.5)
+    # Preliminary: human capacity allocation (§3)
     # ------------------------------------------------------------------
     H_net = max(0.0, params.H_capacity - params.c_comm * (config.N - 1))
-    H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * state.doc_cov)
-    H_after_mon = max(0.0, H_net - config.M * H_mon_eff)
-
-    # Quality degradation factors from start-of-sprint queue sizes
-    eta_rev = max(
-        params.eta_min_rev,
-        1.0 - params.alpha_eta_rev * max(0, state.Q_rev - params.Q_thr_rev),
-    )
-    eta_esc = max(
-        params.eta_min_esc,
-        1.0 - params.alpha_eta_esc * max(0, state.Q_esc - params.Q_thr_esc),
-    )
+    doc_cov = min(params.c_doc_ceil, state.N_doc / max(1.0, state.F_completed))
+    H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
+    # Monitoring overhead is proportional to actual agents per developer.
+    # Feasibility guarantees H_net - agents_per_dev * H_mon_eff >= 0.
+    agents_per_dev = n_agents / config.N
+    H_after_mon = H_net - agents_per_dev * H_mon_eff
 
     # Architecture reviews served this sprint
     H_for_rev = min(H_after_mon, state.Q_rev * params.H_review_time / config.N)
@@ -115,182 +108,194 @@ def step_sprint(
     esc_done = int(H_for_esc * config.N / params.H_escalation_time)
     H_after_esc = H_after_rev - H_for_esc
 
-    # Human coding capacity and feature output (zero during feature freeze)
-    H_code = params.f_code * H_after_esc
-    impl_human = 0 if is_frozen else int(H_code * config.N / params.h_feature)
-
-    # Effective architecture quality (degraded when review queue is overloaded)
-    q_arch_eff = params.q_arch * eta_rev + (1.0 - eta_rev) * params.q_arch_floor
+    # f_fix fraction of H_after_esc goes to bug fixing; (1-f_fix) to feature coding.
+    # During feature freeze, the coding fraction is redirected to bug fixing as well.
+    H_fix_human = H_after_esc if is_frozen else params.f_fix * H_after_esc
+    fix_human_budget = int(H_fix_human * config.N / params.h_fix)
+    impl_human = 0 if is_frozen else int((1.0 - params.f_fix) * H_after_esc * config.N / params.h_feature)
 
     # ------------------------------------------------------------------
     # §4.1 Feature arrival and implementation
     # ------------------------------------------------------------------
-    arrivals = int(rng.poisson(params.lambda_F))
-    b_F = min(1.0, state.Q_rev / params.Q_thr_block) if params.Q_thr_block > 0 else 0.0
-    a_3 = A_active[2]
+    arrivals = int(rng.poisson(params.r_arrival))
+    a_3 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
+    total_impl_cap = int(params.r_F * delta_D * a_3)
+    # Approved architecture proposals are implemented first (priority over backlog).
+    # arch_impl_done consumes agent capacity but does NOT count toward F_completed.
+    arch_impl_done = min(state.Q_arch_impl, total_impl_cap)
     impl_agents = min(
-        state.F_backlog,
-        int(params.r_F * psi_D * a_3 * (1.0 - b_F)),
+        state.F_backlog + arrivals,
+        total_impl_cap - arch_impl_done,
     )
-    impl = impl_agents + impl_human
+    impl = min(impl_agents + impl_human, state.F_backlog + arrivals)
     state.F_backlog = max(0, state.F_backlog + arrivals - impl)
     state.F_completed += impl
 
     # ------------------------------------------------------------------
-    # §4.2 Bug injection + Stage A detection
+    # §4.2 Test suite update (before detection so new tests count this sprint)
     # ------------------------------------------------------------------
-    q_arch_factor = max(1.0, min(2.0, 2.0 - q_arch_eff))
-    lambda_impl_eff = (
-        params.lambda_impl
-        * phi_D
-        * (1.0 + params.alpha_spec * params.epsilon_spec)
-        * q_arch_factor
-    )
+    state.tests += params.r_test * A_active[6]   # Test Development Agent (k=7, index 6)
 
-    bugs_raw = int(rng.poisson(impl_agents * lambda_impl_eff))
-    bugs_human_raw = int(rng.poisson(impl_human * lambda_impl_eff * params.lambda_human_scale))
+    # ------------------------------------------------------------------
+    # §4.3 Bug injection + detection (Test → CR → SA; all synchronous)
+    # ------------------------------------------------------------------
+    r_bugs_eff = params.r_bugs * (2.0 - delta_D)
+
+    bugs_raw = int(rng.poisson(impl_agents * r_bugs_eff))
+    bugs_human_raw = int(rng.poisson(impl_human * r_bugs_eff * params.r_bugs_human))
     bugs_total = bugs_raw + bugs_human_raw
-    bugs_maj = int(rng.binomial(bugs_total, params.theta)) if bugs_total > 0 else 0
-    bugs_min = bugs_total - bugs_maj
 
-    # Orthogonal security split (§4.2 / A7)
-    bugs_sec_maj = int(rng.binomial(bugs_maj, params.p_sec)) if bugs_maj > 0 else 0
-    bugs_sec_min = int(rng.binomial(bugs_min, params.p_sec)) if bugs_min > 0 else 0
-    bugs_nonsec_maj = bugs_maj - bugs_sec_maj
-    bugs_nonsec_min = bugs_min - bugs_sec_min
+    # Three mutually exclusive types: security drawn first, then major/minor split of remainder
+    theta_min = 1.0 - params.theta_maj - params.theta_sec
+    bugs_sec = int(rng.binomial(bugs_total, params.theta_sec)) if bugs_total > 0 else 0
+    remaining = bugs_total - bugs_sec
+    theta_maj_cond = (params.theta_maj / (theta_min + params.theta_maj)
+                      if (theta_min + params.theta_maj) > 0 else 0.0)
+    bugs_maj = int(rng.binomial(remaining, theta_maj_cond)) if remaining > 0 else 0
+    bugs_min = remaining - bugs_maj
 
-    # d_CR_eff: code review detection (A8: not throughput-limited by a_6)
+    # Stage 1 — Test suite (acts on all three types; coverage from tests written so far)
+    cov_test = min(params.c_test_ceil, state.tests / max(1, state.F_completed))
+    p_test = min(1.0, params.d_test * cov_test)
+    test_det_min = int(rng.binomial(bugs_min, p_test)) if bugs_min > 0 else 0
+    test_det_maj = int(rng.binomial(bugs_maj, p_test)) if bugs_maj > 0 else 0
+    test_det_sec = int(rng.binomial(bugs_sec, p_test)) if bugs_sec > 0 else 0
+
+    surv_min_t = bugs_min - test_det_min
+    surv_maj_t = bugs_maj - test_det_maj
+    surv_sec_t = bugs_sec - test_det_sec
+
+    # Stage 2 — Code Review (acts on all survivors; A8: not throughput-limited by a_6)
     size_factor = max(
         0.0,
         1.0 - params.alpha_size * math.log((impl + 1) / params.baseline_size),
     )
-    d_CR_eff = min(1.0, params.d_CR * eta_rev * size_factor)
+    d_CR_eff = min(1.0, params.d_CR * delta_D * size_factor)
+    CR_det_min = int(rng.binomial(surv_min_t, d_CR_eff)) if surv_min_t > 0 else 0
+    CR_det_maj = int(rng.binomial(surv_maj_t, d_CR_eff)) if surv_maj_t > 0 else 0
+    CR_det_sec = int(rng.binomial(surv_sec_t, d_CR_eff)) if surv_sec_t > 0 else 0
 
-    CR_det_maj = int(rng.binomial(bugs_nonsec_maj, d_CR_eff)) if bugs_nonsec_maj > 0 else 0
-    CR_det_min = int(rng.binomial(bugs_nonsec_min, d_CR_eff)) if bugs_nonsec_min > 0 else 0
-    SA_det_maj = int(rng.binomial(bugs_sec_maj, params.d_SA)) if bugs_sec_maj > 0 else 0
-    SA_det_min = int(rng.binomial(bugs_sec_min, params.d_SA)) if bugs_sec_min > 0 else 0
+    surv_sec_cr = surv_sec_t - CR_det_sec
 
-    state.B_kno_maj += CR_det_maj + SA_det_maj
-    state.B_kno_min += CR_det_min + SA_det_min
+    # Stage 3 — Security Audit (acts only on security bugs that survived test + CR)
+    SA_det_sec = int(rng.binomial(surv_sec_cr, params.d_SA)) if surv_sec_cr > 0 else 0
 
-    buf_maj = bugs_nonsec_maj - CR_det_maj + bugs_sec_maj - SA_det_maj
-    buf_min = bugs_nonsec_min - CR_det_min + bugs_sec_min - SA_det_min
-    buffer.add(t, buf_min, buf_maj, tau_ceil_now)
-
-    # ------------------------------------------------------------------
-    # §4.3 Stage B detection (sequential test layers)
-    # ------------------------------------------------------------------
-    C_min, C_maj = buffer.pop_detectable(t)
-
-    cov_UT = min(params.c_UT_ceil, state.tests_UT / max(1, state.F_completed))
-    cov_IT = min(params.c_IT_ceil, state.tests_IT / max(1, state.F_completed))
-    cov_ST = min(params.c_ST_ceil, state.tests_ST / max(1, state.F_completed))
-
-    # Each layer sees survivors of the previous layer; clamp to [0,1]
-    p_UT = min(1.0, params.d_UT * cov_UT)
-    UT_det_maj = int(rng.binomial(C_maj, p_UT)) if C_maj > 0 else 0
-    UT_det_min = int(rng.binomial(C_min, p_UT)) if C_min > 0 else 0
-    C_maj -= UT_det_maj
-    C_min -= UT_det_min
-
-    p_IT = min(1.0, params.d_IT * cov_IT)
-    IT_det_maj = int(rng.binomial(C_maj, p_IT)) if C_maj > 0 else 0
-    IT_det_min = int(rng.binomial(C_min, p_IT)) if C_min > 0 else 0
-    C_maj -= IT_det_maj
-    C_min -= IT_det_min
-
-    p_ST = min(1.0, params.d_ST * cov_ST)
-    ST_det_maj = int(rng.binomial(C_maj, p_ST)) if C_maj > 0 else 0
-    ST_det_min = int(rng.binomial(C_min, p_ST)) if C_min > 0 else 0
-    C_maj -= ST_det_maj
-    C_min -= ST_det_min
-
-    state.B_kno_maj += UT_det_maj + IT_det_maj + ST_det_maj
-    state.B_kno_min += UT_det_min + IT_det_min + ST_det_min
-    state.B_hid_maj += C_maj   # survivors of all 3 test layers (hidden, escape at release)
-    state.B_hid_min += C_min
+    state.B_kno_min += test_det_min + CR_det_min
+    state.B_kno_maj += test_det_maj + CR_det_maj
+    state.B_kno_sec += test_det_sec + CR_det_sec + SA_det_sec
+    state.B_hid_min += surv_min_t - CR_det_min
+    state.B_hid_maj += surv_maj_t - CR_det_maj
+    state.B_hid_sec += surv_sec_cr - SA_det_sec
 
     # ------------------------------------------------------------------
-    # §4.4 Architecture review queue update
+    # §4.4 Architecture queues update
     # ------------------------------------------------------------------
-    arch_new = int(rng.poisson(params.r_arch * A_active[1]))
-    state.Q_rev = max(0, state.Q_rev + arch_new - rev_done)
+    # a) New change requests arrive from this sprint's implementations
+    arch_chg_new = int(rng.poisson(params.f_arch_chg * impl))
+    state.Q_arch += arch_chg_new
+    # b) Architecture agents drain Q_arch (resolving change requests)
+    #    and forward each resolved item as a design proposal into Q_rev
+    arch_chg_done = min(state.Q_arch, int(params.r_arch_chg * A_active[1]))
+    state.Q_arch = max(0, state.Q_arch - arch_chg_done)
+    state.Q_rev = max(0, state.Q_rev + arch_chg_done - rev_done)
+    # c) Approved proposals (rev_done) move into the arch-impl queue
+    state.Q_arch_impl = max(0, state.Q_arch_impl + rev_done - arch_impl_done)
 
     # ------------------------------------------------------------------
     # §4.5 Escalation queue update
     # ------------------------------------------------------------------
-    esc_new = int(rng.poisson(config.N * config.M * params.rho_esc))
+    esc_new = int(rng.poisson(n_agents * params.rho_esc))
     state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
-    re_esc = int(rng.binomial(esc_done, 1.0 - eta_esc)) if esc_done > 0 else 0
-    state.Q_esc += re_esc
 
     # ------------------------------------------------------------------
-    # §4.6 Bug fixing
+    # §4.6 Bug fixing — strict priority: sec > maj > min; rel > kno
+    # Humans fix first (debt-independent count budget), then agents (work budget).
     # ------------------------------------------------------------------
-    a_4 = A_active[3]
-    r_fix_min_eff = params.r_fix_minor * psi_D
-    r_fix_maj_eff = params.r_fix_major * psi_D
-    fixes_min = min(state.B_kno_min, int(r_fix_min_eff * a_4 * (1.0 - params.theta)))
-    fixes_maj = min(state.B_kno_maj, int(r_fix_maj_eff * a_4 * params.theta))
-    state.B_kno_min -= fixes_min
-    state.B_kno_maj -= fixes_maj
+    a_4 = A_active[2]   # Bug Fixing Agent (new k=3, index 2)
+
+    def _drain(queue: int, rate: float, budget: float) -> tuple[int, float]:
+        """Fix as many bugs as agent work budget allows; return (fixes, budget_used)."""
+        n = min(queue, int(budget * rate))
+        return n, (n / rate if rate > 0 else 0.0)
+
+    def _drain_count(queue: int, budget: int) -> tuple[int, int]:
+        """Fix as many bugs as human count budget allows; return (fixes, fixes)."""
+        n = min(queue, budget)
+        return n, n
+
+    # Human fixes (debt-independent, same priority order)
+    hb = fix_human_budget
+    h_rel_fixes_sec, n = _drain_count(state.B_rel_sec, hb); hb -= n; state.B_rel_sec -= h_rel_fixes_sec
+    h_fixes_sec,     n = _drain_count(state.B_kno_sec, hb); hb -= n; state.B_kno_sec -= h_fixes_sec
+    h_rel_fixes_maj, n = _drain_count(state.B_rel_maj, hb); hb -= n; state.B_rel_maj -= h_rel_fixes_maj
+    h_fixes_maj,     n = _drain_count(state.B_kno_maj, hb); hb -= n; state.B_kno_maj -= h_fixes_maj
+    h_rel_fixes_min, n = _drain_count(state.B_rel_min, hb); hb -= n; state.B_rel_min -= h_rel_fixes_min
+    h_fixes_min,     n = _drain_count(state.B_kno_min, hb); hb -= n; state.B_kno_min -= h_fixes_min
+
+    # Agent fixes (debt-slowed work budget, drain remaining queues)
+    W = float(a_4) * delta_D
+    rel_fixes_sec, w = _drain(state.B_rel_sec, params.r_fix_sec,   W); W -= w; state.B_rel_sec -= rel_fixes_sec
+    fixes_sec,     w = _drain(state.B_kno_sec, params.r_fix_sec,   W); W -= w; state.B_kno_sec -= fixes_sec
+    rel_fixes_maj, w = _drain(state.B_rel_maj, params.r_fix_major, W); W -= w; state.B_rel_maj -= rel_fixes_maj
+    fixes_maj,     w = _drain(state.B_kno_maj, params.r_fix_major, W); W -= w; state.B_kno_maj -= fixes_maj
+    rel_fixes_min, w = _drain(state.B_rel_min, params.r_fix_minor, W); W -= w; state.B_rel_min -= rel_fixes_min
+    fixes_min,     w = _drain(state.B_kno_min, params.r_fix_minor, W); W -= w; state.B_kno_min -= fixes_min
 
     # ------------------------------------------------------------------
-    # §4.7 Regression injection (all regressions are minor, §4.7)
-    # ------------------------------------------------------------------
-    total_fixes = fixes_min + fixes_maj
-    reg_from_fixes = int(rng.binomial(total_fixes, params.p_regress)) if total_fixes > 0 else 0
-    refactor_units = round(A_active[4] * params.r_refactor)
-    reg_from_refactor = (
-        int(rng.binomial(refactor_units, params.p_regress_refactor))
-        if refactor_units > 0 else 0
-    )
-    regressions = reg_from_fixes + reg_from_refactor
-    buffer.add(t, regressions, 0, tau_ceil_now)
+    # §4.7 Regression injection (bypass detection; go directly to hidden, per A6)
+    total_fixes = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
+                 + h_fixes_min    + h_fixes_maj    + h_fixes_sec
+                 + rel_fixes_min  + rel_fixes_maj  + rel_fixes_sec
+                 + fixes_min      + fixes_maj      + fixes_sec)
 
     # ------------------------------------------------------------------
-    # §4.8 Technical debt update
+    # §4.8 Technical debt update (General Maintenance, part 1)
     # ------------------------------------------------------------------
     state.D = max(0.0, min(1.0,
         state.D
         + params.delta_impl * impl
         + params.delta_fix * total_fixes
-        - params.delta_refactor * A_active[4] * params.r_refactor,
+        - params.r_refactor * A_active[3],
     ))
 
     # ------------------------------------------------------------------
-    # §4.9 Test suite and documentation update
+    # §4.8 Documentation update (General Maintenance, part 2)
     # ------------------------------------------------------------------
-    state.tests_UT += params.r_UT * A_active[7]
-    state.tests_IT += params.r_IT * A_active[8]
-    state.tests_ST += params.r_ST * A_active[9]
-    state.doc_cov = max(0.0, min(1.0,
-        state.doc_cov
-        + (params.r_doc * A_active[11] - params.zeta_doc * impl)
-        / max(1, state.F_completed),
-    ))
-
-    # §4.10 τ_CI(t+1) is implicit: derived from updated F_completed and tests_k
-    # at the start of the next step_sprint call. No state storage required.
+    state.N_doc += params.r_doc * A_active[7]   # Developer Documentation Agent (k=8)
 
     # ------------------------------------------------------------------
     # §4.11 Release event
     # ------------------------------------------------------------------
-    new_escaped_min = new_escaped_maj = 0
+    new_escaped_min = new_escaped_maj = new_escaped_sec = 0
     if (t + 1) % config.R == 0:
-        late_min, late_maj = buffer.drain_all()
-        new_escaped_min = state.B_hid_min + late_min
-        new_escaped_maj = state.B_hid_maj + late_maj
+        # Hidden bugs (undetected) and known bugs (detected but unfixed) both ship
+        new_escaped_min = state.B_hid_min + state.B_kno_min
+        new_escaped_maj = state.B_hid_maj + state.B_kno_maj
+        new_escaped_sec = state.B_hid_sec + state.B_kno_sec
         state.B_escaped_min += new_escaped_min
         state.B_escaped_maj += new_escaped_maj
-        state.B_hid_min = 0
-        state.B_hid_maj = 0
+        state.B_escaped_sec += new_escaped_sec
+        state.B_rel_min += new_escaped_min
+        state.B_rel_maj += new_escaped_maj
+        state.B_rel_sec += new_escaped_sec
+        state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
+        state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
 
     return SprintRecord(
         impl=impl,
         fixes_min=fixes_min,
         fixes_maj=fixes_maj,
+        fixes_sec=fixes_sec,
+        rel_fixes_min=rel_fixes_min,
+        rel_fixes_maj=rel_fixes_maj,
+        rel_fixes_sec=rel_fixes_sec,
+        h_fixes_min=h_fixes_min,
+        h_fixes_maj=h_fixes_maj,
+        h_fixes_sec=h_fixes_sec,
+        h_rel_fixes_min=h_rel_fixes_min,
+        h_rel_fixes_maj=h_rel_fixes_maj,
+        h_rel_fixes_sec=h_rel_fixes_sec,
         new_escaped_min=new_escaped_min,
         new_escaped_maj=new_escaped_maj,
+        new_escaped_sec=new_escaped_sec,
     )

@@ -34,15 +34,15 @@ _STYLE        = "seaborn-v0_8-whitegrid"
 
 _OBJ_META = {
     # field_suffix → (axis label, better direction symbol, is_lower_better)
-    "V":  ("V  (features / sprint)",  "↑", False),
-    "Q":  ("Q  (bugs / feature)",     "↓", True),
-    "CF": ("CF (cost / feature, $)",  "↓", True),
+    "value":   ("value   (features / sprint)",  "↑", False),
+    "quality": ("quality (weighted bugs / feature)", "↓", True),
+    "cost":      ("CF (cost / feature, $)",       "↓", True),
 }
 
 
 def _sorted_keys(objectives: dict[str, dict]) -> list[str]:
-    """Sort config keys by descending V_mean for consistent x-axis ordering."""
-    return sorted(objectives, key=lambda k: objectives[k]["V_mean"], reverse=True)
+    """Sort config keys by descending value_mean for consistent x-axis ordering."""
+    return sorted(objectives, key=lambda k: objectives[k]["value_mean"], reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def plot_pareto_scatter(
     Non-Pareto configs: grey circles.  Pareto configs: blue, larger.
     Error bars show 95% bootstrap CIs.
     """
-    pairs = [("V", "Q"), ("V", "CF"), ("Q", "CF")]
+    pairs = [("value", "quality"), ("value", "cost"), ("quality", "cost")]
     pareto_set = set(pareto_keys)
 
     with plt.style.context(_STYLE):
@@ -130,7 +130,7 @@ def plot_pareto_3d_scatter(
     """
     pareto_set = set(pareto_keys)
 
-    all_cf = [obj["CF_mean"] for obj in objectives.values()]
+    all_cf = [obj["cost_mean"] for obj in objectives.values()]
     cf_min, cf_max = min(all_cf), max(all_cf)
     norm = matplotlib.colors.Normalize(vmin=cf_min, vmax=cf_max)
     cmap = matplotlib.cm.get_cmap("RdYlGn_r")   # low CF → green (good), high CF → red
@@ -144,16 +144,16 @@ def plot_pareto_3d_scatter(
         for key, obj in objectives.items():
             if key in pareto_set:
                 continue
-            color = cmap(norm(obj["CF_mean"]))
-            ax.scatter(obj["V_mean"], obj["Q_mean"],
+            color = cmap(norm(obj["cost_mean"]))
+            ax.scatter(obj["value_mean"], obj["quality_mean"],
                        color=color, s=40, alpha=0.35, linewidths=0, zorder=2)
 
         # Pareto configs with error bars and labels (foreground layer)
         for key in pareto_keys:
             obj = objectives[key]
-            xm, ym = obj["V_mean"], obj["Q_mean"]
-            xci, yci = obj["V_ci"], obj["Q_ci"]
-            color = cmap(norm(obj["CF_mean"]))
+            xm, ym = obj["value_mean"], obj["quality_mean"]
+            xci, yci = obj["value_ci"], obj["quality_ci"]
+            color = cmap(norm(obj["cost_mean"]))
 
             ax.errorbar(
                 xm, ym,
@@ -202,7 +202,7 @@ def plot_objectives_bar(
     x = np.arange(len(keys))
     cols = [_PARETO_COLOR if k in pareto_set else _OTHER_COLOR for k in keys]
 
-    obj_fields = [("V", "V_mean", "V_ci"), ("Q", "Q_mean", "Q_ci"), ("CF", "CF_mean", "CF_ci")]
+    obj_fields = [("value", "value_mean", "value_ci"), ("quality", "quality_mean", "quality_ci"), ("cost", "cost_mean", "cost_ci")]
 
     with plt.style.context(_STYLE):
         fig, axes = plt.subplots(3, 1, figsize=(max(10, len(keys) * 0.9), 9), sharex=True)
@@ -382,7 +382,7 @@ def plot_comparison_pareto(
 
     Each scenario is a different colour; non-Pareto configs are shown faintly.
     """
-    pairs = [("V", "Q"), ("V", "CF"), ("Q", "CF")]
+    pairs = [("value", "quality"), ("value", "cost"), ("quality", "cost")]
     palette = cm.tab10
     scenario_colors = {label: palette(i % 10) for i, label in enumerate(scenarios)}
 

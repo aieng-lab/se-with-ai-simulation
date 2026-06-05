@@ -8,15 +8,15 @@ from src.simulation import run_configuration
 
 
 @pytest.fixture
-def small_trace(base_config, fixed_priors):
+def small_trace(base_config, base_params):
     s = SweepSettings(T=4, K=2, master_seed=0)
-    return run_configuration(base_config, s, fixed_priors, capture_traces=True)
+    return run_configuration(base_config, s, base_params, capture_traces=True)
 
 
 @pytest.fixture
-def small_result(base_config, fixed_priors):
+def small_result(base_config, base_params):
     s = SweepSettings(T=4, K=2, master_seed=0)
-    return run_configuration(base_config, s, fixed_priors)
+    return run_configuration(base_config, s, base_params)
 
 
 @pytest.fixture
@@ -58,8 +58,8 @@ class TestSaveLoadResult:
         save_result(small_result, small_agg, path)
         loaded_result, loaded_agg = load_result(path)
         assert len(loaded_result.replications) == len(small_result.replications)
-        assert loaded_result.replications[0].V == pytest.approx(small_result.replications[0].V)
-        assert loaded_agg.V_mean == pytest.approx(small_agg.V_mean)
+        assert loaded_result.replications[0].value == pytest.approx(small_result.replications[0].value)
+        assert loaded_agg.value_mean == pytest.approx(small_agg.value_mean)
 
     def test_json_created(self, tmp_path, small_result, small_agg):
         path = tmp_path / "result.json"
@@ -70,8 +70,8 @@ class TestSaveLoadResult:
         import json
         bad = {"config": {"N": 1, "M": 1, "A": [1] * 5, "R": 1},
                "replications": [], "aggregated": {
-                   "V_mean": 0, "Q_mean": 0, "CF_mean": 0,
-                   "V_ci": [0, 0], "Q_ci": [0, 0], "CF_ci": [0, 0]}}
+                   "value_mean": 0, "quality_mean": 0, "cost_mean": 0,
+                   "value_ci": [0, 0], "quality_ci": [0, 0], "cost_ci": [0, 0]}}
         p = tmp_path / "bad.json"
         p.write_text(json.dumps(bad))
         with pytest.raises(ValueError):

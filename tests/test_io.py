@@ -1,46 +1,31 @@
-"""Tests for src/io.py — spec parsing, schema validation, round-trips."""
+"""Tests for src/io.py — value parsing, schema validation, round-trips."""
 
 import json
 from pathlib import Path
 
 import pytest
 
-from src.io import _flatten_scenario, _load_sweep, _parse_spec, load_mean_parameters, load_scenario_config
-from src.sampling import ParameterSpec
+from src.io import _flatten_scenario, _load_sweep, _parse_value, load_scenario_config
+from src.parameters import ScenarioParameters
 
 
-class TestParseSpec:
+class TestParseValue:
     def test_scalar_int(self):
-        spec = _parse_spec("x", 5)
-        assert spec.dist == "fixed" and spec.mean == 5.0
+        assert _parse_value("x", 5) == 5.0
 
     def test_scalar_float(self):
-        spec = _parse_spec("x", 3.14)
-        assert spec.dist == "fixed" and spec.mean == pytest.approx(3.14)
+        assert _parse_value("x", 3.14) == pytest.approx(3.14)
 
-    def test_lognormal(self):
-        spec = _parse_spec("x", {"dist": "lognormal", "mean": 2.0, "cv": 0.2})
-        assert spec.dist == "lognormal"
-        assert spec.mean == 2.0 and spec.cv == 0.2
+    def test_legacy_value_dict(self):
+        assert _parse_value("x", {"value": 2.5}) == pytest.approx(2.5)
 
-    def test_beta(self):
-        spec = _parse_spec("x", {"dist": "beta", "mean": 0.5, "std": 0.1})
-        assert spec.dist == "beta"
-        assert spec.mean == 0.5 and spec.std == 0.1
-
-    def test_uniform(self):
-        spec = _parse_spec("x", {"dist": "uniform", "lo": 1.0, "hi": 5.0})
-        assert spec.dist == "uniform"
-        assert spec.lo == 1.0 and spec.hi == 5.0
-        assert spec.mean == pytest.approx(3.0)  # midpoint
-
-    def test_unknown_dist_raises(self):
-        with pytest.raises(ValueError, match="Unknown distribution"):
-            _parse_spec("x", {"dist": "gamma", "shape": 1.0})
+    def test_dict_without_value_raises(self):
+        with pytest.raises(ValueError, match="'value' key"):
+            _parse_value("x", {"dist": "lognormal", "mean": 1.0})
 
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError):
-            _parse_spec("x", "not_a_number")
+            _parse_value("x", "not_a_number")
 
 
 class TestFlattenScenario:
@@ -63,11 +48,7 @@ class TestFlattenScenario:
 class TestLoadSweep:
     def test_basic(self):
         s = _load_sweep({"T": 52, "K": 100, "master_seed": 42})
-        assert s.T == 52 and s.K == 100 and s.master_seed == 42 and s.N_PO == 1
-
-    def test_N_PO_override(self):
-        s = _load_sweep({"T": 10, "K": 5, "master_seed": 0, "N_PO": 3})
-        assert s.N_PO == 3
+        assert s.T == 52 and s.K == 100 and s.master_seed == 42
 
     def test_missing_T_raises(self):
         with pytest.raises(KeyError):
@@ -76,10 +57,16 @@ class TestLoadSweep:
 
 class TestLoadScenarioConfig:
     def test_default_scenario_loads(self):
-        sweep, priors = load_scenario_config("config/default_scenario.json")
+        sweep, params = load_scenario_config("config/default_scenario.json")
         assert sweep.T == 52 and sweep.K == 100
-        assert len(priors.c_token) == 13
-        assert len(priors.specs) == 74  # all fields except c_token
+        assert isinstance(params, ScenarioParameters)
+        assert len(params.c_token) == 8
+
+    def test_returns_correct_values(self):
+        _, params = load_scenario_config("config/default_scenario.json")
+        assert params.r_arrival == pytest.approx(2.0)
+        assert params.r_bugs == pytest.approx(0.1)
+        assert params.r_bugs_human == pytest.approx(0.8)
 
     def test_c_token_wrong_length_raises(self, tmp_path):
         path = Path("config/default_scenario.json")
@@ -93,7 +80,7 @@ class TestLoadScenarioConfig:
     def test_missing_parameter_raises(self, tmp_path):
         path = Path("config/default_scenario.json")
         data = json.loads(path.read_text())
-        del data["scenario"]["productivity"]["lambda_F"]
+        del data["scenario"]["productivity"]["r_arrival"]
         bad = tmp_path / "bad.json"
         bad.write_text(json.dumps(data))
         with pytest.raises(ValueError, match="missing"):
@@ -107,14 +94,3 @@ class TestLoadScenarioConfig:
         bad.write_text(json.dumps(data))
         with pytest.raises(ValueError, match="unknown"):
             load_scenario_config(bad)
-
-
-class TestLoadMeanParameters:
-    def test_returns_scenario_parameters(self):
-        _, params = load_mean_parameters("config/default_scenario.json")
-        assert params.lambda_F == pytest.approx(2.0)
-
-    def test_integer_fields(self):
-        _, params = load_mean_parameters("config/default_scenario.json")
-        assert isinstance(params.Q_thr_rev, int)
-        assert isinstance(params.R_warmup, int)

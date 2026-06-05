@@ -72,7 +72,7 @@ def _load_per_config_replications(
         if not rfile.exists():
             continue
         data = json.loads(rfile.read_text(encoding="utf-8"))
-        out[key] = [(r["V"], r["Q"], r["C_F"]) for r in data["replications"]]
+        out[key] = [(r["value"], r["quality"], r["cost"]) for r in data["replications"]]
     return out
 
 

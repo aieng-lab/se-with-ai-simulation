@@ -5,22 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-AGENT_ROLE_COUNT = 13
+AGENT_ROLE_COUNT = 8
 
 AGENT_ROLE_NAMES: tuple[str, ...] = (
-    "Requirements Refinement Agent",          # k=1
+    "Feature Implementation Agent",           # k=1
     "Architecture & Design Proposal Agent",   # k=2
-    "Feature Implementation Agent",           # k=3
-    "Bug Fixing Agent",                       # k=4
-    "Refactoring Agent",                      # k=5
-    "Code Review Agent",                      # k=6
-    "Security Audit Agent",                   # k=7
-    "Unit Test Development Agent",            # k=8
-    "Integration Test Development Agent",     # k=9
-    "System & Acceptance Test Development Agent",  # k=10
-    "DevOps/CI-CD Agent",                     # k=11
-    "Developer Documentation Agent",          # k=12
-    "User Documentation Agent",               # k=13
+    "Bug Fixing Agent",                       # k=3
+    "Refactoring Agent",                      # k=4
+    "Code Review Agent",                      # k=5
+    "Security Audit Agent",                   # k=6
+    "Test Development Agent",                 # k=7
+    "Developer Documentation Agent",          # k=8
 )
 
 
@@ -28,10 +23,10 @@ AGENT_ROLE_NAMES: tuple[str, ...] = (
 class TeamConfiguration:
     """Configuration tuple (N, M, A, R, F_freeze, A_qa) fixed across replications.
 
-    A     = (a_1, ..., a_13) — development-phase composition (sum == N*M, a_3 >= 1).
-    A_qa  = (a_1, ..., a_13) — QA/stabilisation-phase composition (sum == N*M).
-            Defaults to A when omitted.  Expected to have a_1=a_2=a_3=0 so the
-            full N×M agent budget is redeployed to bug-fixing, testing, and
+    A     = (a_1, ..., a_8) — development-phase composition (sum <= N*M, a_1 >= 1).
+    A_qa  = (a_1, ..., a_8) — QA/stabilisation-phase composition (sum <= N*M).
+            Defaults to A when omitted.  Expected to have a_1=a_2=0 so the
+            deployed agents are redeployed to bug-fixing, testing, and
             refactoring during the feature-freeze window.
     F_freeze — number of sprints at the end of each release cycle in which the
             team uses A_qa instead of A.  Sprints satisfying
@@ -62,12 +57,12 @@ class TeamConfiguration:
             raise ValueError(f"A must have length {AGENT_ROLE_COUNT}, got {len(self.A)}")
         if any(a < 0 for a in self.A):
             raise ValueError(f"A entries must be >= 0, got {self.A}")
-        if sum(self.A) != self.N * self.M:
+        if sum(self.A) > self.N * self.M:
             raise ValueError(
-                f"sum(A) must equal N*M = {self.N * self.M}, got {sum(self.A)}"
+                f"sum(A) must be <= N*M = {self.N * self.M}, got {sum(self.A)}"
             )
-        if self.A[2] < 1:
-            raise ValueError("a_3 (Feature Implementation Agent) must be >= 1")
+        if self.A[0] < 1:
+            raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
 
         # Validate F_freeze
         if not (1 <= self.F_freeze <= self.R):
@@ -82,13 +77,13 @@ class TeamConfiguration:
             )
         if any(a < 0 for a in self.A_qa):  # type: ignore[union-attr]
             raise ValueError(f"A_qa entries must be >= 0, got {self.A_qa}")
-        if sum(self.A_qa) != self.N * self.M:  # type: ignore[union-attr]
+        if sum(self.A_qa) > self.N * self.M:  # type: ignore[union-attr]
             raise ValueError(
-                f"sum(A_qa) must equal N*M = {self.N * self.M}, got {sum(self.A_qa)}"  # type: ignore[union-attr]
+                f"sum(A_qa) must be <= N*M = {self.N * self.M}, got {sum(self.A_qa)}"  # type: ignore[union-attr]
             )
 
     def agent_count(self, role_k: int) -> int:
-        """1-indexed access to the DEVELOPMENT composition A: role_k in {1, ..., 13}."""
+        """1-indexed access to the DEVELOPMENT composition A: role_k in {1, ..., 8}."""
         if not 1 <= role_k <= AGENT_ROLE_COUNT:
             raise ValueError(f"role_k must be in [1, {AGENT_ROLE_COUNT}], got {role_k}")
         return self.A[role_k - 1]
@@ -105,12 +100,9 @@ class SweepSettings:
     T: int                      # Sprints per replication
     K: int                      # Monte Carlo replications per configuration
     master_seed: int            # Root seed s_0 (FRAMEWORK §9.0)
-    N_PO: int = 1               # Product Owner count (fixed)
 
     def __post_init__(self) -> None:
         if self.T < 1:
             raise ValueError(f"T must be >= 1, got {self.T}")
         if self.K < 1:
             raise ValueError(f"K must be >= 1, got {self.K}")
-        if self.N_PO < 1:
-            raise ValueError(f"N_PO must be >= 1, got {self.N_PO}")

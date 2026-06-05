@@ -17,7 +17,7 @@ class TestConfigHash:
     def test_differs_on_M(self, base_config):
         from src.config import AGENT_ROLE_COUNT, TeamConfiguration
         A = [0] * AGENT_ROLE_COUNT
-        A[2] = 4; A[3] = 2; A[5] = 2
+        A[0] = 4; A[2] = 2; A[4] = 2   # a_1=4, a_3=2, a_5=2, sum=8
         cfg2 = TeamConfiguration(N=2, M=4, A=tuple(A), R=base_config.R)
         assert _config_hash(base_config) != _config_hash(cfg2)
 
@@ -29,7 +29,7 @@ class TestConfigHash:
     def test_differs_on_A(self, base_config):
         from src.config import AGENT_ROLE_COUNT, TeamConfiguration
         A = list(base_config.A)
-        A[2] -= 1; A[3] += 1  # swap one agent between roles; sum unchanged
+        A[0] -= 1; A[2] += 1  # swap one agent between roles; sum unchanged
         cfg2 = TeamConfiguration(N=base_config.N, M=base_config.M, A=tuple(A), R=base_config.R)
         assert _config_hash(base_config) != _config_hash(cfg2)
 

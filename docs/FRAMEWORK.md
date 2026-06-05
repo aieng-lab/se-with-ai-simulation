@@ -455,12 +455,7 @@ Queue dynamics:
 Q_esc(t+1) = max(0, Q_esc(t) + esc_new(t) − esc_done(t))
 ```
 
-where esc_done(t) was computed in Section 3.4. When η_esc(t) < 1, some resolved escalations are incorrect, causing re-escalation; a fraction (1 − η_esc(t)) of resolved escalations are immediately re-added to Q_esc next sprint:
-
-```
-re_esc(t) ~ Binomial(esc_done(t), 1 − η_esc(t))
-Q_esc(t+1) ← Q_esc(t+1) + re_esc(t)
-```
+where esc_done(t) was computed in Section 3.4. Escalations handled within a sprint are always resolved successfully — there is no re-escalation.
 
 ### 4.6 Bug Fixing
 

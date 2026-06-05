@@ -9,9 +9,9 @@ from src.simulation import run_configuration
 
 
 @pytest.fixture
-def trace_df(base_config, fixed_priors):
+def trace_df(base_config, base_params):
     s = SweepSettings(T=8, K=5, master_seed=0)
-    trace = run_configuration(base_config, s, fixed_priors, capture_traces=True)
+    trace = run_configuration(base_config, s, base_params, capture_traces=True)
     return to_dataframe(trace)
 
 
@@ -26,7 +26,7 @@ class TestMeanTrajectory:
             assert traj.iloc[i] <= traj.iloc[i + 1]
 
     def test_constant_field(self, trace_df):
-        # D0 = 0.0 for all replications, first sprint; D may grow after
+        # D initialised to 0.0; may grow after sprint 0
         first_sprint = trace_df.xs(0, level="sprint")["D"]
         assert (first_sprint >= 0).all()
 
@@ -63,9 +63,9 @@ class TestFinalDistribution:
 
 
 class TestConvergenceCheck:
-    def test_single_config_stable(self, base_config, fixed_priors):
+    def test_single_config_stable(self, base_config, base_params):
         s = SweepSettings(T=8, K=20, master_seed=0)
-        result = run_configuration(base_config, s, fixed_priors)
+        result = run_configuration(base_config, s, base_params)
         check = convergence_check([result], master_seed=0)
         assert check["stable"]
         assert check["change_fraction"] == 0.0
