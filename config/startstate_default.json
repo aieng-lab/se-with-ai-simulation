@@ -1,0 +1,23 @@
+{
+  "F_backlog": 0,
+  "F_completed": 0,
+  "B_hid_min": 0,
+  "B_hid_maj": 0,
+  "B_hid_sec": 0,
+  "B_kno_min": 0,
+  "B_kno_maj": 0,
+  "B_kno_sec": 0,
+  "B_escaped_min": 0,
+  "B_escaped_maj": 0,
+  "B_escaped_sec": 0,
+  "B_rel_min": 0,
+  "B_rel_maj": 0,
+  "B_rel_sec": 0,
+  "D_tech": 0.0,
+  "Q_rev": 0,
+  "Q_arch": 0,
+  "Q_arch_impl": 0,
+  "Q_esc": 0,
+  "N_test": 0.0,
+  "N_doc": 0.0
+}

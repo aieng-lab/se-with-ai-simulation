@@ -2,20 +2,20 @@
 
 import pytest
 
-from src.config import SweepSettings
+from src.config import SimulationHorizon
 from src.results import load_result, load_traces, save_result, save_traces, to_dataframe
 from src.simulation import run_configuration
 
 
 @pytest.fixture
 def small_trace(base_config, base_params):
-    s = SweepSettings(T=4, K=2, master_seed=0)
+    s = SimulationHorizon(T=4, K=2, master_seed=0)
     return run_configuration(base_config, s, base_params, capture_traces=True)
 
 
 @pytest.fixture
 def small_result(base_config, base_params):
-    s = SweepSettings(T=4, K=2, master_seed=0)
+    s = SimulationHorizon(T=4, K=2, master_seed=0)
     return run_configuration(base_config, s, base_params)
 
 
@@ -68,7 +68,7 @@ class TestSaveLoadResult:
 
     def test_load_wrong_A_length_raises(self, tmp_path):
         import json
-        bad = {"config": {"N": 1, "M": 1, "A": [1] * 5, "R": 1},
+        bad = {"config": {"N": 1, "M": 1, "A_dev": [1] * 5, "R": 1},
                "replications": [], "aggregated": {
                    "value_mean": 0, "quality_mean": 0, "cost_mean": 0,
                    "value_ci": [0, 0], "quality_ci": [0, 0], "cost_ci": [0, 0]}}

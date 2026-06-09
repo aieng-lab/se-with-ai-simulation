@@ -1,4 +1,4 @@
-"""Team configuration (N, M, A, R, F_freeze, A_qa) per FRAMEWORK.md §2.1."""
+"""Team configuration (N, M, A_dev, R, F_freeze, A_qa)"""
 
 from __future__ import annotations
 
@@ -21,30 +21,30 @@ AGENT_ROLE_NAMES: tuple[str, ...] = (
 
 @dataclass(frozen=True, slots=True)
 class TeamConfiguration:
-    """Configuration tuple (N, M, A, R, F_freeze, A_qa) fixed across replications.
+    """Configuration tuple (N, M, A_dev, R, F_freeze, A_qa) fixed across replications.
 
-    A     = (a_1, ..., a_8) — development-phase composition (sum <= N*M, a_1 >= 1).
+    A_dev = (a_1, ..., a_8) — development-phase composition (sum <= N*M, a_1 >= 1).
     A_qa  = (a_1, ..., a_8) — QA/stabilisation-phase composition (sum <= N*M).
-            Defaults to A when omitted.  Expected to have a_1=a_2=0 so the
+            Defaults to A_dev when omitted.  Expected to have a_1=a_2=0 so the
             deployed agents are redeployed to bug-fixing, testing, and
             refactoring during the feature-freeze window.
     F_freeze — number of sprints at the end of each release cycle in which the
-            team uses A_qa instead of A.  Sprints satisfying
+            team uses A_qa instead of A_dev.  Sprints satisfying
             (t % R) >= (R - F_freeze) are "frozen".  Range: [0, R-1].
             F_freeze = 0 means no feature freeze (A_qa is never used).
     """
 
     N: int                              # Human Developer count
     M: int                              # Span of control (agents per human)
-    A: tuple[int, ...]                  # Dev-phase composition, length == AGENT_ROLE_COUNT
+    A_dev: tuple[int, ...]              # Dev-phase composition, length == AGENT_ROLE_COUNT
     R: int                              # Release cadence (sprints)
     F_freeze: int = 1                   # QA-phase length per release cycle, in [0, R-1]
-    A_qa: Optional[tuple[int, ...]] = None  # QA-phase composition; None → defaults to A
+    A_qa: Optional[tuple[int, ...]] = None  # QA-phase composition; None → defaults to A_dev
 
     def __post_init__(self) -> None:
         # Resolve A_qa before validation so subsequent checks can use it.
         if self.A_qa is None:
-            object.__setattr__(self, "A_qa", self.A)
+            object.__setattr__(self, "A_qa", self.A_dev)
 
         if self.N < 1:
             raise ValueError(f"N must be >= 1, got {self.N}")
@@ -53,16 +53,16 @@ class TeamConfiguration:
         if self.R < 1:
             raise ValueError(f"R must be >= 1, got {self.R}")
 
-        # Validate development composition A
-        if len(self.A) != AGENT_ROLE_COUNT:
-            raise ValueError(f"A must have length {AGENT_ROLE_COUNT}, got {len(self.A)}")
-        if any(a < 0 for a in self.A):
-            raise ValueError(f"A entries must be >= 0, got {self.A}")
-        if sum(self.A) > self.N * self.M:
+        # Validate development composition A_dev
+        if len(self.A_dev) != AGENT_ROLE_COUNT:
+            raise ValueError(f"A_dev must have length {AGENT_ROLE_COUNT}, got {len(self.A_dev)}")
+        if any(a < 0 for a in self.A_dev):
+            raise ValueError(f"A_dev entries must be >= 0, got {self.A_dev}")
+        if sum(self.A_dev) > self.N * self.M:
             raise ValueError(
-                f"sum(A) must be <= N*M = {self.N * self.M}, got {sum(self.A)}"
+                f"sum(A_dev) must be <= N*M = {self.N * self.M}, got {sum(self.A_dev)}"
             )
-        if self.A[0] < 1:
+        if self.A_dev[0] < 1:
             raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
 
         # Validate F_freeze
@@ -82,25 +82,78 @@ class TeamConfiguration:
             raise ValueError(
                 f"sum(A_qa) must be <= N*M = {self.N * self.M}, got {sum(self.A_qa)}"  # type: ignore[union-attr]
             )
+        if self.F_freeze > 0:
+            if self.A_qa[0] != 0:  # type: ignore[index]
+                raise ValueError(
+                    "a_qa,1 (Feature Implementation Agent) must be 0 during feature freeze"
+                )
+            if self.A_qa[1] != 0:  # type: ignore[index]
+                raise ValueError(
+                    "a_qa,2 (Architecture & Design Agent) must be 0 during feature freeze"
+                )
 
-    def agent_count(self, role_k: int) -> int:
-        """1-indexed access to the DEVELOPMENT composition A: role_k in {1, ..., 8}."""
+    def agent_count_dev(self, role_k: int) -> int:
+        """1-indexed access to the development composition A_dev: role_k in {1, ..., 8}."""
         if not 1 <= role_k <= AGENT_ROLE_COUNT:
             raise ValueError(f"role_k must be in [1, {AGENT_ROLE_COUNT}], got {role_k}")
-        return self.A[role_k - 1]
+        return self.A_dev[role_k - 1]
+
+    def agent_count_qa(self, role_k: int) -> int:
+        """1-indexed access to the QA/freeze composition A_qa: role_k in {1, ..., 8}."""
+        if not 1 <= role_k <= AGENT_ROLE_COUNT:
+            raise ValueError(f"role_k must be in [1, {AGENT_ROLE_COUNT}], got {role_k}")
+        return self.A_qa[role_k - 1]  # type: ignore[index]
 
     def active_A(self, is_frozen: bool) -> tuple[int, ...]:
-        """Return A_qa during freeze sprints, A otherwise."""
-        return self.A_qa if is_frozen else self.A  # type: ignore[return-value]
+        """Return A_qa during freeze sprints, A_dev otherwise."""
+        return self.A_qa if is_frozen else self.A_dev  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)
-class SweepSettings:
+class SearchConfiguration:
+    """Parameters controlling a configuration-space search."""
+
+    scenario_path: str
+    horizon_path: str
+    strategy: str                           # "random" or "evolutionary"
+    N_values: tuple[int, ...]
+    M_max: int
+    R_values: tuple[int, ...]
+    F_freeze_values: tuple[int, ...] = (1,)
+    n_samples: int = 500                    # random: total samples
+    n_samples_initial: int = 100            # evolutionary: initial population
+    n_generations: int = 15                 # evolutionary: generation count
+    n_offspring: int = 20                   # evolutionary: offspring per generation
+    seed: int = 0                           # RNG seed for search
+
+    def __post_init__(self) -> None:
+        if self.strategy not in ("random", "evolutionary"):
+            raise ValueError(f"strategy must be 'random' or 'evolutionary', got {self.strategy!r}")
+        if not self.N_values:
+            raise ValueError("N_values must be non-empty")
+        if self.M_max < 1:
+            raise ValueError(f"M_max must be >= 1, got {self.M_max}")
+        if not self.R_values:
+            raise ValueError("R_values must be non-empty")
+        if not self.F_freeze_values:
+            raise ValueError("F_freeze_values must be non-empty")
+        if self.n_samples < 1:
+            raise ValueError(f"n_samples must be >= 1, got {self.n_samples}")
+        if self.n_samples_initial < 1:
+            raise ValueError(f"n_samples_initial must be >= 1, got {self.n_samples_initial}")
+        if self.n_generations < 1:
+            raise ValueError(f"n_generations must be >= 1, got {self.n_generations}")
+        if self.n_offspring < 1:
+            raise ValueError(f"n_offspring must be >= 1, got {self.n_offspring}")
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationHorizon:
     """Top-level simulation horizon and Monte Carlo settings."""
 
     T: int                      # Sprints per replication
     K: int                      # Monte Carlo replications per configuration
-    master_seed: int            # Root seed s_0 (FRAMEWORK §9.0)
+    master_seed: int            # Root seed s_0
 
     def __post_init__(self) -> None:
         if self.T < 1:

@@ -1,0 +1,69 @@
+{
+  "productivity": {
+    "r_arrival": 2.0,
+    "f_arch_chg": 0.3,
+    "r_arch_chg": 2.0,
+    "r_F": 3.0,
+    "r_fix_minor": 5.0,
+    "r_fix_major": 2.0,
+    "r_fix_sec": 1.5,
+    "r_refactor": 0.2,
+    "r_review": 5.0,
+    "r_security": 3.0,
+    "r_test": 3.0,
+    "r_doc": 2.0
+  },
+  "human_capacity": {
+    "H_capacity": 40.0,
+    "H_monitoring_overhead": 2.0,
+    "H_review_time": 4.0,
+    "H_escalation_time": 2.0,
+    "h_feature": 8.0,
+    "c_comm": 1.0,
+    "h_fix": 4.0,
+    "f_fix": 0.1
+  },
+  "bug_injection": {
+    "r_bugs": 0.1,
+    "r_bugs_human": 0.8,
+    "theta_maj": 0.18,
+    "theta_sec": 0.1
+  },
+  "detection": {
+    "d_CR": 0.7,
+    "d_SA": 0.85,
+    "d_test": 0.6,
+    "c_test_ceil": 2.0,
+    "alpha_size": 0.1,
+    "baseline_size": 2.0
+  },
+  "debt_amplifier": {
+    "delta_min": 0.5,
+    "delta_exp": 1.5,
+    "delta_impl": 0.01,
+    "delta_fix": 0.005
+  },
+  "documentation": {
+    "Gamma_doc": 0.5,
+    "c_doc_ceil": 1.0
+  },
+  "escalation": {
+    "rho_esc": 0.01
+  },
+  "costs": {
+    "c_token": [
+      0.1,
+      0.2,
+      0.1,
+      0.1,
+      0.1,
+      0.15,
+      0.1,
+      0.08
+    ],
+    "c_salary": 150000.0,
+    "omega_min": 1.0,
+    "omega_maj": 3.0,
+    "omega_sec": 10.0
+  }
+}

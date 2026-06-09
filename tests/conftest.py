@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.config import AGENT_ROLE_COUNT, SweepSettings, TeamConfiguration
+from src.config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
 from src.parameters import ScenarioParameters
 
 
@@ -22,7 +22,8 @@ def base_config():
     """N=2, M=3, R=4; a_1=2 impl, a_3=1 fix, a_4=1 refactor, a_5=1 review, a_7=1 test."""
     return TeamConfiguration(
         N=2, M=3,
-        A=_make_A((1, 2), (3, 1), (4, 1), (5, 1), (7, 1)),
+        A_dev=_make_A((1, 2), (3, 1), (4, 1), (5, 1), (7, 1)),
+        A_qa=_make_A((3, 2), (4, 1), (5, 1), (7, 2)),
         R=4,
     )
 
@@ -51,7 +52,7 @@ def base_params():
 
 @pytest.fixture
 def small_settings():
-    return SweepSettings(T=4, K=3, master_seed=42)
+    return SimulationHorizon(T=4, K=3, master_seed=42)
 
 
 @pytest.fixture

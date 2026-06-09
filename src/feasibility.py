@@ -33,7 +33,7 @@ def check_feasibility(
     # Step 1 — Human capacity (monitoring + escalation vs. available capacity)
     # ------------------------------------------------------------------
     H_net = params.H_capacity - params.c_comm * (config.N - 1)
-    actual_agents_per_dev = sum(config.A) / config.N
+    actual_agents_per_dev = sum(config.A_dev) / config.N
 
     # Monitoring alone must not exhaust developer capacity.
     if actual_agents_per_dev * H_mon_eff_star >= H_net:

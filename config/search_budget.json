@@ -1,7 +1,7 @@
 {
   "description": "Random search over agent compositions under low-budget scenario (halved AI + salary costs)",
-  "scenario": "config/low_budget.json",
-  "sweep": { "K": 50, "T": 52 },
+  "scenario": "config/scenario_low_budget.json",
+  "horizon": "config/horizon_default.json",
   "search": {
     "strategy": "random",
     "N_values": [1, 2, 3],
@@ -9,6 +9,9 @@
     "R_values": [2, 4],
     "F_freeze_values": [1, 2],
     "n_samples": 500,
+    "n_samples_initial": 100,
+    "n_generations": 15,
+    "n_offspring": 20,
     "seed": 42
   }
 }

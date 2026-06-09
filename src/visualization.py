@@ -3,18 +3,26 @@
 All functions accept plain Python dicts / pandas DataFrames derived from the persisted
 result files and return matplotlib Figure objects. Callers decide how to save or display.
 
-Public API
-----------
+Public API — plot functions
+---------------------------
     plot_pareto_scatter(objectives, pareto_keys, title)          -> Figure
     plot_pareto_3d_scatter(objectives, pareto_keys, title)       -> Figure
     plot_objectives_bar(objectives, pareto_keys, title)          -> Figure
     plot_replication_distributions(per_config_replications, pareto_keys, title) -> Figure
     plot_trajectories(traces_per_config, pareto_keys, fields, title)    -> Figure
     plot_comparison_pareto(scenarios, title)                     -> Figure
+
+Public API — result-directory helpers
+--------------------------------------
+    visualize_single(result_dir, out_dir, fmt, mean_pareto)      -> None
+    visualize_multi(result_dirs, out_dir, fmt, mean_pareto)      -> None
 """
 
 from __future__ import annotations
 
+import json
+import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import matplotlib
@@ -22,6 +30,8 @@ matplotlib.use("Agg")  # non-interactive backend; safe to override before pyplot
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
+
+from .pareto import AggregatedObjectives, pareto_frontier
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -301,10 +311,10 @@ def plot_replication_distributions(
 # 4. State trajectories
 # ---------------------------------------------------------------------------
 
-_DEFAULT_TRAJECTORY_FIELDS = ["F_completed", "D", "B_kno", "doc_cov"]
+_DEFAULT_TRAJECTORY_FIELDS = ["F_completed", "D_tech", "B_kno", "doc_cov"]
 _TRAJECTORY_LABELS = {
     "F_completed": "Cumulative features\n(F_completed)",
-    "D":           "Technical debt\n(D)",
+    "D_tech":      "Technical debt\n(D_tech)",
     "B_kno":       "Known bugs\n(B_kno_min + B_kno_maj)",
     "doc_cov":     "Documentation coverage\n(doc_cov)",
 }
@@ -432,3 +442,137 @@ def plot_comparison_pareto(
         fig.legend(handles=handles, loc="upper right", fontsize=8, title="Scenario")
         fig.tight_layout()
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Result-directory helpers
+# ---------------------------------------------------------------------------
+
+def _load_summary(result_dir: Path) -> dict:
+    path = result_dir / "search_summary.json"
+    if not path.exists():
+        path = result_dir / "sweep_summary.json"
+    if not path.exists():
+        raise FileNotFoundError(f"No search_summary.json in {result_dir}.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_manifest(result_dir: Path) -> dict:
+    path = result_dir / "manifest.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _load_per_config_replications(
+    result_dir: Path,
+    config_keys: list[str],
+) -> dict[str, list[tuple[float, float, float]]]:
+    """Load per-replication (V, Q, CF) from each config's result.json."""
+    out = {}
+    for key in config_keys:
+        rfile = result_dir / "samples" / f"{key}.json"
+        if not rfile.exists():
+            continue
+        data = json.loads(rfile.read_text(encoding="utf-8"))
+        out[key] = [(r["value"], r["quality"], r["cost"]) for r in data["replications"]]
+    return out
+
+
+def _load_traces(
+    result_dir: Path,
+    config_keys: list[str],
+) -> "dict[str, pd.DataFrame]":
+    """Load traces.csv for each config that has one."""
+    from .results import load_traces
+    out = {}
+    for key in config_keys:
+        tfile = result_dir / "samples" / f"{key}_traces.csv"
+        if tfile.exists():
+            out[key] = load_traces(tfile)
+    return out
+
+
+def _recompute_mean_pareto(objectives: dict) -> list[str]:
+    """Recompute Pareto frontier using mean values only (no CI tie-breaking)."""
+    keys = list(objectives.keys())
+    points = [
+        AggregatedObjectives(
+            value_mean=obj["value_mean"],
+            quality_mean=obj["quality_mean"],
+            cost_mean=obj["cost_mean"],
+            value_ci=tuple(obj["value_ci"]),
+            quality_ci=tuple(obj["quality_ci"]),
+            cost_ci=tuple(obj["cost_ci"]),
+        )
+        for obj in objectives.values()
+    ]
+    indices = pareto_frontier(points, ci_aware=False)
+    return [keys[i] for i in indices]
+
+
+def _scenario_label(result_dir: Path, manifest: dict) -> str:
+    scenario = manifest.get("scenario", "")
+    if isinstance(scenario, dict):
+        scenario = scenario.get("path", "")
+    return Path(scenario).stem if scenario else result_dir.name
+
+
+def _save(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"{name}.{fmt}"
+    fig.savefig(dest, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {dest}")
+
+
+def visualize_single(result_dir: Path, out_dir: Path, fmt: str, mean_pareto: bool = False) -> None:
+    """Generate all plots for a single sweep result directory."""
+    summary  = _load_summary(result_dir)
+    manifest = _load_manifest(result_dir)
+    label    = _scenario_label(result_dir, manifest)
+
+    objectives  = summary["objectives"]
+    pareto_keys = _recompute_mean_pareto(objectives) if mean_pareto else summary["pareto_frontier"]
+    config_keys = list(objectives.keys())
+    title_base  = f"Scenario: {label}"
+
+    print(f"\n── {result_dir.name}  ({len(config_keys)} configs, {len(pareto_keys)} Pareto) ──")
+
+    fig = plot_pareto_scatter(objectives, pareto_keys, title=f"{title_base} — Pareto scatter")
+    _save(fig, out_dir, "pareto_scatter", fmt)
+
+    fig = plot_pareto_3d_scatter(objectives, pareto_keys, title=f"{title_base} — V / Q / CF")
+    _save(fig, out_dir, "pareto_3d_scatter", fmt)
+
+    fig = plot_objectives_bar(objectives, pareto_keys, title=f"{title_base} — Objectives")
+    _save(fig, out_dir, "objectives_bar", fmt)
+
+    reps = _load_per_config_replications(result_dir, config_keys)
+    if reps:
+        fig = plot_replication_distributions(reps, pareto_keys, title=f"{title_base} — Replication distributions")
+        _save(fig, out_dir, "replication_distributions", fmt)
+
+    traces = _load_traces(result_dir, pareto_keys)
+    if traces:
+        fig = plot_trajectories(traces, pareto_keys, title=f"{title_base} — State trajectories (Pareto configs)")
+        _save(fig, out_dir, "trajectories", fmt)
+    else:
+        warnings.warn(
+            f"No traces.csv found in {result_dir}. Re-run the sweep with --traces to enable trajectory plots.",
+            stacklevel=2,
+        )
+
+
+def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str, mean_pareto: bool = False) -> None:
+    """Generate per-experiment plots and a cross-experiment comparison."""
+    scenarios: dict[str, tuple[dict, list[str]]] = {}
+    for rd in result_dirs:
+        manifest = _load_manifest(rd)
+        summary  = _load_summary(rd)
+        label    = _scenario_label(rd, manifest)
+        objectives = summary["objectives"]
+        pareto_keys = _recompute_mean_pareto(objectives) if mean_pareto else summary["pareto_frontier"]
+        scenarios[label] = (objectives, pareto_keys)
+
+    print(f"\n── Cross-experiment comparison ({len(scenarios)} scenarios) ──")
+    fig = plot_comparison_pareto(scenarios, title="Pareto comparison across scenarios")
+    _save(fig, out_dir, "comparison_pareto", fmt)

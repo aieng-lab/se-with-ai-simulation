@@ -1,7 +1,7 @@
 """Sprint transition equations.
 
 Within-sprint ordering:
-  Step 1  Human capacity allocation (§3)
+  Step 1  Human capacity allocation
   Step 2  Debt amplifier: D_arch, D_eff, delta_D
   Step 3  Feature arrival and implementation (priority drain Q_arch_impl, then F_backlog)
   Step 4  Test suite update
@@ -20,7 +20,6 @@ Regression bugs bypass detection and go directly to the hidden stock (A6).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .config import TeamConfiguration
@@ -31,49 +30,27 @@ if TYPE_CHECKING:
     from numpy.random import Generator
 
 
-@dataclass(frozen=True, slots=True)
-class SprintRecord:
-    """Per-sprint output quantities needed for cost accounting (§8.1)."""
-
-    impl: int               # total features implemented this sprint
-    fixes_min: int          # minor B_kno bugs fixed by agents
-    fixes_maj: int          # major B_kno bugs fixed by agents
-    fixes_sec: int          # security B_kno bugs fixed by agents
-    rel_fixes_min: int      # minor B_rel bugs fixed by agents
-    rel_fixes_maj: int      # major B_rel bugs fixed by agents
-    rel_fixes_sec: int      # security B_rel bugs fixed by agents
-    h_fixes_min: int        # minor B_kno bugs fixed by humans
-    h_fixes_maj: int        # major B_kno bugs fixed by humans
-    h_fixes_sec: int        # security B_kno bugs fixed by humans
-    h_rel_fixes_min: int    # minor B_rel bugs fixed by humans
-    h_rel_fixes_maj: int    # major B_rel bugs fixed by humans
-    h_rel_fixes_sec: int    # security B_rel bugs fixed by humans
-    new_escaped_min: int    # minor bugs escaped to production (0 unless release sprint)
-    new_escaped_maj: int    # major bugs escaped to production (0 unless release sprint)
-    new_escaped_sec: int    # security bugs escaped to production (0 unless release sprint)
-
-
 def step_sprint(
     t: int,
     state: SystemState,
     config: TeamConfiguration,
     params: ScenarioParameters,
     rng: "Generator",
-) -> SprintRecord:
-    """Advance `state` from sprint t to sprint t+1 (in place).
+) -> None:
+    """Advance `state` from sprint t-1 to sprint t (in place).
 
     Implements the ten-step transition in canonical order.
     """
 
     # ------------------------------------------------------------------
-    # Preliminary: feature-freeze flag and active agent composition
+    # Feature-freeze flag and active agent composition
     # ------------------------------------------------------------------
     is_frozen = (t % config.R) >= (config.R - config.F_freeze)
     A_active = config.active_A(is_frozen)
     n_agents = sum(A_active)   # actual deployed agents (may be < N*M)
 
     # ------------------------------------------------------------------
-    # Preliminary: degradation functions at current debt D(t)
+    # Degradation functions at current debt D(t)
     # Architecture and escalation debts are normalised by the team's maximum
     # throughput for the corresponding human activity (review / escalation
     # handling) in a single sprint: H_capacity * N / H_x_time items/sprint.
@@ -84,13 +61,13 @@ def step_sprint(
     Q_arch_total = state.Q_arch + state.Q_rev + state.Q_arch_impl
     D_arch = min(1.0, Q_arch_total / cap_review)
     D_esc  = min(1.0, state.Q_esc  / cap_esc)
-    D_eff  = min(1.0, state.D + D_arch + D_esc)
+    D_eff  = min(1.0, state.D_tech + D_arch + D_esc)
     delta_D = 1.0 - (1.0 - params.delta_min) * (D_eff ** params.delta_exp)
 
     # ------------------------------------------------------------------
-    # Preliminary: human capacity allocation (§3)
+    # Human capacity allocation
     # ------------------------------------------------------------------
-    H_net = max(0.0, params.H_capacity - params.c_comm * (config.N - 1))
+    H_net = params.H_capacity - params.c_comm * (config.N - 1)
     doc_cov = min(params.c_doc_ceil, state.N_doc / max(1.0, state.F_completed))
     H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
     # Monitoring overhead is proportional to actual agents per developer.
@@ -98,15 +75,13 @@ def step_sprint(
     agents_per_dev = n_agents / config.N
     H_after_mon = H_net - agents_per_dev * H_mon_eff
 
-    # Architecture reviews served this sprint
-    H_for_rev = min(H_after_mon, state.Q_rev * params.H_review_time / config.N)
-    rev_done = int(H_for_rev * config.N / params.H_review_time)
-    H_after_rev = H_after_mon - H_for_rev
+    # Architecture reviews served this sprint (eq. rev_done, H_after_rev)
+    rev_done = min(int(H_after_mon * config.N / params.H_review_time), state.Q_rev)
+    H_after_rev = H_after_mon - rev_done * params.H_review_time / config.N
 
-    # Escalations served this sprint
-    H_for_esc = min(H_after_rev, state.Q_esc * params.H_escalation_time / config.N)
-    esc_done = int(H_for_esc * config.N / params.H_escalation_time)
-    H_after_esc = H_after_rev - H_for_esc
+    # Escalations served this sprint (eq. esc_done, H_after_esc)
+    esc_done = min(int(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
+    H_after_esc = H_after_rev - esc_done * params.H_escalation_time / config.N
 
     # f_fix fraction of H_after_esc goes to bug fixing; (1-f_fix) to feature coding.
     # During feature freeze, the coding fraction is redirected to bug fixing as well.
@@ -115,7 +90,7 @@ def step_sprint(
     impl_human = 0 if is_frozen else int((1.0 - params.f_fix) * H_after_esc * config.N / params.h_feature)
 
     # ------------------------------------------------------------------
-    # §4.1 Feature arrival and implementation
+    # Feature arrival and implementation
     # ------------------------------------------------------------------
     arrivals = int(rng.poisson(params.r_arrival))
     a_3 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
@@ -132,12 +107,12 @@ def step_sprint(
     state.F_completed += impl
 
     # ------------------------------------------------------------------
-    # §4.2 Test suite update (before detection so new tests count this sprint)
+    # Test suite update (before detection so new tests count this sprint)
     # ------------------------------------------------------------------
-    state.tests += params.r_test * A_active[6]   # Test Development Agent (k=7, index 6)
+    state.N_test += params.r_test * A_active[6]   # Test Development Agent (k=7, index 6)
 
     # ------------------------------------------------------------------
-    # §4.3 Bug injection + detection (Test → CR → SA; all synchronous)
+    # Bug injection + detection (Test → CR → SA; all synchronous)
     # ------------------------------------------------------------------
     r_bugs_eff = params.r_bugs * (2.0 - delta_D)
 
@@ -155,7 +130,7 @@ def step_sprint(
     bugs_min = remaining - bugs_maj
 
     # Stage 1 — Test suite (acts on all three types; coverage from tests written so far)
-    cov_test = min(params.c_test_ceil, state.tests / max(1, state.F_completed))
+    cov_test = min(params.c_test_ceil, state.N_test / max(1, state.F_completed))
     p_test = min(1.0, params.d_test * cov_test)
     test_det_min = int(rng.binomial(bugs_min, p_test)) if bugs_min > 0 else 0
     test_det_maj = int(rng.binomial(bugs_maj, p_test)) if bugs_maj > 0 else 0
@@ -165,7 +140,7 @@ def step_sprint(
     surv_maj_t = bugs_maj - test_det_maj
     surv_sec_t = bugs_sec - test_det_sec
 
-    # Stage 2 — Code Review (acts on all survivors; A8: not throughput-limited by a_6)
+    # Stage 2 — Code Review (acts on all survivors)
     size_factor = max(
         0.0,
         1.0 - params.alpha_size * math.log((impl + 1) / params.baseline_size),
@@ -188,7 +163,7 @@ def step_sprint(
     state.B_hid_sec += surv_sec_cr - SA_det_sec
 
     # ------------------------------------------------------------------
-    # §4.4 Architecture queues update
+    # Architecture queues update
     # ------------------------------------------------------------------
     # a) New change requests arrive from this sprint's implementations
     arch_chg_new = int(rng.poisson(params.f_arch_chg * impl))
@@ -202,35 +177,34 @@ def step_sprint(
     state.Q_arch_impl = max(0, state.Q_arch_impl + rev_done - arch_impl_done)
 
     # ------------------------------------------------------------------
-    # §4.5 Escalation queue update
+    # Escalation queue update
     # ------------------------------------------------------------------
     esc_new = int(rng.poisson(n_agents * params.rho_esc))
     state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
 
     # ------------------------------------------------------------------
-    # §4.6 Bug fixing — strict priority: sec > maj > min; rel > kno
+    # Bug fixing — strict priority: sec > maj > min; rel > kno
     # Humans fix first (debt-independent count budget), then agents (work budget).
     # ------------------------------------------------------------------
-    a_4 = A_active[2]   # Bug Fixing Agent (new k=3, index 2)
+    a_4 = A_active[2]   # Bug Fixing Agent (k=3, index 2)
 
     def _drain(queue: int, rate: float, budget: float) -> tuple[int, float]:
         """Fix as many bugs as agent work budget allows; return (fixes, budget_used)."""
         n = min(queue, int(budget * rate))
         return n, (n / rate if rate > 0 else 0.0)
 
-    def _drain_count(queue: int, budget: int) -> tuple[int, int]:
-        """Fix as many bugs as human count budget allows; return (fixes, fixes)."""
-        n = min(queue, budget)
-        return n, n
+    def _drain_count(queue: int, budget: int) -> int:
+        """Fix as many bugs as human count budget allows; return fixes."""
+        return min(queue, budget)
 
     # Human fixes (debt-independent, same priority order)
     hb = fix_human_budget
-    h_rel_fixes_sec, n = _drain_count(state.B_rel_sec, hb); hb -= n; state.B_rel_sec -= h_rel_fixes_sec
-    h_fixes_sec,     n = _drain_count(state.B_kno_sec, hb); hb -= n; state.B_kno_sec -= h_fixes_sec
-    h_rel_fixes_maj, n = _drain_count(state.B_rel_maj, hb); hb -= n; state.B_rel_maj -= h_rel_fixes_maj
-    h_fixes_maj,     n = _drain_count(state.B_kno_maj, hb); hb -= n; state.B_kno_maj -= h_fixes_maj
-    h_rel_fixes_min, n = _drain_count(state.B_rel_min, hb); hb -= n; state.B_rel_min -= h_rel_fixes_min
-    h_fixes_min,     n = _drain_count(state.B_kno_min, hb); hb -= n; state.B_kno_min -= h_fixes_min
+    h_rel_fixes_sec = _drain_count(state.B_rel_sec, hb); hb -= h_rel_fixes_sec; state.B_rel_sec -= h_rel_fixes_sec
+    h_fixes_sec     = _drain_count(state.B_kno_sec, hb); hb -= h_fixes_sec;     state.B_kno_sec -= h_fixes_sec
+    h_rel_fixes_maj = _drain_count(state.B_rel_maj, hb); hb -= h_rel_fixes_maj; state.B_rel_maj -= h_rel_fixes_maj
+    h_fixes_maj     = _drain_count(state.B_kno_maj, hb); hb -= h_fixes_maj;     state.B_kno_maj -= h_fixes_maj
+    h_rel_fixes_min = _drain_count(state.B_rel_min, hb); hb -= h_rel_fixes_min; state.B_rel_min -= h_rel_fixes_min
+    h_fixes_min     = _drain_count(state.B_kno_min, hb); hb -= h_fixes_min;     state.B_kno_min -= h_fixes_min
 
     # Agent fixes (debt-slowed work budget, drain remaining queues)
     W = float(a_4) * delta_D
@@ -241,30 +215,25 @@ def step_sprint(
     rel_fixes_min, w = _drain(state.B_rel_min, params.r_fix_minor, W); W -= w; state.B_rel_min -= rel_fixes_min
     fixes_min,     w = _drain(state.B_kno_min, params.r_fix_minor, W); W -= w; state.B_kno_min -= fixes_min
 
-    # ------------------------------------------------------------------
-    # §4.7 Regression injection (bypass detection; go directly to hidden, per A6)
     total_fixes = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
                  + h_fixes_min    + h_fixes_maj    + h_fixes_sec
                  + rel_fixes_min  + rel_fixes_maj  + rel_fixes_sec
                  + fixes_min      + fixes_maj      + fixes_sec)
 
     # ------------------------------------------------------------------
-    # §4.8 Technical debt update (General Maintenance, part 1)
+    # Technical debt and documentation update (General Maintenance)
     # ------------------------------------------------------------------
-    state.D = max(0.0, min(1.0,
-        state.D
+    state.D_tech = max(0.0, min(1.0,
+        state.D_tech
         + params.delta_impl * impl
         + params.delta_fix * total_fixes
-        - params.r_refactor * A_active[3],
+        - params.r_refactor * A_active[3],      # Refactoring Agent (k=4, index 3)
     ))
 
-    # ------------------------------------------------------------------
-    # §4.8 Documentation update (General Maintenance, part 2)
-    # ------------------------------------------------------------------
     state.N_doc += params.r_doc * A_active[7]   # Developer Documentation Agent (k=8)
 
     # ------------------------------------------------------------------
-    # §4.11 Release event
+    # Release event
     # ------------------------------------------------------------------
     new_escaped_min = new_escaped_maj = new_escaped_sec = 0
     if (t + 1) % config.R == 0:
@@ -281,21 +250,3 @@ def step_sprint(
         state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
         state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
 
-    return SprintRecord(
-        impl=impl,
-        fixes_min=fixes_min,
-        fixes_maj=fixes_maj,
-        fixes_sec=fixes_sec,
-        rel_fixes_min=rel_fixes_min,
-        rel_fixes_maj=rel_fixes_maj,
-        rel_fixes_sec=rel_fixes_sec,
-        h_fixes_min=h_fixes_min,
-        h_fixes_maj=h_fixes_maj,
-        h_fixes_sec=h_fixes_sec,
-        h_rel_fixes_min=h_rel_fixes_min,
-        h_rel_fixes_maj=h_rel_fixes_maj,
-        h_rel_fixes_sec=h_rel_fixes_sec,
-        new_escaped_min=new_escaped_min,
-        new_escaped_maj=new_escaped_maj,
-        new_escaped_sec=new_escaped_sec,
-    )

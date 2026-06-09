@@ -1,8 +1,8 @@
-"""Pareto frontier construction per FRAMEWORK.md §8.3 and §9.4.
+"""Pareto frontier construction
 
 Dominance: `c` dominates `c'` iff value_c >= value_c', quality_c <= quality_c',
 C_F_c <= C_F_c' with at least one strict inequality. Statistical tie-breaking
-uses 95% bootstrap CIs (§9.3): candidates whose CIs overlap on all three
+uses 95% bootstrap CIs: candidates whose CIs overlap on all three
 objectives are co-retained.
 """
 
@@ -34,10 +34,7 @@ def aggregate_config_result(
     master_seed: int,
     n_bootstrap: int = 1000,
 ) -> AggregatedObjectives:
-    """Compute means and 95% percentile bootstrap CIs over K replications (§9.3).
-
-    The bootstrap RNG is derived deterministically from master_seed and the config,
-    consistent with §9.0 reproducibility requirements.
+    """Compute means and 95% percentile bootstrap CIs over K replications.
     """
     value_arr   = np.array([r.value   for r in result.replications])
     quality_arr = np.array([r.quality for r in result.replications])
@@ -50,20 +47,20 @@ def aggregate_config_result(
     idx = rng.integers(0, K, size=(n_bootstrap, K))
     value_boot   = value_arr[idx].mean(axis=1)
     quality_boot = quality_arr[idx].mean(axis=1)
-    cost_boot      = cost_arr[idx].mean(axis=1)
+    cost_boot    = cost_arr[idx].mean(axis=1)
 
     return AggregatedObjectives(
         value_mean=float(value_arr.mean()),
         quality_mean=float(quality_arr.mean()),
         cost_mean=float(cost_arr.mean()),
-        value_ci=(float(np.percentile(value_boot, 2.5)),   float(np.percentile(value_boot, 97.5))),
+        value_ci=(float(np.percentile(value_boot,     2.5)), float(np.percentile(value_boot,   97.5))),
         quality_ci=(float(np.percentile(quality_boot, 2.5)), float(np.percentile(quality_boot, 97.5))),
-        cost_ci=(float(np.percentile(cost_boot, 2.5)),          float(np.percentile(cost_boot, 97.5))),
+        cost_ci=(float(np.percentile(cost_boot,       2.5)), float(np.percentile(cost_boot,    97.5))),
     )
 
 
 def dominates_strict(a: AggregatedObjectives, b: AggregatedObjectives) -> bool:
-    """Point-estimate strict dominance (§8.3). Does not account for CI overlap."""
+    """Point-estimate strict dominance. Does not account for CI overlap."""
     return (
         a.value_mean >= b.value_mean
         and a.quality_mean <= b.quality_mean
@@ -78,7 +75,7 @@ def _ci_significantly_better(
 ) -> bool:
     """True if at least one objective has non-overlapping CIs in the dominating direction.
 
-    Per §8.3: dominance is statistically significant when the CI of the better
+    Dominance is statistically significant when the CI of the better
     configuration does not overlap with the CI of the worse configuration on at
     least one objective.
     """
@@ -92,7 +89,7 @@ def _ci_significantly_better(
 
 
 def pareto_frontier(points: list[AggregatedObjectives], ci_aware: bool = True) -> list[int]:
-    """Return indices of non-dominated points (§8.3, §9.4).
+    """Return indices of non-dominated points.
 
     When ci_aware=True (default): a candidate i is eliminated only if some j
     both point-dominates it (dominates_strict) AND is statistically significantly

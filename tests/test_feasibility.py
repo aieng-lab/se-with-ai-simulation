@@ -6,11 +6,11 @@ from src.config import AGENT_ROLE_COUNT, TeamConfiguration
 from src.feasibility import check_feasibility
 
 
-def _cfg(comp_dict, N=2, M=3, R=4):
+def _cfg(comp_dict, N=2, M=3, R=4, F_freeze=0):
     A = [0] * AGENT_ROLE_COUNT
     for k, v in comp_dict.items():
         A[k - 1] = v
-    return TeamConfiguration(N=N, M=M, A=tuple(A), R=R)
+    return TeamConfiguration(N=N, M=M, A_dev=tuple(A), R=R, F_freeze=F_freeze)
 
 
 class TestFeasiblePath:

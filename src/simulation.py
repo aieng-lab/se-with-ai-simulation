@@ -1,9 +1,4 @@
-"""Monte Carlo execution protocol per FRAMEWORK.md §9.2 (per-configuration loop).
-
-For each (N, M, A, R) ∈ Ω, runs K independent replications. Each replication:
-  1. Initialize state S(0) to zero (all components fixed at their initial values)
-  2. Step T sprints via `sprint.step_sprint` (all scenario parameters are fixed constants)
-  3. Compute Pareto objectives (§8.2): V, Q, C_F
+"""Monte Carlo execution protocol.
 
 Pass `capture_traces=True` to `run_configuration` to record the full per-sprint
 state evolution as a `ConfigTrace`; the default returns the lightweight `ConfigResult`.
@@ -11,10 +6,10 @@ state evolution as a `ConfigTrace`; the default returns the lightweight `ConfigR
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
 
-from .config import AGENT_ROLE_COUNT, SweepSettings, TeamConfiguration
+from .config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
 from .parameters import ScenarioParameters
 from .rng import generator_for
 from .sprint import step_sprint
@@ -32,15 +27,13 @@ class ReplicationResult:
 class ConfigResult:
     config: TeamConfiguration
     replications: tuple[ReplicationResult, ...]
-    # Aggregated means + 95% bootstrap CIs are computed by src.pareto.
 
 
 @dataclass(frozen=True, slots=True)
 class SprintSnapshot:
-    """Full system state captured at the end of production sprint t (§9.2 Step 5)."""
+    """Full system state captured at the end of sprint t."""
 
     t: int
-    # SystemState fields — end-of-sprint values after all §4 updates
     F_backlog: int
     F_completed: int
     B_kno_min: int
@@ -55,30 +48,13 @@ class SprintSnapshot:
     B_rel_min: int
     B_rel_maj: int
     B_rel_sec: int
-    D: float
+    D_tech: float
     Q_rev: int
     Q_arch: int
     Q_arch_impl: int
     Q_esc: int
-    tests: float
+    N_test: float
     N_doc: float
-    # SprintRecord fields — what happened during this sprint
-    impl: int
-    fixes_min: int
-    fixes_maj: int
-    fixes_sec: int
-    rel_fixes_min: int
-    rel_fixes_maj: int
-    rel_fixes_sec: int
-    h_fixes_min: int
-    h_fixes_maj: int
-    h_fixes_sec: int
-    h_rel_fixes_min: int
-    h_rel_fixes_maj: int
-    h_rel_fixes_sec: int
-    new_escaped_min: int
-    new_escaped_maj: int
-    new_escaped_sec: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,41 +75,25 @@ class ConfigTrace:
     traces: tuple[ReplicationTrace, ...]
 
 
-@overload
 def run_configuration(
     config: TeamConfiguration,
-    settings: SweepSettings,
-    params: ScenarioParameters,
-    *,
-    capture_traces: Literal[False] = ...,
-) -> ConfigResult: ...
-
-@overload
-def run_configuration(
-    config: TeamConfiguration,
-    settings: SweepSettings,
-    params: ScenarioParameters,
-    *,
-    capture_traces: Literal[True],
-) -> ConfigTrace: ...
-
-def run_configuration(
-    config: TeamConfiguration,
-    settings: SweepSettings,
+    settings: SimulationHorizon,
     params: ScenarioParameters,
     *,
     capture_traces: bool = False,
+    initial_state: SystemState | None = None,
 ) -> ConfigResult | ConfigTrace:
     """Run K independent replications of `config` under `settings` and `params`.
 
     With `capture_traces=False` (default) returns a lightweight `ConfigResult`.
     With `capture_traces=True` returns a `ConfigTrace` with full per-sprint history.
+    `initial_state` sets the starting system state; defaults to all-zero if not provided.
     """
     rep_results: list[ReplicationResult] = []
     rep_traces: list[ReplicationTrace] = []
 
     for k in range(settings.K):
-        result, trace = _run_replication(config, settings, params, k, capture_traces)
+        result, trace = _run_replication(config, settings, params, k, capture_traces, initial_state)
         rep_results.append(result)
         if trace is not None:
             rep_traces.append(trace)
@@ -149,28 +109,29 @@ def run_configuration(
 
 def _run_replication(
     config: TeamConfiguration,
-    settings: SweepSettings,
+    settings: SimulationHorizon,
     params: ScenarioParameters,
     k: int,
     capture_traces: bool,
+    initial_state: SystemState | None = None,
 ) -> tuple[ReplicationResult, ReplicationTrace | None]:
     # ------------------------------------------------------------------
-    # §9.2 Step 1 — RNG (sprint-level randomness only; params are fixed constants)
+    # RNG (sprint-level randomness only; params are fixed constants)
     # ------------------------------------------------------------------
     rng = generator_for(settings.master_seed, config, k)
 
     # ------------------------------------------------------------------
-    # §9.2 Step 2 — State initialisation
+    # State initialisation
     # ------------------------------------------------------------------
-    state = SystemState()
+    state = dataclasses.replace(initial_state) if initial_state is not None else SystemState()
 
     snapshots: list[SprintSnapshot] = [] if capture_traces else []  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
-    # §9.2 Step 3 — Sprint loop
+    # Sprint loop
     # ------------------------------------------------------------------
     for t in range(settings.T):
-        rec = step_sprint(t, state, config, params, rng)
+        step_sprint(t, state, config, params, rng)
 
         # Optional trace capture (after all state updates)
         if capture_traces:
@@ -190,49 +151,33 @@ def _run_replication(
                 B_rel_min=state.B_rel_min,
                 B_rel_maj=state.B_rel_maj,
                 B_rel_sec=state.B_rel_sec,
-                D=state.D,
+                D_tech=state.D_tech,
                 Q_rev=state.Q_rev,
                 Q_arch=state.Q_arch,
                 Q_arch_impl=state.Q_arch_impl,
                 Q_esc=state.Q_esc,
-                tests=state.tests,
+                N_test=state.N_test,
                 N_doc=state.N_doc,
-                impl=rec.impl,
-                fixes_min=rec.fixes_min,
-                fixes_maj=rec.fixes_maj,
-                fixes_sec=rec.fixes_sec,
-                rel_fixes_min=rec.rel_fixes_min,
-                rel_fixes_maj=rec.rel_fixes_maj,
-                rel_fixes_sec=rec.rel_fixes_sec,
-                h_fixes_min=rec.h_fixes_min,
-                h_fixes_maj=rec.h_fixes_maj,
-                h_fixes_sec=rec.h_fixes_sec,
-                h_rel_fixes_min=rec.h_rel_fixes_min,
-                h_rel_fixes_maj=rec.h_rel_fixes_maj,
-                h_rel_fixes_sec=rec.h_rel_fixes_sec,
-                new_escaped_min=rec.new_escaped_min,
-                new_escaped_maj=rec.new_escaped_maj,
-                new_escaped_sec=rec.new_escaped_sec,
             ))
 
     # ------------------------------------------------------------------
-    # §8.1 Fixed costs (scenario-level, computed once after sprint loop)
+    # Compute Costs
     # ------------------------------------------------------------------
     C_human = config.N * params.c_salary * settings.T / 52
-    # Agent costs are split by phase: dev sprints use A, freeze sprints use A_qa.
+    # Agent costs are split by phase: dev sprints use A_dev, freeze sprints use A_qa.
     qa_sprint_count = sum(
         1 for t in range(settings.T)
         if (t % config.R) >= (config.R - config.F_freeze)
     )
     dev_sprint_count = settings.T - qa_sprint_count
     C_agents = (
-        sum(config.A[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
+        sum(config.A_dev[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
         + sum(config.A_qa[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
     )
     C_total = C_human + C_agents
 
     # ------------------------------------------------------------------
-    # §9.2 Step 4 — Pareto objectives (§8.2)
+    # Compute Pareto objectives
     # ------------------------------------------------------------------
     F_done = state.F_completed
     denom = max(1, F_done)

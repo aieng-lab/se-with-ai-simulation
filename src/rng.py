@@ -16,10 +16,10 @@ if TYPE_CHECKING:
 
 
 def _config_hash(config: "TeamConfiguration") -> int:
-    """Stable integer hash of (N, M, A, R, F_freeze, A_qa) independent of PYTHONHASHSEED."""
+    """Stable integer hash of (N, M, A_dev, R, F_freeze, A_qa) independent of PYTHONHASHSEED."""
     h = 1469598103934665603  # FNV-1a 64-bit offset basis
     prime = 1099511628211
-    for value in (config.N, config.M, config.R, config.F_freeze, *config.A, *config.A_qa):  # type: ignore[union-attr]
+    for value in (config.N, config.M, config.R, config.F_freeze, *config.A_dev, *config.A_qa):  # type: ignore[union-attr]
         h = ((h ^ (value & 0xFFFFFFFFFFFFFFFF)) * prime) & 0xFFFFFFFFFFFFFFFF
     return h
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.config import SweepSettings
+from src.config import SimulationHorizon
 from src.analysis import convergence_check, final_distribution, mean_trajectory, quantile_band
 from src.results import to_dataframe
 from src.simulation import run_configuration
@@ -10,7 +10,7 @@ from src.simulation import run_configuration
 
 @pytest.fixture
 def trace_df(base_config, base_params):
-    s = SweepSettings(T=8, K=5, master_seed=0)
+    s = SimulationHorizon(T=8, K=5, master_seed=0)
     trace = run_configuration(base_config, s, base_params, capture_traces=True)
     return to_dataframe(trace)
 
@@ -27,17 +27,17 @@ class TestMeanTrajectory:
 
     def test_constant_field(self, trace_df):
         # D initialised to 0.0; may grow after sprint 0
-        first_sprint = trace_df.xs(0, level="sprint")["D"]
+        first_sprint = trace_df.xs(0, level="sprint")["D_tech"]
         assert (first_sprint >= 0).all()
 
 
 class TestQuantileBand:
     def test_columns(self, trace_df):
-        band = quantile_band(trace_df, "D")
+        band = quantile_band(trace_df, "D_tech")
         assert set(band.columns) == {"mean", "lo", "hi"}
 
     def test_length(self, trace_df):
-        band = quantile_band(trace_df, "D")
+        band = quantile_band(trace_df, "D_tech")
         assert len(band) == 8
 
     def test_ordering(self, trace_df):
@@ -64,7 +64,7 @@ class TestFinalDistribution:
 
 class TestConvergenceCheck:
     def test_single_config_stable(self, base_config, base_params):
-        s = SweepSettings(T=8, K=20, master_seed=0)
+        s = SimulationHorizon(T=8, K=20, master_seed=0)
         result = run_configuration(base_config, s, base_params)
         check = convergence_check([result], master_seed=0)
         assert check["stable"]

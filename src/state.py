@@ -23,12 +23,12 @@ class SystemState:
     B_rel_min: int = 0     # escaped bugs still open in production
     B_rel_maj: int = 0
     B_rel_sec: int = 0
-    D: float = 0.0
+    D_tech: float = 0.0
     Q_rev: int = 0
     Q_arch: int = 0       # pending architecture change requests (impl-generated, arch-drained)
     Q_arch_impl: int = 0  # approved architecture proposals awaiting implementation (rev_done-filled)
     Q_esc: int = 0
-    tests: float = 0.0     # cumulative tests written by Test Development Agent
+    N_test: float = 0.0     # cumulative tests written by Test Development Agent
     N_doc: float = 0.0     # cumulative documentation items written
 
     @property

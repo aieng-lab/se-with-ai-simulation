@@ -6,17 +6,15 @@ import numpy as np
 import pytest
 
 from src.config import TeamConfiguration
-from src.sprint import SprintRecord, step_sprint
+from src.sprint import step_sprint
 from src.state import SystemState
 
 
 def _run_sprints(n, config, params, rng, initial_backlog=20):
     state = SystemState(F_backlog=initial_backlog)
-    records = []
     for t in range(n):
-        rec = step_sprint(t, state, config, params, rng)
-        records.append(rec)
-    return state, records
+        step_sprint(t, state, config, params, rng)
+    return state
 
 
 class TestStateInvariants:
@@ -25,7 +23,7 @@ class TestStateInvariants:
         state = SystemState(F_backlog=50)
         for t in range(30):
             step_sprint(t, state, base_config, base_params, rng)
-            assert 0.0 <= state.D <= 1.0, f"D={state.D} out of bounds at t={t}"
+            assert 0.0 <= state.D_tech <= 1.0, f"D_tech={state.D_tech} out of bounds at t={t}"
 
     def test_N_doc_monotone(self, base_config, base_params):
         rng = np.random.default_rng(2)
@@ -42,8 +40,8 @@ class TestStateInvariants:
         prev = -1.0
         for t in range(20):
             step_sprint(t, state, base_config, base_params, rng)
-            assert state.tests >= prev
-            prev = state.tests
+            assert state.N_test >= prev
+            prev = state.N_test
 
     def test_F_completed_nondecreasing(self, base_config, base_params):
         rng = np.random.default_rng(4)
@@ -74,7 +72,7 @@ class TestStateInvariants:
 class TestReleaseEvent:
     def test_release_clears_B_hid(self, base_config, base_params):
         rng = np.random.default_rng(6)
-        state, _ = _run_sprints(base_config.R, base_config, base_params, rng)
+        state = _run_sprints(base_config.R, base_config, base_params, rng)
         assert state.B_hid_min == 0
         assert state.B_hid_maj == 0
 
@@ -82,17 +80,15 @@ class TestReleaseEvent:
         rng = np.random.default_rng(7)
         state = SystemState(F_backlog=20)
         # Sprint 0 is not a release sprint (R=4 → release at t=3)
-        rec = step_sprint(0, state, base_config, base_params, rng)
-        assert rec.new_escaped_min == 0
-        assert rec.new_escaped_maj == 0
+        step_sprint(0, state, base_config, base_params, rng)
+        assert state.B_escaped_min == 0
+        assert state.B_escaped_maj == 0
 
     def test_escape_only_on_release_sprint(self, base_config, base_params):
         rng = np.random.default_rng(8)
         state = SystemState(F_backlog=30)
         for t in range(base_config.R):
-            rec = step_sprint(t, state, base_config, base_params, rng)
-        # Final sprint in this loop is a release (t = R-1, so (t+1) % R == 0)
-        assert rec.new_escaped_min + rec.new_escaped_maj >= 0  # defined (may be 0)
+            step_sprint(t, state, base_config, base_params, rng)
         assert state.B_hid_min == 0 and state.B_hid_maj == 0
 
 
@@ -125,16 +121,14 @@ class TestReleaseBugQueue:
 
 
 class TestDeterminism:
-    def test_same_rng_same_record(self, base_config, base_params):
+    def test_same_rng_same_state(self, base_config, base_params):
         state1 = SystemState(F_backlog=20)
         state2 = SystemState(F_backlog=20)
         r1 = np.random.default_rng(42)
         r2 = np.random.default_rng(42)
-        rec1 = step_sprint(0, state1, base_config, base_params, r1)
-        rec2 = step_sprint(0, state2, base_config, base_params, r2)
-        assert rec1 == rec2
-        assert state1.F_completed == state2.F_completed
-        assert state1.D == state2.D
+        step_sprint(0, state1, base_config, base_params, r1)
+        step_sprint(0, state2, base_config, base_params, r2)
+        assert state1 == state2
 
 
 class TestArchChangeQueue:
@@ -146,10 +140,10 @@ class TestArchChangeQueue:
 
     def _arch_config(self, base_config, a2=1):
         """Return a config with a2 arch agents; reduces impl agents to stay within N*M."""
-        A = list(base_config.A)
+        A = list(base_config.A_dev)
         A[1] = a2
-        A[0] = max(1, A[0] - a2)   # keep a_1 >= 1 and sum(A) <= N*M
-        return dataclasses.replace(base_config, A=tuple(A))
+        A[0] = max(1, A[0] - a2)   # keep a_1 >= 1 and sum(A_dev) <= N*M
+        return dataclasses.replace(base_config, A_dev=tuple(A))
 
     def test_Q_arch_grows_without_arch_agents(self, base_config, base_params):
         """With non-zero f_arch_chg and no arch agents (A[1]=0), Q_arch must grow."""
@@ -180,10 +174,10 @@ class TestArchChangeQueue:
         q_saturate = int(params.H_capacity * base_config.N / params.H_review_time)
         state_low  = SystemState(F_backlog=50, Q_arch=0)
         state_high = SystemState(F_backlog=50, Q_arch=q_saturate)
-        rec_low  = step_sprint(0, state_low,  base_config, params, rng_low)
-        rec_high = step_sprint(0, state_high, base_config, params, rng_high)
+        step_sprint(0, state_low,  base_config, params, rng_low)
+        step_sprint(0, state_high, base_config, params, rng_high)
         # With higher D_eff, psi_D is lower, so fewer features implemented
-        assert rec_high.impl <= rec_low.impl
+        assert state_high.F_completed <= state_low.F_completed
 
     def test_Q_arch_impl_filled_by_rev_done(self, base_config, base_params):
         """Change requests → arch agent drain → Q_rev → rev_done → Q_arch_impl."""

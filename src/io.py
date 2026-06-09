@@ -1,19 +1,24 @@
-"""Load scenario configuration from a JSON file.
+"""Load configuration from JSON files.
 
 All scenario parameters are fixed constants; no sampling occurs.
 
 Public API:
-    load_scenario_config(path)   -> (SweepSettings, ScenarioParameters)
+    load_simulation_horizon(path)    -> SimulationHorizon
+    load_team_config(path)     -> TeamConfiguration
+    load_scenario_params(path) -> ScenarioParameters
+    load_initial_state(path)   -> SystemState
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
 
-from .config import AGENT_ROLE_COUNT, SweepSettings
+from .config import AGENT_ROLE_COUNT, SearchConfiguration, SimulationHorizon, TeamConfiguration
 from .parameters import ScenarioParameters
+from .state import SystemState
 
 
 # Fields of ScenarioParameters that must be stored as int
@@ -54,25 +59,44 @@ def _flatten_scenario(scenario_dict: dict) -> dict[str, Any]:
     return flat
 
 
-def _load_sweep(sweep_dict: dict) -> SweepSettings:
-    return SweepSettings(
-        T=int(sweep_dict["T"]),
-        K=int(sweep_dict["K"]),
-        master_seed=int(sweep_dict["master_seed"]),
+def load_simulation_horizon(path: str | Path) -> SimulationHorizon:
+    """Parse a simulation horizon JSON file and return SimulationHorizon."""
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return SimulationHorizon(
+        T=int(data["T"]),
+        K=int(data["K"]),
+        master_seed=int(data["master_seed"]),
     )
 
 
-def load_scenario_config(path: str | Path) -> tuple[SweepSettings, ScenarioParameters]:
-    """Parse a scenario JSON file and return sweep settings and fixed scenario parameters.
+def load_team_config(path: str | Path) -> TeamConfiguration:
+    """Parse a team configuration JSON file and return TeamConfiguration."""
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    A_dev = tuple(int(x) for x in data["A_dev"])
+    A_qa_raw = data.get("A_qa")
+    A_qa = tuple(int(x) for x in A_qa_raw) if A_qa_raw is not None else None
+    return TeamConfiguration(
+        N=int(data["N"]),
+        M=int(data["M"]),
+        A_dev=A_dev,
+        R=int(data["R"]),
+        F_freeze=int(data.get("F_freeze", 1)),
+        A_qa=A_qa,
+    )
 
-    Every value in the ``scenario`` section must be a plain number (or a legacy
-    ``{"value": x}`` dict).  No distribution metadata is accepted.
+
+def load_scenario_params(path: str | Path) -> ScenarioParameters:
+    """Parse a scenario parameters JSON file and return ScenarioParameters.
+
+    Every value must be a plain number (or a legacy ``{"value": x}`` dict).
+    No distribution metadata is accepted.
     """
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
 
-    sweep = _load_sweep(data["sweep"])
-    flat = _flatten_scenario(data["scenario"])
+    flat = _flatten_scenario(data)
 
     # c_token is always a list — extract before building kwargs
     raw_c_token = flat.pop("c_token")
@@ -85,8 +109,7 @@ def load_scenario_config(path: str | Path) -> tuple[SweepSettings, ScenarioParam
     c_token = tuple(float(x) for x in raw_c_token)
 
     # Validate coverage
-    from dataclasses import fields as dc_fields
-    required = {f.name for f in dc_fields(ScenarioParameters) if f.name != "c_token"}
+    required = {f.name for f in dataclasses.fields(ScenarioParameters) if f.name != "c_token"}
     missing = required - flat.keys()
     extra = flat.keys() - required
     if missing:
@@ -102,4 +125,45 @@ def load_scenario_config(path: str | Path) -> tuple[SweepSettings, ScenarioParam
         else:
             kwargs[key] = val
 
-    return sweep, ScenarioParameters(**kwargs, c_token=c_token)
+    return ScenarioParameters(**kwargs, c_token=c_token)
+
+
+def load_search_config(path: str | Path) -> SearchConfiguration:
+    """Parse a search configuration JSON file and return SearchConfiguration."""
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    s = data["search"]
+    return SearchConfiguration(
+        scenario_path=data["scenario"],
+        horizon_path=data["horizon"],
+        strategy=s["strategy"],
+        N_values=tuple(int(x) for x in s["N_values"]),
+        M_max=int(s["M_max"]),
+        R_values=tuple(int(x) for x in s["R_values"]),
+        F_freeze_values=tuple(int(x) for x in s.get("F_freeze_values", [1])),
+        n_samples=int(s.get("n_samples", 500)),
+        n_samples_initial=int(s.get("n_samples_initial", 100)),
+        n_generations=int(s.get("n_generations", 15)),
+        n_offspring=int(s.get("n_offspring", 20)),
+        seed=int(s.get("seed", 0)),
+    )
+
+
+def load_initial_state(path: str | Path) -> SystemState:
+    """Load initial SystemState values from a flat JSON file.
+
+    Only the fields listed in the JSON are set; all others default to 0/0.0.
+    Unknown field names raise ValueError.
+    """
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    valid = {f.name for f in dataclasses.fields(SystemState)}
+    unknown = set(data) - valid
+    if unknown:
+        raise ValueError(f"Unknown SystemState fields in {path}: {sorted(unknown)}")
+    kwargs: dict = {}
+    for f in dataclasses.fields(SystemState):
+        if f.name in data:
+            coerce = type(f.default)  # int for int fields, float for float fields
+            kwargs[f.name] = coerce(data[f.name])
+    return SystemState(**kwargs)

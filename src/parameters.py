@@ -14,12 +14,10 @@ from .config import AGENT_ROLE_COUNT
 
 @dataclass(frozen=True, slots=True)
 class ScenarioParameters:
-    """All scenario-level random variables, drawn once per replication.
-
-    Field order mirrors FRAMEWORK.md §9.2 Step 1 for cross-referencing.
+    """All scenario-level variables
     """
 
-    # --- Arrival / productivity rates (§3, §4.1) ---
+    # --- Arrival / productivity rates  ---
     r_arrival: float                 # Feature arrival rate (features/sprint)
     f_arch_chg: float                # Fraction of implemented features generating architecture change requests
     r_arch_chg: float                # Architecture change request resolution rate (per agent per sprint)
@@ -33,7 +31,7 @@ class ScenarioParameters:
     r_test: float                    # Test development rate (per agent)
     r_doc: float                     # Developer documentation rate
 
-    # --- Human capacity (§3) ---
+    # --- Human capacity ---
     H_capacity: float                # Hours/sprint per developer
     H_monitoring_overhead: float     # Monitoring hours per agent
     H_review_time: float             # Hours per architecture review
@@ -43,13 +41,13 @@ class ScenarioParameters:
     c_comm: float                    # Per-peer communication overhead
     f_fix: float                     # Fraction of residual capacity used for bug fixing; 1-f_fix goes to coding
 
-    # --- Bug injection (§4.2, §5.1) ---
+    # --- Bug injection  ---
     r_bugs: float                    # Base bug injection rate per feature
     r_bugs_human: float              # Human vs agent bug injection scale factor (0, 1]
     theta_maj: float                 # Major bug fraction [0, 1)
     theta_sec: float                 # Security bug fraction [0, 1)
 
-    # --- Detection rates (§4.2) ---
+    # --- Detection rates ---
     d_CR: float                      # Code review detection rate
     d_SA: float                      # Security audit detection rate
     d_test: float                    # Test suite maximum detection rate
@@ -57,20 +55,20 @@ class ScenarioParameters:
     alpha_size: float                # Code review size degradation rate
     baseline_size: float             # Baseline PR size (features/sprint)
 
-    # --- Debt amplifier (§5) ---
+    # --- Debt amplifier ---
     delta_min: float                 # Debt amplifier floor at D_eff=1 (applied to throughput, review, escalation)
     delta_exp: float                 # Debt amplifier shape exponent
     delta_impl: float                # Debt increment per feature
     delta_fix: float                 # Debt increment per fix
 
-    # --- Documentation (§4.9) ---
+    # --- Documentation ---
     Gamma_doc: float                 # Documentation overhead reduction [0, 1]
     c_doc_ceil: float                # Documentation coverage ceiling
 
-    # --- Escalation (§4.5) ---
+    # --- Escalation ---
     rho_esc: float                   # Per-agent escalation rate
 
-    # --- Costs (§8.1) ---
+    # --- Costs ---
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Human developer annual cost
     omega_min: float = 1.0           # Quality objective weight for minor bugs

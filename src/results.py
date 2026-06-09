@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import AGENT_ROLE_COUNT, SweepSettings, TeamConfiguration
+from .config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
 from .pareto import AggregatedObjectives
 from .simulation import ConfigResult, ConfigTrace, ReplicationResult, SprintSnapshot
 
@@ -30,7 +30,7 @@ def to_dataframe(trace: ConfigTrace) -> pd.DataFrame:
     """Convert a ConfigTrace to a tidy DataFrame indexed by (replication, sprint).
 
     Each row corresponds to one sprint in one replication. Columns include all
-    SystemState fields (end-of-sprint values) and SprintRecord fields (sprint output).
+    SystemState fields (end-of-sprint values).
     """
     rows = []
     for rep_trace in trace.traces:
@@ -52,7 +52,7 @@ def save_result(
         "config": {
             "N": result.config.N,
             "M": result.config.M,
-            "A": list(result.config.A),
+            "A_dev": list(result.config.A_dev),
             "R": result.config.R,
             "F_freeze": result.config.F_freeze,
             "A_qa": list(result.config.A_qa),  # type: ignore[arg-type]
@@ -79,12 +79,12 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
 
     cfg = data["config"]
     # Reconstruct TeamConfiguration; handle files written before F_freeze/A_qa existed.
-    A = tuple(cfg["A"])
-    if len(A) != AGENT_ROLE_COUNT:
-        raise ValueError(f"A has length {len(A)}, expected {AGENT_ROLE_COUNT}")
+    A_dev = tuple(cfg["A_dev"])
+    if len(A_dev) != AGENT_ROLE_COUNT:
+        raise ValueError(f"A_dev has length {len(A_dev)}, expected {AGENT_ROLE_COUNT}")
     F_freeze = cfg.get("F_freeze", 1)
-    A_qa = tuple(cfg["A_qa"]) if "A_qa" in cfg else None  # None → defaults to A
-    config = TeamConfiguration(N=cfg["N"], M=cfg["M"], A=A, R=cfg["R"],
+    A_qa = tuple(cfg["A_qa"]) if "A_qa" in cfg else None  # None → defaults to A_dev
+    config = TeamConfiguration(N=cfg["N"], M=cfg["M"], A_dev=A_dev, R=cfg["R"],
                                F_freeze=F_freeze, A_qa=A_qa)
 
     replications = tuple(
