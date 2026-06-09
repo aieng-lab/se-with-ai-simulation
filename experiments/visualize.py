@@ -35,6 +35,7 @@ _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parent
 sys.path.insert(0, str(_ROOT))
 
+from src.pareto import AggregatedObjectives, pareto_frontier
 from src.visualization import (
     plot_comparison_pareto,
     plot_objectives_bar,
@@ -90,6 +91,24 @@ def _load_traces(
     return out
 
 
+def _recompute_mean_pareto(objectives: dict) -> list[str]:
+    """Recompute Pareto frontier using mean values only (no CI tie-breaking)."""
+    keys = list(objectives.keys())
+    points = [
+        AggregatedObjectives(
+            value_mean=obj["value_mean"],
+            quality_mean=obj["quality_mean"],
+            cost_mean=obj["cost_mean"],
+            value_ci=tuple(obj["value_ci"]),
+            quality_ci=tuple(obj["quality_ci"]),
+            cost_ci=tuple(obj["cost_ci"]),
+        )
+        for obj in objectives.values()
+    ]
+    indices = pareto_frontier(points, ci_aware=False)
+    return [keys[i] for i in indices]
+
+
 def _scenario_label(result_dir: Path, manifest: dict) -> str:
     scenario = manifest.get("scenario", "")
     return Path(scenario).stem if scenario else result_dir.name
@@ -108,13 +127,13 @@ def _save(fig, out_dir: Path, name: str, fmt: str) -> None:
 # Single-experiment visualizations
 # ---------------------------------------------------------------------------
 
-def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
+def visualize_single(result_dir: Path, out_dir: Path, fmt: str, mean_pareto: bool = False) -> None:
     summary  = _load_summary(result_dir)
     manifest = _load_manifest(result_dir)
     label    = _scenario_label(result_dir, manifest)
 
     objectives  = summary["objectives"]
-    pareto_keys = summary["pareto_frontier"]
+    pareto_keys = _recompute_mean_pareto(objectives) if mean_pareto else summary["pareto_frontier"]
     config_keys = list(objectives.keys())
     title_base  = f"Scenario: {label}"
 
@@ -154,13 +173,15 @@ def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
 # Multi-experiment comparison
 # ---------------------------------------------------------------------------
 
-def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:
+def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str, mean_pareto: bool = False) -> None:
     scenarios: dict[str, tuple[dict, list[str]]] = {}
     for rd in result_dirs:
         manifest = _load_manifest(rd)
         summary  = _load_summary(rd)
         label    = _scenario_label(rd, manifest)
-        scenarios[label] = (summary["objectives"], summary["pareto_frontier"])
+        objectives = summary["objectives"]
+        pareto_keys = _recompute_mean_pareto(objectives) if mean_pareto else summary["pareto_frontier"]
+        scenarios[label] = (objectives, pareto_keys)
 
     print(f"\n── Cross-experiment comparison ({len(scenarios)} scenarios) ──")
     fig = plot_comparison_pareto(scenarios, title="Pareto comparison across scenarios")
@@ -187,6 +208,10 @@ def main(argv: list[str] | None = None) -> None:
         "--out", default=None, metavar="DIR",
         help="Output directory for plots (default: RESULT_DIR/plots/ for single, ./plots/ for multi)",
     )
+    parser.add_argument(
+        "--mean-pareto", action="store_true",
+        help="Use strict mean-value Pareto dominance instead of the CI-aware frontier",
+    )
     args = parser.parse_args(argv)
 
     result_dirs = [Path(d) for d in args.result_dirs]
@@ -196,19 +221,20 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
 
     fmt = args.format
+    mean_pareto = args.mean_pareto
     multi = len(result_dirs) > 1
 
     if multi:
         # Per-experiment plots always go to their own {result_dir}/plots/
         for rd in result_dirs:
-            visualize_single(rd, rd / "plots", fmt)
+            visualize_single(rd, rd / "plots", fmt, mean_pareto=mean_pareto)
 
         # Cross-experiment comparison goes to --out (default: ./plots/)
         cmp_out = Path(args.out) if args.out else Path("plots")
-        visualize_multi(result_dirs, cmp_out, fmt)
+        visualize_multi(result_dirs, cmp_out, fmt, mean_pareto=mean_pareto)
     else:
         out = Path(args.out) if args.out else result_dirs[0] / "plots"
-        visualize_single(result_dirs[0], out, fmt)
+        visualize_single(result_dirs[0], out, fmt, mean_pareto=mean_pareto)
 
     print("\nDone.")
 

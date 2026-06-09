@@ -64,7 +64,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     settings = SweepSettings(T=T, K=K, master_seed=sweep.master_seed)
 
     print(f"Scenario:   {args.scenario}")
-    print(f"Settings:   K={settings.K} replications × T={settings.T} sprints  "
+    print(f"Settings:   K={settings.K} replications * T={settings.T} sprints  "
           f"(seed={settings.master_seed})")
     print(f"Traces:     {'yes' if args.traces else 'no'}")
     print()

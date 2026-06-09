@@ -243,8 +243,6 @@ def _evaluate(
         "N": config.N, "M": config.M, "R": config.R,
         "A": list(config.A),
     }
-    if report.D_star is not None:
-        entry["D_star"] = report.D_star
     if not report.feasible:
         entry["failed_step"] = report.failed_step
         entry["reason"] = report.reason

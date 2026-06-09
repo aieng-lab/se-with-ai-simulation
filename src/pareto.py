@@ -91,13 +91,16 @@ def _ci_significantly_better(
     return value_sig or quality_sig or cf_sig
 
 
-def pareto_frontier(points: list[AggregatedObjectives]) -> list[int]:
-    """Return indices of non-dominated points with CI-aware tie-breaking (§8.3, §9.4).
+def pareto_frontier(points: list[AggregatedObjectives], ci_aware: bool = True) -> list[int]:
+    """Return indices of non-dominated points (§8.3, §9.4).
 
-    A candidate i is eliminated only if some j both point-dominates it
-    (dominates_strict) AND is statistically significantly better
-    (_ci_significantly_better). Configurations that are statistically equivalent
-    (all CIs overlap) are co-retained on the frontier.
+    When ci_aware=True (default): a candidate i is eliminated only if some j
+    both point-dominates it (dominates_strict) AND is statistically significantly
+    better (_ci_significantly_better). Configurations whose CIs overlap on all
+    objectives are co-retained on the frontier.
+
+    When ci_aware=False: standard point-estimate Pareto dominance — i is
+    eliminated whenever some j strictly dominates it on mean values alone.
     """
     n = len(points)
     if n == 0:
@@ -109,8 +112,8 @@ def pareto_frontier(points: list[AggregatedObjectives]) -> list[int]:
         for j in range(n):
             if i == j or dominated[j]:
                 continue
-            if (dominates_strict(points[j], points[i])
-                    and _ci_significantly_better(points[j], points[i])):
-                dominated[i] = True
-                break
+            if dominates_strict(points[j], points[i]):
+                if not ci_aware or _ci_significantly_better(points[j], points[i]):
+                    dominated[i] = True
+                    break
     return [i for i in range(n) if not dominated[i]]
