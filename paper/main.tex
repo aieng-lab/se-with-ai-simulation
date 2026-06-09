@@ -173,12 +173,15 @@ TODO: write abstract.
 % ============================================================
 
 The model treats software development as a discrete-time stochastic dynamical
-system. Time is indexed by sprints $t \in \{0, 1, \ldots, T-1\}$; each sprint
-represents one fixed-duration iteration and $T$ is the simulation horizon. The simulation configuration is defined by the team composition and process parameters 
+system. The simulation runs for $T$ sprints; each sprint represents one
+fixed-duration iteration. States are indexed $t \in \{0, 1, \ldots, T\}$,
+where $S(0)$ is the fixed initial state (before any sprint executes) and
+$S(t)$ for $t \geq 1$ is the state produced by sprint $t$. The simulation
+horizon is $T$. The simulation configuration is defined by the team composition and process parameters 
 $\mathbf{c} = (N, M, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$. The parameters
 $N$, $M$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Section~\ref{sec:model:roles}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 21-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
 
-We can derive metrics that describe the utility of a team configuration using three objectives (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, the $quality$ as the average number of escaped bugs per completed feature, and the $cost$ as the average cost incurred per completed feature. By exploring different team and process configurations $\mathbf{c}$, we get a multi-objective search problem with the goal to identify optimal configurations with different trade-offs between the objectives (Section~\ref{sec:model:mosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation throuhg a Monte Carlo approach and estimate the confidence intervals of the objectives (Section~\ref{sec:model:mc}). The outcomes for different configurations form a Pareto frontier that characterises the trade-offs between the objectives and provides practical guidance on how to compose mixed AI-human teams for software development (Section~\ref{sec:model:pareto}). Since the search space is combinatorial and high-dimensional, we further describe different search strategies to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
+We can derive metrics that describe the utility of a team configuration using three objectives (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, the $quality$ as the average number of escaped bugs per completed feature, and the $cost$ as the average cost incurred per completed feature. By exploring different team and process configurations $\mathbf{c}$, we get a multi-objective search problem with the goal to identify optimal configurations with different trade-offs between the objectives (Section~\ref{sec:model:mosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the objectives (Section~\ref{sec:model:mc}). The outcomes for different configurations form a Pareto frontier that characterises the trade-offs between the objectives and provides practical guidance on how to compose mixed AI-human teams for software development (Section~\ref{sec:model:pareto}). Since the search space is combinatorial and high-dimensional, we further describe different search strategies to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
 
 % TODO - figure with the overall model structure: team composition parameters, scenario parameters, state vector, transition steps, and objective calculations.
 
@@ -235,11 +238,11 @@ $k$ & Role & Primary Function \\
 4 & Refactoring
   & Restructures code to reduce the technical debt \\[2pt]
 5 & Code Review
-  & Reviews all code changes for to detect bugs \\[2pt]
+  & Reviews all code changes to detect bugs \\[2pt]
 6 & Security Audit
   & Targeted review to identify security-class vulnerabilities \\[2pt]
 7 & Test Development
-  & Writes automated tests and grows test coverage for a contiuous integration system to detect bugs \\[2pt]
+  & Writes automated tests and grows test coverage for a continuous integration system to detect bugs \\[2pt]
 8 & Developer Documentation
   & Produces documentation (e.g., API references, architecture guides, and contributor docs) to aid human developers. \\
 \bottomrule
@@ -291,17 +294,17 @@ $\mathbf{A}_\mathrm{qa}$ is required to have $a_{qa,1} = a_{qa,2} = 0$, to ensur
 \subsection{State Space}
 \label{sec:model:state}
 
-$S(t)$ denotes the 21-component system state \emph{after} sprint $t$ has completed. The components fall into four
+$S(t)$ denotes the 21-component system state produced by sprint $t$ (for $t \geq 1$); $S(0)$ is the fixed initial state. The components fall into four
 clusters summarised in Table~\ref{tab:state}: two variables that describe the features in the backlog and completed; twelve variables that track bugs in their various stages; five variables that track technical debt and human capacity queues; and two variables that track test infrastructure and documentation coverage.
 
 \subsubsection{Feature pipeline}
 $F_\mathrm{backlog}(t) \in \mathbb{N}_{\geq 0}$ counts features awaiting
-implementation after sprint $t$ completed. Within each sprint, this queue grows goverened by the configuration parameters (see Section~\ref{sec:model:parameters}), while the \textit{Feature Implementation Agents} and the
-direct coding capacity of \textit{Human Developers} reduce the value of pending features by implementing them and thereby growing the the monotonously increasing cumulative count of fully implemented features $F_\mathrm{completed}(t) \in \mathbb{N}_{\geq 0}$.
+implementation after sprint $t$ completed. Within each sprint, this queue grows governed by the configuration parameters (see Section~\ref{sec:model:parameters}), while the \textit{Feature Implementation Agents} and the
+direct coding capacity of \textit{Human Developers} reduce the value of pending features by implementing them and thereby growing the monotonically increasing cumulative count of fully implemented features $F_\mathrm{completed}(t) \in \mathbb{N}_{\geq 0}$.
 
 \subsubsection{Bug queues}
 
-Our simulation model distinguishes between three mutually excluse bug types: \emph{minor}, \emph{major}, and \emph{security} bugs. Configuration parameters determine the impact of the quality of the different bug types and at which rate the bugs of the different types are introduced with, relative to each other (see Section~\ref{sec:model:parameters}). The bugs are tracked at four queue kinds — hidden, known, released, and escaped — and each
+Our simulation model distinguishes between three mutually exclusive bug types: \emph{minor}, \emph{major}, and \emph{security} bugs. Configuration parameters determine the impact of the quality of the different bug types and at which rate the bugs of the different types are introduced with, relative to each other (see Section~\ref{sec:model:parameters}). The bugs are tracked at four queue kinds — hidden, known, released, and escaped — and each
 kind maintains one counter per type, giving twelve bug state variables in total.
 
 $B_\mathrm{hid,x}(t)$ (for $x \in \{\mathrm{min, maj, sec}\}$) counts type-$x$ bugs
@@ -317,7 +320,7 @@ priority by the Bug Fixing Agent ahead of the known-bug queue.
 \subsubsection{Technical debt and human capacity queues.}
 
 $D_\mathrm{tech}(t) \in [0, 1]$ is a normalised measure of technical debt: $D_\mathrm{tech} = 0$ represents
-a debt-free codebase and $D_\mathrm{tech} = 1$ represents maximum degradation. $D_\mathrm{tech}(t)$ can be reduced autonomously by the \textit{Refactoring Agent}. $Q_\mathrm{arch}(t) \in \mathbb{N}_{\geq 0}$ counts the architecture change requests that are still pending, $Q_\mathrm{rev}(t) \in \mathbb{N}_{\geq 0}$ counts the architecture proposals awaiting human review, and $Q_\mathrm{arch,impl}(t) \in \mathbb{N}_{\geq 0}$ counts the approved architecture proposals that are awaiting implementation. Together, these three variables measure the architectural degredation, which requires human intervention to be reduced and cannot be reduced fully autonomously. $Q_\mathrm{esc}$ is the agent escalation queue: agents may fail to implement a feature on their own and need to escalate this to a human developer to resolve the issue. 
+a debt-free codebase and $D_\mathrm{tech} = 1$ represents maximum degradation. $D_\mathrm{tech}(t)$ can be reduced autonomously by the \textit{Refactoring Agent}. $Q_\mathrm{arch}(t) \in \mathbb{N}_{\geq 0}$ counts the architecture change requests that are still pending, $Q_\mathrm{rev}(t) \in \mathbb{N}_{\geq 0}$ counts the architecture proposals awaiting human review, and $Q_\mathrm{arch,impl}(t) \in \mathbb{N}_{\geq 0}$ counts the approved architecture proposals that are awaiting implementation. Together, these three variables measure the architectural degradation, which requires human intervention to be reduced and cannot be reduced fully autonomously. $Q_\mathrm{esc}$ is the agent escalation queue: agents may fail to implement a feature on their own and need to escalate this to a human developer to resolve the issue. 
 
 All these variables grow with the work of the Feature Implementation Agents and the Bug Fixing Agents, which introduce technical debt and generate architecture change requests as they implement features and fix bugs. Thus, faster development speed directly increases the accumulation of technical debt, architectural debt, and escalation requests.
 
@@ -355,30 +358,30 @@ The $t-1$ index reflects that the documentation is updated at the end of the spr
 \toprule
 Symbol & Description & Domain & Modified (step) \\
 \midrule
-$F_\mathrm{backlog}(t)$     & Features awaiting implementation                      & $\mathbb{N}_{\geq 0}$  & 2 \\[2pt]
-$F_\mathrm{completed}(t)$   & Cumulative features shipped            & $\mathbb{N}_{\geq 0}$  & 2 \\[2pt]
+$F_\mathrm{backlog}(t)$     & Features awaiting implementation                      & $\mathbb{N}_{\geq 0}$  & 3 \\[2pt]
+$F_\mathrm{completed}(t)$   & Cumulative features shipped            & $\mathbb{N}_{\geq 0}$  & 3 \\[2pt]
 \midrule
-$B_\mathrm{hid,min}(t)$     & Hidden minor bugs added within a sprint           & $\mathbb{N}_{\geq 0}$  & 4 \\[2pt]
-$B_\mathrm{hid,maj}(t)$     & Hidden major bugs added within a sprint          & $\mathbb{N}_{\geq 0}$  & 4 \\[2pt]
-$B_\mathrm{hid,sec}(t)$     & Hidden security bugs added within a sprint        & $\mathbb{N}_{\geq 0}$  & 4 \\[2pt]
-$B_\mathrm{kno,min}(t)$     & Known minor bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$  & 4, 7, 9 \\[2pt]
-$B_\mathrm{kno,maj}(t)$     & Known major bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$  & 4, 7, 9 \\[2pt]
-$B_\mathrm{kno,sec}(t)$     & Known security bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$ & 4, 7, 9 \\[2pt]
-$B_\mathrm{rel,min}(t)$     & Open in-production minor bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 7, 9 \\[2pt]
-$B_\mathrm{rel,maj}(t)$     & Open in-production major bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 7, 9 \\[2pt]
-$B_\mathrm{rel,sec}(t)$     & Open in-production security bugs requiring repair           & $\mathbb{N}_{\geq 0}$  & 7, 9 \\[2pt]
-$B_\mathrm{esc,min}(t)$     & Cumulative minor bugs escaped              & $\mathbb{N}_{\geq 0}$  & 9 \\[2pt]
-$B_\mathrm{esc,maj}(t)$     & Cumulative major bugs escaped               & $\mathbb{N}_{\geq 0}$  & 9 \\[2pt]
-$B_\mathrm{esc,sec}(t)$     & Cumulative security bugs escaped            & $\mathbb{N}_{\geq 0}$  & 9 \\[2pt]
+$B_\mathrm{hid,min}(t)$     & Hidden minor bugs added within a sprint           & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
+$B_\mathrm{hid,maj}(t)$     & Hidden major bugs added within a sprint          & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
+$B_\mathrm{hid,sec}(t)$     & Hidden security bugs added within a sprint        & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
+$B_\mathrm{kno,min}(t)$     & Known minor bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
+$B_\mathrm{kno,maj}(t)$     & Known major bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
+$B_\mathrm{kno,sec}(t)$     & Known security bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$ & 5, 8, 10 \\[2pt]
+$B_\mathrm{rel,min}(t)$     & Open in-production minor bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
+$B_\mathrm{rel,maj}(t)$     & Open in-production major bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
+$B_\mathrm{rel,sec}(t)$     & Open in-production security bugs requiring repair           & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
+$B_\mathrm{esc,min}(t)$     & Cumulative minor bugs escaped              & $\mathbb{N}_{\geq 0}$  & 10 \\[2pt]
+$B_\mathrm{esc,maj}(t)$     & Cumulative major bugs escaped               & $\mathbb{N}_{\geq 0}$  & 10 \\[2pt]
+$B_\mathrm{esc,sec}(t)$     & Cumulative security bugs escaped            & $\mathbb{N}_{\geq 0}$  & 10 \\[2pt]
 \midrule
-$D_\mathrm{tech}(t)$                      & Technical debt level                                   & $[0, 1]$               & 8 \\[2pt]
-$Q_\mathrm{rev}(t)$         & Architecture review queue length                                                              & $\mathbb{N}_{\geq 0}$  & 5 \\[2pt]
-$Q_\mathrm{arch}(t)$        & Architecture change-request queue (impl-generated, arch-drained; part of $D_\mathrm{arch}$ normalised by review throughput)  & $\mathbb{N}_{\geq 0}$  & 2, 5 \\[2pt]
-$Q_\mathrm{arch,impl}(t)$   & Approved architecture proposals awaiting implementation (priority-drained by impl.\ agents)    & $\mathbb{N}_{\geq 0}$  & 2, 5 \\[2pt]
-$Q_\mathrm{esc}(t)$         & Escalation queue length (contributes to $D_\mathrm{esc}$ and $\delta_D$)                     & $\mathbb{N}_{\geq 0}$  & 2, 6 \\[2pt]
+$D_\mathrm{tech}(t)$                      & Technical debt level                                   & $[0, 1]$               & 9 \\[2pt]
+$Q_\mathrm{rev}(t)$         & Architecture review queue length                                                              & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
+$Q_\mathrm{arch}(t)$        & Architecture change-request queue (impl-generated, arch-drained; part of $D_\mathrm{arch}$ normalised by review throughput)  & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
+$Q_\mathrm{arch,impl}(t)$   & Approved architecture proposals awaiting implementation (priority-drained by impl.\ agents)    & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
+$Q_\mathrm{esc}(t)$         & Escalation queue length (contributes to $D_\mathrm{esc}$ and $\delta_D$)                     & $\mathbb{N}_{\geq 0}$  & 7 \\[2pt]
 \midrule
-$N_\mathrm{test}(t)$        & Cumulative tests written     & $\mathbb{R}_{\geq 0}$  & 3 \\[2pt]
-$N_\mathrm{doc}(t)$         & Cumulative documentation items written; non-decreasing & $\mathbb{R}_{\geq 0}$  & 8 \\
+$N_\mathrm{test}(t)$        & Cumulative tests written     & $\mathbb{R}_{\geq 0}$  & 4 \\[2pt]
+$N_\mathrm{doc}(t)$         & Cumulative documentation items written; non-decreasing & $\mathbb{R}_{\geq 0}$  & 9 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -524,7 +527,7 @@ $H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1)$
 per developer. Since $n(t)$ is the total number of active agents, each developer monitors
 $\frac{n(t)}{N} \cdot H_\mathrm{mon,eff}(t)$ agents. The monitoring effort is reduced by the documentation coverage $\mathrm{doc\_cov}(t-1)$ (from the previous sprint) and the reduction is calibrated by $\Gamma_\mathrm{doc}$
 \begin{equation}
-  H_\mathrm{mon,eff}(t) = H_\mathrm{monitoring\_overhead}\,
+  H_\mathrm{mon,eff}(t) = H_\mathrm{mon.overhead}\,
     \bigl(1 - \Gamma_\mathrm{doc}\,\mathrm{doc\_cov}(t-1)\bigr),
   \label{eq:hmoneff}
 \end{equation}
@@ -587,7 +590,7 @@ Configurations where this occurs cannot perform any productive work regardless o
 draws and are therefore excluded before simulation. To avoid such scenarios, we define a feasibility criterion on the simulation parameters that is checked before running the simulation:
 \begin{align}
   H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1) &\geq 0 \\
-  \frac{n(t)}{N}\,H_\mathrm{monitoring\_overhead}\,
+  \frac{n(t)}{N}\,H_\mathrm{mon.overhead}\,
     (1 - \Gamma_\mathrm{doc}\,c_\mathrm{doc,ceil}) &\leq H_\mathrm{net},
   \label{eq:feas_monitoring}
 \end{align}
@@ -605,26 +608,26 @@ awaiting implementation ($Q_\mathrm{arch,impl}$). We normalize this by the team'
 corresponding human activity in one sprint
 $H_\mathrm{capacity} \cdot N \;/\; H_{x}$.
 A value of~1 means the queue holds as many items as the team could process in
-an entire sprint under ideal conditions, i.e., the team would need a full sprint just to drain the queue. Once the queue reaches this or a worse state, the architectural degredation reached its maximum. Overall, this gives us the architectural debt as
+an entire sprint under ideal conditions, i.e., the team would need a full sprint just to drain the queue. Once the queue reaches this or a worse state, the architectural degradation reached its maximum. Step~2 reads queue values carried over from sprint $t-1$, so all debt quantities use the $t-1$ index. Overall, this gives us the architectural debt as
 \begin{equation}
-  D_\mathrm{arch}(t) = \min\!\Bigl(1,\;
-    \frac{Q_\mathrm{arch}(t) + Q_\mathrm{rev}(t) + Q_\mathrm{arch,impl}(t)}
-         {H_\mathrm{capacity}\,N \;/\; H_\mathrm{review}}\Bigr).
+  D_\mathrm{arch}(t-1) = \min\!\Bigl(1,\;
+    \frac{Q_\mathrm{arch}(t-1) + Q_\mathrm{rev}(t-1) + Q_\mathrm{arch,impl}(t-1)}
+         {H_\mathrm{capacity}\,N \;/\; H_\mathrm{review\_time}}\Bigr).
   \label{eq:D_arch}
 \end{equation}
 A long escalation queue likewise signals a team under strain: unresolved
 escalations indicate that agents require frequent human intervention, which
 degrades coordination quality.  Normalising by the maximum escalation throughput
-$H_\mathrm{capacity}\,N / H_\mathrm{esc}$ gives
+$H_\mathrm{capacity}\,N / H_\mathrm{esc\_time}$ gives
 \begin{equation}
-  D_\mathrm{esc}(t) = \min\!\Bigl(1,\;
-    \frac{Q_\mathrm{esc}(t)}
-         {H_\mathrm{capacity}\,N \;/\; H_\mathrm{esc}}\Bigr).
+  D_\mathrm{esc}(t-1) = \min\!\Bigl(1,\;
+    \frac{Q_\mathrm{esc}(t-1)}
+         {H_\mathrm{capacity}\,N \;/\; H_\mathrm{esc\_time}}\Bigr).
   \label{eq:D_esc}
 \end{equation}
 The combined effective debt is
 \begin{equation}
-  D_\mathrm{eff}(t) = \min\!\bigl(1,\; D_\mathrm{tech}(t) + D_\mathrm{arch}(t) + D_\mathrm{esc}(t)\bigr).
+  D_\mathrm{eff}(t-1) = \min\!\bigl(1,\; D_\mathrm{tech}(t-1) + D_\mathrm{arch}(t-1) + D_\mathrm{esc}(t-1)\bigr).
   \label{eq:D_eff}
 \end{equation}
 The \emph{debt amplifier}
@@ -781,7 +784,7 @@ giving Poisson-distributed arrivals that fill the change-request queue:
   \label{eq:arch_chg_new}
 \end{align}
 
-The, the Architecture Agents drain $Q_\mathrm{arch}$ at rate $r_\mathrm{arch,chg}$ per agent.
+Then, the Architecture Agents drain $Q_\mathrm{arch}$ at rate $r_\mathrm{arch,chg}$ per agent.
 Each resolved change request produces one design proposal forwarded to the human
 review queue $Q_\mathrm{rev}$, which is at the same time reduced by the human review capacity:
 \begin{align}
@@ -1035,11 +1038,11 @@ with at least one strict inequality.
 
 The uncertainty-aware extension of this rule is that $\mathbf{c}$ is considered to dominate $\mathbf{c}'$ only if it also satisfies the second part of the rule, which is that $\mathbf{c}$ is \emph{CI-significantly better} than $\mathbf{c}'$ on at least one objective, established by at least one none-overlapping confidence interval:
 \begin{equation}
-  v^-_{\mathbf{c}'} > v^+_\mathbf{c}
+  v^-_{\mathbf{c}} > v^+_{\mathbf{c}'}
   \quad\text{or}\quad
-  q^+_{\mathbf{c}'} < q^-_\mathbf{c}
+  q^+_{\mathbf{c}} < q^-_{\mathbf{c}'}
   \quad\text{or}\quad
-  c^+_{\mathbf{c}'} < c^-_\mathbf{c}.
+  c^+_{\mathbf{c}} < c^-_{\mathbf{c}'}.
   \label{eq:ci-sig}
 \end{equation}
 
@@ -1088,57 +1091,60 @@ In random search, each candidate configuration is drawn independently. A single 
         Eq.~\eqref{eq:feas_monitoring} and repeat the sampling.
 \end{enumerate}
 
+Using this approach, we determine $n_\mathrm{rand}$ random configurations that are feasible and evaluate each of them with $K$ Monte Carlo replications. The CI-aware Pareto frontier is then computed over the set of all evaluated configurations.
 
-
-\subsubsection*{Phase 2 --- Evolutionary Search.}
+\subsubsection{Evolutionary Search}
 \label{sec:model:search:evo}
 
-Evolutionary search concentrates evaluations in Pareto-promising regions by
-using already-evaluated configurations to guide the generation of new candidates.
+While the random search strategy is simple and can discover diverse configurations, it is inefficient for finding Pareto-optimal configurations in a large search space: while the probability of randomly sampling something that is in the general area of the Pareto frontier is non-negligible, the probability of sampling a configuration that is actually on the Pareto frontier is low. 
+
+We use a evolutionary search strategy to address this inefficiency. As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the Pareto frontier. In our case, we use a simple mutation-based algorithm that create new solutions by modifying existing ones. 
 
 \paragraph{Initialisation.}
-$n_\mathrm{init}$ configurations are drawn by random search (Phase~1), providing
-a diverse starting pool. All feasible configurations in the initial pool are
-evaluated and retained.
+The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathrm{init}$ configurations. These configurations are generated using the same random sampling approach as in the random search strategy, ensuring that the initial pool is diverse and covers a broad area of the search space. Each configuration in the initial pool is evaluated with $K$ Monte Carlo replications. 
 
 \paragraph{Mutation operator.}
-The operator accepts a parent configuration
+The mutation operator receives a parent configuration
 $\mathbf{c} = (N, M, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$
-and produces a child by perturbing $\mathbf{A}_\mathrm{dev}$ only;
-$(N, M, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$ are inherited unchanged.
-The perturbation consists of $n_\mathrm{ops} \in \{1, 2, 3\}$ randomly chosen
-elementary operations, each of which is one of:
+and produces a child by perturbing exactly one randomly chosen parameter.
+$R$ is never mutated, i.e, the release cadence is only sampled when generating the initial population. 
+The parameter to perturb is selected uniformly at random from five choices:
 \begin{itemize}
-  \item \emph{Add:} increment one randomly chosen role by 1, if $\sum_k a_k < N \cdot M$.
-  \item \emph{Remove:} decrement a randomly chosen non-empty role by 1,
-        provided $a_1 \geq 2$ or the chosen role is not the Feature Implementation role.
-  \item \emph{Move:} transfer one agent from a randomly chosen non-empty donor role
-        to a randomly chosen recipient role, respecting the $a_1 \geq 1$ constraint.
+  \item \emph{Mutate $N$:} replace the current value with an adjacent value in the
+        discrete set $\mathcal{N}_\mathrm{vals}$ (the next smaller or larger element;
+        a boundary value shifts inward).
+  \item \emph{Mutate $M$:} increment $M$ by 1 if $M < M_\mathrm{max}$ and
+        simultaneously add one agent to a randomly chosen role in $\mathbf{A}_\mathrm{dev}$,
+        so that the expanded capacity $N \cdot M$ is immediately used during development sprints.
+        Decreasing $M$ is excluded, because reducing the capacity bound without changing the compositions cannot alter simulation behaviour. 
+  \item \emph{Mutate $F_\mathrm{freeze}$:} apply $\pm 1$ while ensuring that $F_\mathrm{freeze}$ stays in $[0, R-1]$.
+  \item \emph{Mutate $\mathbf{A}_\mathrm{dev}$:} randomly chosen elementary operations drawn uniformly from:
+        \begin{itemize}
+          \item \emph{Add}: increment one randomly chosen role by~1.
+          \item \emph{Remove}: decrement one randomly chosen non-empty role by~1.
+          \item \emph{Move}: select a random non-empty donor role and transfer one agent to a randomly chosen
+                recipient role.
+        \end{itemize}
+  \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, applying, except that implementation role and architecture role at index 1 and 2 remain fixed at zero.
 \end{itemize}
-If the resulting $\mathbf{A}_\mathrm{dev}$ violates any structural constraint, the
-parent is returned unchanged.
+If a mutation attempt produces an invalid configuration or leaves the parent unchanged
+(e.g.\ because $M$ is already at $M_\mathrm{max}$, or a randomly chosen operation
+is a structural no-op), the attempt is discarded and a new mutation type is drawn.
+Up to ten attempts are made; if none yields a distinct valid child, the parent is
+returned unchanged.
 
-\paragraph{Generation loop.}
-For each of $G$ generations:
+\paragraph{Generation loop.} The generation loop iteratively produces new configurations by mutating selected parents from the current pool of configurations. The loop is repeated for $g=1,\ldots,G$ generations. In each generation, the following steps are performed:
 \begin{enumerate}
-  \item Compute the current CI-aware Pareto frontier over all previously evaluated
-        feasible configurations.
-  \item Sample $n_\mathrm{off}$ parent configurations uniformly from this frontier.
-  \item Apply the mutation operator to each parent, producing a child.
-  \item For each child not previously evaluated: apply the feasibility pre-filter;
-        if feasible, run $K$ replications and add to the pool.
+  \item Compute the current CI-aware Pareto frontier $\mathcal{F}_{g-1}$ over the previously generated populations $\mathcal{P}_{g-1}$.
+  \item Sample $n_\mathrm{off}$ parent configurations. 80\% of the parents are drawn uniformly from $\mathcal{F}_{g-1}$ to search for better solution along the Pareto front. 20\% of the parents are drawn uniformly from $\mathcal{P}_{g-1} \setminus \mathcal{F}_{g-1}$ to enable exploration of the search space in other regions.
+  \item Apply the mutation operator to each parent, producing valid children that are distinct from the parent creating $\mathcal{P}_{g,child}$.
+  \item Create the new population $\mathcal{P}_g$ as the union of the child population and the current population: $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$.
 \end{enumerate}
-Maintaining the full evaluated pool and recomputing the Pareto frontier at each
-generation ensures that the selection pressure is always directed toward the current
-best-known non-dominated set.
 
-\paragraph{Union and final frontier.}
-At the conclusion of both phases, the CI-aware Pareto frontier is computed once
-over the union of all feasible, simulated configurations from random and evolutionary
-search. Reporting the union improves coverage compared to either strategy alone:
-random search discovers diverse but potentially dominated configurations that may
-anchor boundary regions, while evolutionary search densely samples the interior of
-the Pareto front.
+The mixture of drawing most mutations from the Pareto frontier and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
+
+\paragraph{Final frontier.}
+At the conclusion of the generation loop, the CI-aware Pareto frontier is computed over $\mathcal{P}_G$, which contains all feasible, simulated configurations evaluated across all generations.
 
 % TODO: Figure 5 -- flowchart of the two-phase search with feasibility pre-filter
 

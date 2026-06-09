@@ -30,14 +30,15 @@ class TeamConfiguration:
             refactoring during the feature-freeze window.
     F_freeze — number of sprints at the end of each release cycle in which the
             team uses A_qa instead of A.  Sprints satisfying
-            (t % R) >= (R - F_freeze) are "frozen".  Range: [1, R].
+            (t % R) >= (R - F_freeze) are "frozen".  Range: [0, R-1].
+            F_freeze = 0 means no feature freeze (A_qa is never used).
     """
 
     N: int                              # Human Developer count
     M: int                              # Span of control (agents per human)
     A: tuple[int, ...]                  # Dev-phase composition, length == AGENT_ROLE_COUNT
     R: int                              # Release cadence (sprints)
-    F_freeze: int = 1                   # QA-phase length per release cycle, in [1, R]
+    F_freeze: int = 1                   # QA-phase length per release cycle, in [0, R-1]
     A_qa: Optional[tuple[int, ...]] = None  # QA-phase composition; None → defaults to A
 
     def __post_init__(self) -> None:
@@ -65,9 +66,9 @@ class TeamConfiguration:
             raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
 
         # Validate F_freeze
-        if not (1 <= self.F_freeze <= self.R):
+        if not (0 <= self.F_freeze <= self.R - 1):
             raise ValueError(
-                f"F_freeze must be in [1, R={self.R}], got {self.F_freeze}"
+                f"F_freeze must be in [0, R-1={self.R - 1}], got {self.F_freeze}"
             )
 
         # Validate QA composition A_qa

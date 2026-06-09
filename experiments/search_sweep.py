@@ -64,59 +64,124 @@ def _sample_composition(total: int, n_roles: int, rng: np.random.Generator) -> t
 def _sample_composition_with_impl(
     total: int, n_roles: int, rng: np.random.Generator
 ) -> tuple[int, ...]:
-    """Sample a composition guaranteeing a_2 (Feature Implementation, index 1) >= 1."""
+    """Sample a composition guaranteeing a_1 (Feature Implementation, index 0) >= 1."""
     if total < 1:
         raise ValueError(f"total must be >= 1, got {total}")
     # Reserve 1 for impl, distribute the rest freely
     base = _sample_composition(total - 1, n_roles, rng)
     A = list(base)
-    A[1] += 1   # role 2 = index 1 (Feature Implementation)
+    A[0] += 1   # role 1 = index 0 (Feature Implementation Agent)
     return tuple(A)
 
 
 def _sample_qa_composition(
     total: int, n_roles: int, rng: np.random.Generator
 ) -> tuple[int, ...]:
-    """Sample a QA-phase composition: a_1=a_2=a_3=0; distribute total across roles 4–13."""
-    # Roles 1-3 (indices 0-2) are forced to zero; distribute total across the remaining 10.
-    qa_roles = n_roles - 3
+    """Sample a QA-phase composition: a_1=a_2=0; distribute total across roles 3–8."""
+    # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture proposals
+    # during feature freeze); Bug Fixing and other roles (indices 2-7) may be non-zero.
+    qa_roles = n_roles - 2
     partial = _sample_composition(total, qa_roles, rng)
-    return (0, 0, 0) + partial
+    return (0, 0) + partial
 
 
 # ---------------------------------------------------------------------------
 # Mutation operator (for evolutionary search)
 # ---------------------------------------------------------------------------
 
-def _mutate(config: TeamConfiguration, rng: np.random.Generator) -> TeamConfiguration:
-    """Perturb A by moves, additions, or removals; keep sum(A) <= N*M and a_2 >= 1.
-    F_freeze and A_qa are inherited unchanged from the parent."""
-    A = list(config.A)
-    budget = config.N * config.M
-    n_ops = int(rng.integers(1, 4))
-    for _ in range(n_ops):
-        op = int(rng.integers(3))   # 0=move, 1=add, 2=remove
-        current_sum = sum(A)
-        if op == 1 and current_sum < budget:
-            A[int(rng.integers(AGENT_ROLE_COUNT))] += 1
-        elif op == 2 and current_sum > 1:
-            donors = [i for i in range(AGENT_ROLE_COUNT)
-                      if A[i] > 0 and (i != 1 or A[i] > 1)]
-            if donors:
-                A[int(rng.choice(donors))] -= 1
+def _mutate(
+    config: TeamConfiguration,
+    rng: np.random.Generator,
+    search_spec: dict,
+) -> TeamConfiguration:
+    """Perturb exactly one randomly chosen parameter from {N, M, F_freeze, A, A_qa}.
+    R is never mutated. Retries up to 10 times if the result is unchanged or invalid;
+    returns the parent if all attempts fail."""
+    for _ in range(10):
+        mutation_type = int(rng.integers(5))  # 0=N, 1=M, 2=F_freeze, 3=A, 4=A_qa
+
+        N = config.N
+        M = config.M
+        A = list(config.A)
+        F_freeze = config.F_freeze
+        A_qa = list(config.A_qa)
+        budget = N * M
+
+        if mutation_type == 0:
+            # Mutate N: pick an adjacent value in the sorted N_values list
+            n_vals = sorted(search_spec["N_values"])
+            idx = n_vals.index(N) if N in n_vals else 0
+            candidates = []
+            if idx > 0:
+                candidates.append(n_vals[idx - 1])
+            if idx < len(n_vals) - 1:
+                candidates.append(n_vals[idx + 1])
+            if candidates:
+                N = int(rng.choice(candidates))
+
+        elif mutation_type == 1:
+            # Mutate M: increase by 1 and add one agent to A so the extra capacity is used.
+            # Decreasing M is skipped — it cannot change behavior, only tighten the budget.
+            if M < search_spec["M_max"]:
+                M += 1
+                A[int(rng.integers(AGENT_ROLE_COUNT))] += 1
+
+        elif mutation_type == 2:
+            # Mutate F_freeze: ±1 clamped to [0, R-1]
+            F_freeze = int(np.clip(F_freeze + int(rng.choice([-1, 1])), 0, config.R - 1))
+
+        elif mutation_type == 3:
+            # Mutate A: 1-3 add/remove/move ops, maintaining sum(A) <= N*M and A[0] >= 1
+            n_ops = int(rng.integers(1, 4))
+            for _ in range(n_ops):
+                op = int(rng.integers(3))   # 0=move, 1=add, 2=remove
+                current_sum = sum(A)
+                if op == 1 and current_sum < budget:
+                    A[int(rng.integers(AGENT_ROLE_COUNT))] += 1
+                elif op == 2 and current_sum > 1:
+                    donors = [i for i in range(AGENT_ROLE_COUNT)
+                              if A[i] > 0 and (i != 1 or A[i] > 1)]
+                    if donors:
+                        A[int(rng.choice(donors))] -= 1
+                else:
+                    donors = [i for i in range(AGENT_ROLE_COUNT)
+                              if A[i] > 0 and (i != 1 or A[i] > 1)]
+                    if donors:
+                        src = int(rng.choice(donors))
+                        dst = int(rng.integers(AGENT_ROLE_COUNT))
+                        A[src] -= 1
+                        A[dst] += 1
+
         else:
-            donors = [i for i in range(AGENT_ROLE_COUNT)
-                      if A[i] > 0 and (i != 1 or A[i] > 1)]
-            if donors:
-                src = int(rng.choice(donors))
-                dst = int(rng.integers(AGENT_ROLE_COUNT))
-                A[src] -= 1
-                A[dst] += 1
-    try:
-        return TeamConfiguration(N=config.N, M=config.M, A=tuple(A), R=config.R,
-                                 F_freeze=config.F_freeze, A_qa=config.A_qa)
-    except ValueError:
-        return config   # mutation produced invalid config; keep parent
+            # Mutate A_qa: 1-2 ops restricted to QA roles (indices 2-7; 0-1 stay at 0)
+            _QA_MUTABLE = list(range(2, AGENT_ROLE_COUNT))
+            n_ops = int(rng.integers(1, 3))
+            for _ in range(n_ops):
+                op = int(rng.integers(3))   # 0=move, 1=add, 2=remove
+                current_sum = sum(A_qa)
+                if op == 1 and current_sum < budget:
+                    A_qa[_QA_MUTABLE[int(rng.integers(len(_QA_MUTABLE)))]] += 1
+                elif op == 2 and current_sum > 0:
+                    donors = [i for i in _QA_MUTABLE if A_qa[i] > 0]
+                    if donors:
+                        A_qa[int(rng.choice(donors))] -= 1
+                else:
+                    donors = [i for i in _QA_MUTABLE if A_qa[i] > 0]
+                    if donors:
+                        src = int(rng.choice(donors))
+                        dst = _QA_MUTABLE[int(rng.integers(len(_QA_MUTABLE)))]
+                        A_qa[src] -= 1
+                        A_qa[dst] += 1
+
+        try:
+            child = TeamConfiguration(N=N, M=M, A=tuple(A), R=config.R,
+                                      F_freeze=F_freeze, A_qa=tuple(A_qa))
+        except ValueError:
+            continue   # invalid; retry
+        if child != config:
+            return child
+
+    return config   # all attempts were unchanged or invalid
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +205,8 @@ def _random_configs(
         B_dev = int(rng.integers(1, budget + 1))
         B_qa  = int(rng.integers(0, budget + 1))
         A = _sample_composition_with_impl(B_dev, AGENT_ROLE_COUNT, rng)
-        # Sample F_freeze, clamped so it respects [1, R]
-        F_freeze = int(rng.choice([v for v in f_freeze_values if 1 <= v <= R] or [1]))
+        # Sample F_freeze, clamped so it respects [0, R-1]
+        F_freeze = int(rng.choice([v for v in f_freeze_values if 0 <= v <= R - 1] or [1]))
         A_qa = _sample_qa_composition(B_qa, AGENT_ROLE_COUNT, rng)
         try:
             cfg = TeamConfiguration(N=N, M=M, A=A, R=R, F_freeze=F_freeze, A_qa=A_qa)
@@ -263,23 +328,31 @@ def _run_evolutionary_search(
         evaluate_new(cfg, generation=0)
 
     # Evolutionary generations
-    seen: set[tuple] = {cfg.A for _, cfg, _ in all_aggs}
+    seen: set[TeamConfiguration] = {cfg for _, cfg, _ in all_aggs}
 
     for gen in range(1, n_gen + 1):
-        # Select parents from current Pareto frontier
+        # Build Pareto and non-Pareto parent pools (80% / 20% sampling)
         agg_objs = [a for _, _, a in all_aggs]
         front_idx = pareto_frontier(agg_objs) if agg_objs else []
-        parents = [all_aggs[i][1] for i in front_idx] if front_idx else [c for _, c, _ in all_aggs]
+        front_set = set(front_idx)
+        pareto_parents = [all_aggs[i][1] for i in front_idx]
+        non_pareto_parents = [all_aggs[i][1] for i in range(len(all_aggs)) if i not in front_set]
+        # Fallback: if one pool is empty, use the other exclusively
+        if not pareto_parents:
+            pareto_parents = non_pareto_parents
 
         n_new = 0
         attempts = 0
         while n_new < n_offspring and attempts < n_offspring * 10:
             attempts += 1
-            parent = parents[int(rng.integers(len(parents)))]
-            child = _mutate(parent, rng)
-            if child.A in seen:
+            if non_pareto_parents and rng.random() < 0.2:
+                parent = non_pareto_parents[int(rng.integers(len(non_pareto_parents)))]
+            else:
+                parent = pareto_parents[int(rng.integers(len(pareto_parents)))]
+            child = _mutate(parent, rng, search_spec)
+            if child in seen:
                 continue
-            seen.add(child.A)
+            seen.add(child)
             if evaluate_new(child, generation=gen):
                 n_new += 1
 
