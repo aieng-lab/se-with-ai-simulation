@@ -101,3 +101,32 @@ class TestCostAccounting:
         result = run_configuration(base_config, s, zero_params)
         for rep in result.replications:
             assert rep.cost == pytest.approx(0.0)
+
+    def test_agent_cost_scaled_by_role_rate(self, base_config, base_params):
+        from src.config import AGENT_ROLE_COUNT
+        params = dataclasses.replace(
+            base_params,
+            c_salary=0.0,
+            c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
+        )
+        s = SimulationHorizon(T=4, K=1, master_seed=0)
+        trace = run_configuration(base_config, s, params, capture_traces=True)
+        rep = trace.replications[0]
+        F_completed = trace.traces[0].snapshots[-1].F_completed
+
+        r_fix = params.r_fix_minor + params.r_fix_major + params.r_fix_sec
+        agent_rates = (
+            params.r_F, params.r_arch_chg, r_fix, params.r_refactor,
+            1.0, 1.0, params.r_test, params.r_doc,
+        )
+        qa_sprint_count = sum(
+            1 for t in range(s.T)
+            if (t % base_config.R) >= (base_config.R - base_config.F_freeze)
+        )
+        dev_sprint_count = s.T - qa_sprint_count
+        expected_C_agents = (
+            sum(base_config.A_dev[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
+            + sum(base_config.A_qa[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count
+        )
+        expected_cost = expected_C_agents / max(1, F_completed)
+        assert rep.cost == pytest.approx(expected_cost)

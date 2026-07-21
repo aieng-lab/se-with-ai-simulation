@@ -26,8 +26,6 @@ class ScenarioParameters:
     r_fix_major: float               # Major bug fix rate
     r_fix_sec: float                 # Security bug fix rate
     r_refactor: float                # Debt reduction per Refactoring Agent per sprint
-    r_review: float                  # Code review throughput (cost-only, see A8)
-    r_security: float                # Security audit throughput (cost-only)
     r_test: float                    # Test development rate (per agent)
     r_doc: float                     # Developer documentation rate
 
@@ -69,6 +67,8 @@ class ScenarioParameters:
     rho_esc: float                   # Per-agent escalation rate
 
     # --- Costs ---
+    # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix_major/
+    # r_refactor/1/1/r_test/r_doc for roles 1-8), not per sprint.
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Human developer annual cost
     omega_min: float = 1.0           # Quality objective weight for minor bugs

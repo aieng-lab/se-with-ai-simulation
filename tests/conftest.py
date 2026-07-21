@@ -34,7 +34,6 @@ def base_params():
     return ScenarioParameters(
         r_arrival=2.0, f_arch_chg=0.0, r_arch_chg=2.0, r_F=3.0,
         r_fix_minor=5.0, r_fix_major=2.0, r_fix_sec=1.5, r_refactor=0.2,
-        r_review=5.0, r_security=3.0,
         r_test=3.0, r_doc=2.0,
         H_capacity=40.0, H_monitoring_overhead=2.0,
         H_review_time=4.0, H_escalation_time=2.0,

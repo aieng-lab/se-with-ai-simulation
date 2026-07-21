@@ -170,9 +170,16 @@ def _run_replication(
         if (t % config.R) >= (config.R - config.F_freeze)
     )
     dev_sprint_count = settings.T - qa_sprint_count
+    # c_token is a cost per unit of role-specific throughput; Code Review and
+    # Security Audit (indices 4, 5) have no throughput rate and keep rate 1.
+    r_fix = params.r_fix_minor + params.r_fix_major + params.r_fix_sec
+    agent_rates = (
+        params.r_F, params.r_arch_chg, r_fix, params.r_refactor,
+        1.0, 1.0, params.r_test, params.r_doc,
+    )
     C_agents = (
-        sum(config.A_dev[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
-        + sum(config.A_qa[r] * params.c_token[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
+        sum(config.A_dev[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
+        + sum(config.A_qa[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
     )
     C_total = C_human + C_agents
 

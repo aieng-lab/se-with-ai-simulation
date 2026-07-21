@@ -207,15 +207,15 @@ The eight roles fall into three functional groups. The production roles
 The \textit{Feature Implementation Agent} is the primary
 productivity driver implementing features and architecture changes. While doing so, the agent also generates
 architecture change requests and introduces new bugs into the codebase.
+The \textit{Architecture Agent} creates proposals for architecture updates for human review. Neglecting architecture change requests degrades internal quality and will lead to architectural debt accumulation.
 The \textit{Bug Fixing Agent} drains the known-bug
-queue in a similar manner. The work conducted by both agents introduces technical debt. 
-The \textit{Architecture Agent} creates proposals for architecture updates for human review. Neglecting architecture change requests degrades internal quality and will lead to architectural debt accumulation. 
-The \textit{Refactoring Agent} improves the internal quality of the autonomously system and reduces technical debt. 
+queue. The work conducted by the Feature Implementation and Bug Fixing Agents introduces technical debt.
+The \textit{Refactoring Agent} improves the internal quality of the system autonomously and reduces technical debt.
 From a conceptual perspective, the \textit{Architecture Agent} is responsible for high-stakes structural changes that require human review, while the \textit{Refactoring Agent} is responsible for low-stakes internal improvements that can be executed autonomously without review. 
 
 The detection roles (k = 5,\ldots,7) inspect
 every code change synchronously in the same sprint as injection. The \textit{Code Review
-Agent} detects defects all kinds of defects but gets less effective if there is more code to review. \textit{Security Audit Agent} can only detect security defects and allows the modeling of more expensive agents for this high-stakes role. The \textit{Test Development Agent} builds up a test suite, which can help detect bugs and growths contiously. 
+Agent} detects all kinds of defects but gets less effective if there is more code to review. The \textit{Security Audit Agent} can only detect security defects and allows the modeling of more expensive agents for this high-stakes role. The \textit{Test Development Agent} builds up a continuously growing test suite, which helps detect bugs.
 
 Finally, there is one \emph{support role} (k = 8): the \textit{Developer Documentation Agent} creates documentation to aid human developers, which in turn reduces the
 per-agent monitoring overhead that consumes human capacity by reducing the cognitive load
@@ -259,7 +259,7 @@ escape to production, incrementing the cumulative escaped bug counters.
 Similar to real-world projects, a feature freeze is implemented to stabilise the
 codebase before release. The feature freeze lasts for $F_\mathrm{freeze} \in
 [0, R-1]$ sprints before a release.
-Sprint $t$ is in the freeze window iff $(t \bmod R) \geq R - F_\mathrm{freeze}$.
+Sprint $t$ is in the freeze window iff $((t-1) \bmod R) \geq R - F_\mathrm{freeze}$, i.e., the freeze window comprises the last $F_\mathrm{freeze}$ sprints of each release cycle, including the release sprint itself.
 
 Each sprint selects the active agent composition based on its
 position in the release cycle: the \emph{development composition}
@@ -287,7 +287,7 @@ i.e., the number of active agents is bounded by the supervision capacity of the 
 The inequality allows for the possibility of leaving some agent slots unfilled, which may be optimal in some cases to reduce coordination overhead and free up human capacity for review, escalation, and implementation work. 
 $\mathbf{A}_\mathrm{dev}$ must satisfy $a_{dev,1} \geq 1$, i.e., there must be at least one Feature
 Implementation Agent in the development phase. This also ensures that there is $value$, i.e., that at least some features are implemented and the simulation does not trivially collapse to zero throughput.
-$\mathbf{A}_\mathrm{qa}$ is required to have $a_{qa,1} = a_{qa,2} = 0$, to ensure that no new features are added during a feature freeze and redeploy all agents to QA roles. Further, if $F_\mathrm{freeze}=0$, we require $a_{qa,i}=0$ for all $i=1,\ldots,8$ to restrict the search space of valid configurations for $\mathbf{A}_\mathrm{qa}$ to a single value (the all-zero vector), as there is no feature freeze anyways.
+For $F_\mathrm{freeze} \geq 1$, $\mathbf{A}_\mathrm{qa}$ is required to have $a_{qa,1} = a_{qa,2} = 0$, to ensure that no new features are added during a feature freeze and that all agents are redeployed to QA roles. If $F_\mathrm{freeze}=0$, the QA composition is never active and has no effect on the simulation.
 
 
 % ---- 3.4 ----
@@ -304,7 +304,7 @@ direct coding capacity of \textit{Human Developers} reduce the value of pending 
 
 \subsubsection{Bug queues}
 
-Our simulation model distinguishes between three mutually exclusive bug types: \emph{minor}, \emph{major}, and \emph{security} bugs. Configuration parameters determine the impact of the quality of the different bug types and at which rate the bugs of the different types are introduced with, relative to each other (see Section~\ref{sec:model:parameters}). The bugs are tracked at four queue kinds — hidden, known, released, and escaped — and each
+Our simulation model distinguishes between three mutually exclusive bug types: \emph{minor}, \emph{major}, and \emph{security} bugs. Configuration parameters determine the impact of the different bug types on quality and the rates at which bugs of the different types are introduced, relative to each other (see Section~\ref{sec:model:parameters}). The bugs are tracked at four queue kinds — hidden, known, released, and escaped — and each
 kind maintains one counter per type, giving twelve bug state variables in total.
 
 $B_\mathrm{hid,x}(t)$ (for $x \in \{\mathrm{min, maj, sec}\}$) counts type-$x$ bugs
@@ -361,12 +361,12 @@ Symbol & Description & Domain & Modified (step) \\
 $F_\mathrm{backlog}(t)$     & Features awaiting implementation                      & $\mathbb{N}_{\geq 0}$  & 3 \\[2pt]
 $F_\mathrm{completed}(t)$   & Cumulative features shipped            & $\mathbb{N}_{\geq 0}$  & 3 \\[2pt]
 \midrule
-$B_\mathrm{hid,min}(t)$     & Hidden minor bugs added within a sprint           & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
-$B_\mathrm{hid,maj}(t)$     & Hidden major bugs added within a sprint          & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
-$B_\mathrm{hid,sec}(t)$     & Hidden security bugs added within a sprint        & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
-$B_\mathrm{kno,min}(t)$     & Known minor bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
-$B_\mathrm{kno,maj}(t)$     & Known major bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
-$B_\mathrm{kno,sec}(t)$     & Known security bugs added within a sprint that are queued for repair & $\mathbb{N}_{\geq 0}$ & 5, 8, 10 \\[2pt]
+$B_\mathrm{hid,min}(t)$     & Hidden minor bugs in the current release cycle           & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
+$B_\mathrm{hid,maj}(t)$     & Hidden major bugs in the current release cycle          & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
+$B_\mathrm{hid,sec}(t)$     & Hidden security bugs in the current release cycle        & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
+$B_\mathrm{kno,min}(t)$     & Known minor bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
+$B_\mathrm{kno,maj}(t)$     & Known major bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
+$B_\mathrm{kno,sec}(t)$     & Known security bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$ & 5, 8, 10 \\[2pt]
 $B_\mathrm{rel,min}(t)$     & Open in-production minor bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
 $B_\mathrm{rel,maj}(t)$     & Open in-production major bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
 $B_\mathrm{rel,sec}(t)$     & Open in-production security bugs requiring repair           & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
@@ -376,9 +376,9 @@ $B_\mathrm{esc,sec}(t)$     & Cumulative security bugs escaped            & $\ma
 \midrule
 $D_\mathrm{tech}(t)$                      & Technical debt level                                   & $[0, 1]$               & 9 \\[2pt]
 $Q_\mathrm{rev}(t)$         & Architecture review queue length                                                              & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
-$Q_\mathrm{arch}(t)$        & Architecture change-request queue (impl-generated, arch-drained; part of $D_\mathrm{arch}$ normalised by review throughput)  & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
-$Q_\mathrm{arch,impl}(t)$   & Approved architecture proposals awaiting implementation (priority-drained by impl.\ agents)    & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
-$Q_\mathrm{esc}(t)$         & Escalation queue length (contributes to $D_\mathrm{esc}$ and $\delta_D$)                     & $\mathbb{N}_{\geq 0}$  & 7 \\[2pt]
+$Q_\mathrm{arch}(t)$        & Architecture change-request queue awaiting agent resolution  & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
+$Q_\mathrm{arch,impl}(t)$   & Approved architecture proposals awaiting implementation    & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
+$Q_\mathrm{esc}(t)$         & Escalation queue length                     & $\mathbb{N}_{\geq 0}$  & 7 \\[2pt]
 \midrule
 $N_\mathrm{test}(t)$        & Cumulative tests written     & $\mathbb{R}_{\geq 0}$  & 4 \\[2pt]
 $N_\mathrm{doc}(t)$         & Cumulative documentation items written; non-decreasing & $\mathbb{R}_{\geq 0}$  & 9 \\
@@ -393,7 +393,7 @@ $N_\mathrm{doc}(t)$         & Cumulative documentation items written; non-decrea
 
 The behavior of the agents and the simulation model in each sprint
 is governed by a set of parameters that must be defined before running the simulation. 
-The parameters codify the assumptions about the underlying software development process and the capabilities of the agents, and they determine how the state variables evolve over time. They can be grouped into human-capacity parameters (Table~\ref{tab:params:human}), feature-pipeline and throughput-rate parameters (Table~\ref{tab:params:pipeline}), bug-injection parameters (Table~\ref{tab:params:injection}), quality assurance parameters for bug detection (Table~\ref{tab:params:detection}), technical-debt parameters (Table~\ref{tab:params:debt}), and cost parameters (Table~\ref{tab:params:costs}). The tables describe the meaning of each parameter, its domain, and which step of the sprint transition first uses it (see Section~\ref{sec:model:transition} for the step definitions). How exactly each of the parameters is used is described in the following subsections, how we initialize them will be discussed as part of the experiments (see Section~\ref{sec:setup}).
+The parameters codify the assumptions about the underlying software development process and the capabilities of the agents, and they determine how the state variables evolve over time. They can be grouped into human-capacity parameters (Table~\ref{tab:params:human}), feature-pipeline and throughput-rate parameters (Table~\ref{tab:params:pipeline}), bug-injection parameters (Table~\ref{tab:params:injection}), quality assurance parameters for bug detection (Table~\ref{tab:params:detection}), technical-debt parameters (Table~\ref{tab:params:debt}), and cost parameters (Table~\ref{tab:params:costs}). The tables describe the meaning of each parameter, its domain, and which step of the sprint transition first uses it (see Section~\ref{sec:model:transition} for the step definitions). How exactly each of the parameters is used is described in Section~\ref{sec:model:transition}; how we initialize them will be discussed as part of the experiments (see Section~\ref{sec:setup}).
 
 \begin{table}[t]
 \caption{Human-capacity parameters.}
@@ -423,15 +423,15 @@ $f_\mathrm{fix}$                & Fraction of post-escalation capacity allocated
 \toprule
 Symbol & Description & Domain & Step \\
 \midrule
-$r_\mathrm{arrival}$   & Poisson rate of feature arrivals per sprint                          & $\mathbb{R}_{>0}$  & 2 \\[2pt]
-$r_F$                  & Features implemented per agent per sprint                                                & $\mathbb{R}_{>0}$  & 2 \\[2pt]
-$r_\mathrm{arch,chg}$  & Architecture change requests resolved per Architecture Agent per sprint                 & $\mathbb{R}_{>0}$  & 5 \\[2pt]
-$r_\mathrm{refactor}$  & Debt reduction per Refactoring Agent per sprint        & $\mathbb{R}_{>0}$  & 8 \\[2pt]
-$r_\mathrm{test}$      & Tests written per agent per sprint                    & $\mathbb{R}_{>0}$  & 3 \\[2pt]
-$r_\mathrm{doc}$       & Documentation coverage gained per agent per sprint    & $\mathbb{R}_{>0}$  & 8 \\[2pt]
-$r_\mathrm{fix,min}$   & Minor bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$  & 7 \\[2pt]
-$r_\mathrm{fix,maj}$   & Major bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$  & 7 \\[2pt]
-$r_\mathrm{fix,sec}$   & Security bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$ & 7 \\
+$r_\mathrm{arrival}$   & Poisson rate of feature arrivals per sprint                          & $\mathbb{R}_{>0}$  & 3 \\[2pt]
+$r_F$                  & Features implemented per agent per sprint                                                & $\mathbb{R}_{>0}$  & 3 \\[2pt]
+$r_\mathrm{arch,chg}$  & Architecture change requests resolved per Architecture Agent per sprint                 & $\mathbb{R}_{>0}$  & 6 \\[2pt]
+$r_\mathrm{refactor}$  & Debt reduction per Refactoring Agent per sprint        & $\mathbb{R}_{>0}$  & 9 \\[2pt]
+$r_\mathrm{test}$      & Tests written per agent per sprint                    & $\mathbb{R}_{>0}$  & 4 \\[2pt]
+$r_\mathrm{doc}$       & Documentation items written per agent per sprint    & $\mathbb{R}_{>0}$  & 9 \\[2pt]
+$r_\mathrm{fix,min}$   & Minor bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$  & 8 \\[2pt]
+$r_\mathrm{fix,maj}$   & Major bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$  & 8 \\[2pt]
+$r_\mathrm{fix,sec}$   & Security bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$ & 8 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -444,10 +444,10 @@ $r_\mathrm{fix,sec}$   & Security bugs fixed per agent-sprint unit of work budge
 \toprule
 Symbol & Description & Domain & Step \\
 \midrule
-$r_\mathrm{bugs}$               & Base Poisson rate of bugs injected per feature                                          & $\mathbb{R}_{>0}$     & 4 \\[2pt]
-$r_\mathrm{bugs,human}$         & Scale factor on the human-coded Poisson bug stream                      & $(0,1]$               & 4 \\[2pt]
-$\theta_\mathrm{maj}$           & Binomial probability parameter for the major-bug draw in the type split                & $(0,1)$               & 4 \\[2pt]
-$\theta_\mathrm{sec}$           & Binomial probability parameter for the security-bug draw in the type split             & $(0,1)$               & 4 \\[2pt]
+$r_\mathrm{bugs}$               & Base Poisson rate of bugs injected per feature                                          & $\mathbb{R}_{>0}$     & 5 \\[2pt]
+$r_\mathrm{bugs,human}$         & Scale factor on the human-coded Poisson bug stream                      & $(0,1]$               & 5 \\[2pt]
+$\theta_\mathrm{maj}$           & Binomial probability parameter for the major-bug draw in the type split                & $(0,1)$               & 5 \\[2pt]
+$\theta_\mathrm{sec}$           & Binomial probability parameter for the security-bug draw in the type split             & $(0,1)$               & 5 \\[2pt]
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -460,12 +460,12 @@ $\theta_\mathrm{sec}$           & Binomial probability parameter for the securit
 \toprule
 Symbol & Description & Domain & Step \\
 \midrule
-$d_\mathrm{CR}$                 & Base Binomial detection probability for Code Review                                    & $[0,1]$               & 4 \\[2pt]
-$d_\mathrm{SA}$                 & Binomial detection probability for Security Audit                                      & $[0,1]$               & 4 \\[2pt]
-$d_\mathrm{test}$               & Maximum test detection probability at full coverage                     & $[0,1]$               & 4 \\[2pt]
-$c_\mathrm{test,ceil}$          & Upper bound on test coverage                                                           & $(0,\infty)$          & 4 \\[2pt]
-$\alpha_\mathrm{size}$          & Slope of log-linear code review detection degradation with change volume                        & $\mathbb{R}_{\geq 0}$ & 4 \\[2pt]
-$\mathrm{baseline\_size}$       & Reference change size normalising the log-volume degradation                           & $\mathbb{R}_{>0}$     & 4 \\[2pt]
+$d_\mathrm{CR}$                 & Base Binomial detection probability for Code Review                                    & $[0,1]$               & 5 \\[2pt]
+$d_\mathrm{SA}$                 & Binomial detection probability for Security Audit                                      & $[0,1]$               & 5 \\[2pt]
+$d_\mathrm{test}$               & Maximum test detection probability at full coverage                     & $[0,1]$               & 5 \\[2pt]
+$c_\mathrm{test,ceil}$          & Upper bound on test coverage                                                           & $(0,\infty)$          & 5 \\[2pt]
+$\alpha_\mathrm{size}$          & Slope of log-linear code review detection degradation with change volume                        & $\mathbb{R}_{\geq 0}$ & 5 \\[2pt]
+$\mathrm{baseline\_size}$       & Reference change size normalising the log-volume degradation                           & $\mathbb{R}_{>0}$     & 5 \\[2pt]
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -480,11 +480,11 @@ Symbol & Description & Domain & Step \\
 \midrule
 $\delta_\mathrm{min}$           & Floor of debt amplifier $\delta_D$ at $D_\mathrm{eff}=1$; lower bound for throughput, review, and escalation quality & $(0,1)$ & 2 \\[2pt]
 $\delta_\mathrm{exp}$           & Shape exponent of the debt amplifier $\delta_D$                          & $\mathbb{R}_{>0}$     & 2 \\[2pt]
-$f_\mathrm{arch,chg}$  & Fraction of implemented features that generate an architecture change request & $[0,1]$            & 5 \\[2pt]
+$f_\mathrm{arch,chg}$  & Fraction of implemented features that generate an architecture change request & $[0,1]$            & 6 \\[2pt]
 $\delta_\mathrm{impl}$          & Additive debt increase per feature implemented        & $\mathbb{R}_{>0}$     & 9 \\[2pt]
 $\delta_\mathrm{fix}$           & Additive debt increase per bug repaired               & $\mathbb{R}_{\geq 0}$ & 9 \\[2pt]
-$c_\mathrm{doc,ceil}$           & Upper bound on documentation coverage                                     & $(0,\infty)$          & 9 \\[2pt]
-$\rho_\mathrm{esc}$             & Per-agent escalation arrival rate; Poisson rate                                     & $[0,1]$               & 6 \\[2pt]
+$c_\mathrm{doc,ceil}$           & Upper bound on documentation coverage                                     & $(0,\infty)$          & 1 \\[2pt]
+$\rho_\mathrm{esc}$             & Per-agent escalation arrival rate; Poisson rate                                     & $\mathbb{R}_{\geq 0}$ & 7 \\[2pt]
 $\Gamma_\mathrm{doc}$           & Maximum fractional reduction of monitoring overhead at full documentation coverage & $[0,1]$ & 1 \\
 \bottomrule
 \end{tabularx}
@@ -499,7 +499,7 @@ $\Gamma_\mathrm{doc}$           & Maximum fractional reduction of monitoring ove
 \toprule
 Symbol & Description & Domain & Section \\
 \midrule
-$c_\mathrm{token}$              & Per-sprint API token cost per deployed agent, indexed by role; linear factor & $\mathbb{R}_{\geq 0}^8$ & \ref{sec:model:objectives} \\[2pt]
+$c_\mathrm{token}$              & API token cost per deployed agent, indexed by role, per unit of the role's throughput rate $r_k$ (per sprint for Code Review/Security Audit, whose $r_k=1$); linear factor & $\mathbb{R}_{\geq 0}^8$ & \ref{sec:model:objectives} \\[2pt]
 $c_\mathrm{salary}$             & Annual fully-loaded developer salary; pro-rated linear factor                & $\mathbb{R}_{\geq 0}$   & \ref{sec:model:objectives} \\[2pt]
 $\omega_\mathrm{min}$           & Quality weight for minor escaped bugs                                        & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
 $\omega_\mathrm{maj}$           & Quality weight for major escaped bugs                                        & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
@@ -520,12 +520,12 @@ fixed dependency order.
 \subsubsection*{Step 1 --- Human Capacity Allocation}
 \label{sec:transition:prelim}
 
-The priority-ordered time-budget of the developers 
+The priority-ordered time budget of the developers is
 resolved as a five-stage cascade, each stage consuming time that is remaining from the previous stage.
 First, communication overhead between the developers reduces capacity to
 $H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1)$
-per developer. Since $n(t)$ is the total number of active agents, each developer monitors
-$\frac{n(t)}{N} \cdot H_\mathrm{mon,eff}(t)$ agents. The monitoring effort is reduced by the documentation coverage $\mathrm{doc\_cov}(t-1)$ (from the previous sprint) and the reduction is calibrated by $\Gamma_\mathrm{doc}$
+per developer. Since $n(t)$ is the total number of active agents, each developer supervises
+$\frac{n(t)}{N}$ agents, consuming $\frac{n(t)}{N} \cdot H_\mathrm{mon,eff}(t)$ hours of monitoring effort. The per-agent monitoring effort is reduced by the documentation coverage $\mathrm{doc\_cov}(t-1)$ (from the previous sprint) and the reduction is calibrated by $\Gamma_\mathrm{doc}$
 \begin{equation}
   H_\mathrm{mon,eff}(t) = H_\mathrm{mon.overhead}\,
     \bigl(1 - \Gamma_\mathrm{doc}\,\mathrm{doc\_cov}(t-1)\bigr),
@@ -537,6 +537,7 @@ leaving post-monitoring capacity
     \frac{n(t)}{N}\,H_\mathrm{mon,eff}(t).
   \label{eq:hafter_mon}
 \end{equation}
+We assume $\Gamma_\mathrm{doc}\,c_\mathrm{doc,ceil} \leq 1$, so that documentation reduces, but never inverts, the monitoring effort.
 
 Architecture reviews are served from this remainder and drain the architecture review queue $Q_\mathrm{rev}(t-1)$ at rate
 $N/H_\mathrm{review\_time}$:
@@ -586,16 +587,15 @@ Both activities are debt-independent: $h_\mathrm{feature}$ and $h_\mathrm{fix}$ 
 costs regardless of the current debt level $D_\mathrm{tech}(t-1)$. While not fully realistic, this assumption simplifies the model and assumes that human effort includes dealing with possibly existing debt-related complexity. 
 
 $H_\mathrm{after\_mon}(t)$ can be negative if monitoring overhead exceeds $H_\mathrm{net}$.
-Configurations where this occurs cannot perform any productive work regardless of scenario-parameter
-draws and are therefore excluded before simulation. To avoid such scenarios, we define a feasibility criterion on the simulation parameters that is checked before running the simulation:
+Configurations for which this is unavoidable cannot perform any productive human work regardless of the scenario-parameter draws. We therefore define a feasibility criterion that is checked for the development composition $\mathbf{A}_\mathrm{dev}$ before running the simulation:
 \begin{align}
   H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1) &\geq 0 \\
-  \frac{n(t)}{N}\,H_\mathrm{mon.overhead}\,
-    (1 - \Gamma_\mathrm{doc}\,c_\mathrm{doc,ceil}) &\leq H_\mathrm{net},
+  \frac{\sum_{k=1}^{8} a_{\mathrm{dev},k}}{N}\,H_\mathrm{mon.overhead}\,
+    (1 - \Gamma_\mathrm{doc}\,c_\mathrm{doc,ceil}) &< H_\mathrm{net}.
   \label{eq:feas_monitoring}
 \end{align}
 This check ensures that the developers have sufficient capacity for the communication between
-themselves and for the monitoring of agents, assuming perfect documentation. We do not specifify similar constraints for architecture review and escalation time, as not handling these only increases the debt penalties we discuss next, meaning that implementation is still possible, though less efficient. 
+themselves and for the monitoring of agents under the best-case assumption of perfect documentation coverage. The criterion is a necessary condition rather than a sufficient one: since the documentation coverage starts below its ceiling, the effective monitoring overhead early in a simulation run can still temporarily exceed the available capacity. We do not specify similar constraints for architecture review and escalation time, as not handling these only increases the debt penalties we discuss next, meaning that implementation is still possible, though less efficient.
 
 \subsubsection*{Step 2 --- Debt Penalties}
 
@@ -608,7 +608,7 @@ awaiting implementation ($Q_\mathrm{arch,impl}$). We normalize this by the team'
 corresponding human activity in one sprint
 $H_\mathrm{capacity} \cdot N \;/\; H_{x}$.
 A value of~1 means the queue holds as many items as the team could process in
-an entire sprint under ideal conditions, i.e., the team would need a full sprint just to drain the queue. Once the queue reaches this or a worse state, the architectural degradation reached its maximum. Step~2 reads queue values carried over from sprint $t-1$, so all debt quantities use the $t-1$ index. Overall, this gives us the architectural debt as
+an entire sprint under ideal conditions, i.e., the team would need a full sprint just to drain the queue. Once the queue reaches this or a worse state, the architectural degradation has reached its maximum. Step~2 reads queue values carried over from sprint $t-1$, so all debt quantities use the $t-1$ index. Overall, this gives us the architectural debt as
 \begin{equation}
   D_\mathrm{arch}(t-1) = \min\!\Bigl(1,\;
     \frac{Q_\mathrm{arch}(t-1) + Q_\mathrm{rev}(t-1) + Q_\mathrm{arch,impl}(t-1)}
@@ -661,7 +661,7 @@ to the feature backlog:
 \end{align}
 Implementing approved architecture proposals ($\mathrm{arch\_impl}$) consumes agent
 capacity but does not increment $F_\mathrm{completed}$, since it represents internal
-architecture work rather than user-visible feature delivery. The feature implementation is lineary reduced by $\delta_D$ to reflect the impact of debt on development speed. 
+architecture work rather than user-visible feature delivery. The feature implementation is linearly reduced by $\delta_D$ to reflect the impact of debt on development speed.
 Total user-feature implementation per sprint is capped at the available backlog to
 prevent over-counting features:
 \begin{equation}
@@ -696,8 +696,7 @@ Each implemented feature injects defects at an effective per-feature rate
   r_\mathrm{bugs,eff}(t) = r_\mathrm{bugs}\,(2 - \delta_D),
   \label{eq:r_bugs_eff}
 \end{equation}
-where $(2 - \delta_D) \in [1,\, 2 - \delta_\mathrm{min}]$ is the bug-injection role
-of the debt amplifier.
+where the factor $(2 - \delta_D) \in [1,\, 2 - \delta_\mathrm{min}]$ increases the bug injection as debt accumulates.
 Bugs are drawn in two independent Poisson streams -- one for
 agent-implemented features and one for human-implemented features -- and
 then summed:
@@ -740,17 +739,18 @@ The test suite detect bugs at rate
 where $\mathrm{cov\_test}(t)$ is given by Eq.~\eqref{eq:coverage}. The code review
 then detects bugs that survive testing at effective rate
 \begin{equation}
-  d_\mathrm{CR,eff}(t) = d_\mathrm{CR}\,\delta_D\,
+  d_\mathrm{CR,eff}(t) = \min\!\Bigl(1,\; d_\mathrm{CR}\,\delta_D\,
     \max\!\Bigl(0,\; 1 - \alpha_\mathrm{size}
-      \log\!\bigl((\mathrm{impl}(t)+1)\,/\,\mathrm{baseline\_size}\bigr)\Bigr).
+      \log\!\bigl((\mathrm{impl}(t)+1)\,/\,\mathrm{baseline\_size}\bigr)\Bigr)\Bigr).
   \label{eq:dcr_eff}
 \end{equation}
 $\alpha_\mathrm{size}$ is the change-volume degradation
-slope and $\mathrm{baseline\_size}$ the reference change size. Thus, review effectiveness
+slope and $\mathrm{baseline\_size}$ the reference change size; the outer minimum keeps the
+detection rate a valid probability for change volumes below $\mathrm{baseline\_size}$. Thus, review effectiveness
 degrades with both accumulated debt $\delta_D$ and change volume.
 Finally, the Security Audit Agent detects security bugs at fixed rate $d_\mathrm{SA}$.
 
-Let $T_x(t)$, $C_x(t)$ denote the counts detected in by tests and code review for type
+Let $T_x(t)$, $C_x(t)$ denote the counts detected by tests and code review for type
 $x$, and $A_\mathrm{sec}(t)$ the count detected by the security audit. These are given by binomial draws with the corresponding detection probabilities:
 \begin{align}
   T_x(t)        &\sim \mathrm{Binomial}\!\bigl(B_x(t),\; p_\mathrm{test}(t)\bigr),
@@ -775,8 +775,8 @@ Note that $B_\mathrm{kno,x}(t)$ is an intermediate value at this step, which wil
 
 \subsubsection*{Step 6 --- Architecture Queues}
 This step propagates architecture work through three queues $Q_\mathrm{arch}$, $Q_\mathrm{rev}$, and $Q_\mathrm{arch,impl}$ in causal order. First, we determine how many new architecture change requests are generated by the features implemented this sprint.
-Each of the $\mathrm{impl}(t)$ features implemented this sprint independently
-generates an architecture change request with probability $f_\mathrm{arch,chg}$,
+Architecture change requests are generated at rate $f_\mathrm{arch,chg}$ per
+feature implemented this sprint,
 giving Poisson-distributed arrivals that fill the change-request queue:
 \begin{align}
   \mathrm{arch\_chg\_new}(t) &\sim \mathrm{Poisson}\!\bigl(f_\mathrm{arch,chg}\cdot\mathrm{impl}(t)\bigr) \\
@@ -869,7 +869,7 @@ were already updated by Step~5.
 
 \subsubsection*{Step 9 --- General Maintenance}
 Subsequent to the feature implementation, testing, and bug fixing steps, the general maintenance
-agents perform their work. They do not provide direct utilitarian value in the form of features delivered or bugs fixed, but instead provide indirect value by slowing the accumulation of technical debt and improving documentation to the team reduce the cognitive load of human developers when handling escalations.
+agents perform their work. They do not provide direct utilitarian value in the form of features delivered or bugs fixed, but instead provide indirect value by slowing the accumulation of technical debt and by improving the documentation, which reduces the cognitive load of the human developers when supervising agents.
 
 The first such activity is performed by the Refactoring Agent, which reduces technical debt. 
 Three activities drive the technical debt $D_\mathrm{tech}(t)$: feature implementation and
@@ -884,6 +884,7 @@ bug fixing each \emph{increase} debt, while refactoring conducted by the Refacto
   \label{eq:debt_update}
 \end{split}
 \end{equation}
+where $\mathrm{fixes\_total}(t) = \sum_{i=1}^{6} n_i(t)$ is the total number of bugs fixed across all priority tiers in Step~8.
 
 The second activity is documentation written by the Developer Documentation Agent which grows the cumulative
 document count:
@@ -913,7 +914,7 @@ and to the in-production repair queue. Afterwards, the hidden and known queues a
 The $B_\mathrm{rel,x}$ rows use the unindexed $t$ form on the right because the
 release queue was already updated by Step~8 (bug fixing) within this sprint;
 similarly $B_\mathrm{kno,x}(t)$ on the right is the post-fixing value from
-Steps~4 and~7. When $t \bmod R \neq 0$ no release fires and all updates are skipped.
+Steps~5 and~8. When $t \bmod R \neq 0$ no release fires and all updates are skipped.
 
 % ---- 3.7 ----
 \subsection{Objective Functions}
@@ -923,7 +924,7 @@ The model is designed to evaluate the Pareto trade-offs between three key object
 
 \subsubsection{Value}
 
-The value is defined under the assumption that more features developers means that the software product is of higher quality and that the developed features are of value to end users. Therefore, we approximate the value produced by the development process by the average throughput of features delivered per sprint, computed as
+The value is defined under the assumption that more features developed mean that the software product is of higher value to its end users. Therefore, we approximate the value produced by the development process by the average throughput of features delivered per sprint, computed as
 
 \begin{equation}
   \mathit{value} = \frac{F_\mathrm{completed}(T)}{T},
@@ -932,7 +933,7 @@ The value is defined under the assumption that more features developers means th
 
 The $\mathit{value}$ should be \emph{maximised}. Thus, the goal is to develop as many features as possible within each sprint on average.
 
-\subsubsection{Quality Problems}
+\subsubsection{Quality}
 
 The quality of software is a second main criterion for end users: if the software is buggy, it will not be useful regardless of the number of features it has. We approximate quality by the average number of bugs that escaped to production per feature delivered, computed as
 \begin{equation}
@@ -952,7 +953,7 @@ delivered and is \emph{minimised}.
 
 \subsubsection{Cost per feature}
 
-The cost drivers are the human personal costs and the Agent API costs. We approximate the cost per feature delivered by the total cost incurred across the development cycle divided by the number of features delivered:
+The cost drivers are the human personnel costs and the agent API costs. We approximate the cost per feature delivered by the total cost incurred across the development cycle divided by the number of features delivered:
 \begin{equation}
   \mathit{cost} = \frac{C_\mathrm{human} + C_\mathrm{agents}}
                        {\max\!\bigl(1,\,F_\mathrm{completed}(T)\bigr)},
@@ -967,15 +968,33 @@ The human personnel cost is the salary of the human developers. The parameter $c
   \label{eq:cost_human}
 \end{equation}
 
-Each agent of role $k$ incurs a per-sprint token cost $c_{\mathrm{token},k}$.
+Each agent of role $k$ incurs a token cost $c_{\mathrm{token},k}$ per unit of
+work produced $r_k$, e.g., per feature added, bug fixed, or test written. Thus, the costs are
+computed with respect to throughput rates, rather than with a fixed rate per sprint.
+The rational for this is practical: if we would charge a flat per-sprint fee for each agent, 
+this would either assume that the costs are the same, regardless of the throughput or we would
+need to model these costs as a function of the throughput. By modeling the costs, we decouple these
+two aspects and allow independent settings of throughout and costs. 
+We reusing the rates already introduced for the sprint
+transition function where feasible (Table~\ref{tab:params:pipeline}), i.e., $r_1 = r_F$,
+$r_2 = r_\mathrm{arch,chg}$, $r_4 = r_\mathrm{refactor}$, $r_7 = r_\mathrm{test}$,
+and $r_8 = r_\mathrm{doc}$. The Bug Fixing Agent (role $k=3$) has three
+severity-specific fix rates which we sum up, i.e., 
+$r_3 = r_\mathrm{fix,min} + r_\mathrm{fix,maj} + r_\mathrm{fix,sec}$, the
+agent's total bug-fixing throughput across all severities, as the rate for
+costing purposes. The Code Review and Security Audit Agents ($k=5,6$) have no
+throughput rate in the sprint transition function: they are assumed to have a fixed capacity,
+which models the investment into these roles as a flat cost per agent per sprint. We therefore set
+$r_5 = r_6 = 1$.
+
 Because the development composition $\mathbf{A}_\mathrm{dev}$ and QA composition
 $\mathbf{A}_\mathrm{qa}$ during a feature freeze differ, agent costs are split by phase: let $T_\mathrm{dev}$
 and $T_\mathrm{qa} = T - T_\mathrm{dev}$ denote the number of development and
 freeze sprints respectively. This gives us the agent costs
 \begin{equation}
   C_\mathrm{agents} =
-    \sum_{k=1}^{8} a_{\mathrm{dev},k}\,c_{\mathrm{token},k}\,T_\mathrm{dev}
-    + \sum_{k=1}^{8} a_{\mathrm{qa},k}\,c_{\mathrm{token},k}\,T_\mathrm{qa}.
+    \sum_{k=1}^{8} a_{\mathrm{dev},k}\,c_{\mathrm{token},k}\,r_k\,T_\mathrm{dev}
+    + \sum_{k=1}^{8} a_{\mathrm{qa},k}\,c_{\mathrm{token},k}\,r_k\,T_\mathrm{qa}.
   \label{eq:cost_agents}
 \end{equation}
 
@@ -983,22 +1002,21 @@ freeze sprints respectively. This gives us the agent costs
 \subsection{Monte Carlo Protocol}
 \label{sec:model:mc}
 
-A configuration $\mathbf{c} \in \mathcal{F}$ is evaluated by running $K$
+A feasible configuration $\mathbf{c}$ (cf.\ Section~\ref{sec:model:mosp}) is evaluated by running $K$
 independent Monte Carlo replications. At $t = 0$ all components of $S(0)$ must be initialised. We use fixed values to define the initial state of the system, e.g., zero features in the backlog and zero bugs in all queues.
 These values define the state of the project when the first agentic development sprint
 starts. They are fixed experiment constants that are
-specified as part of the experiment design (see Section~\ref{PLACEHOLDER}). The
+specified as part of the experiment design (see Section~\ref{sec:setup}). The
 sprint transition $\mathcal{T}$ is then applied $T$ times, yielding terminal state
 $S(T)$. The outcome of each simulation run is randomized by the actions within the sprint transition, which are driven by the stochastic processes, e.g., the Poisson feature arrivals and the Binomial bug detection draws.
 The three Pareto objectives $(value_k, quality_k, cost_k)$ for each replication $k=1,\ldots,K$ are then computed from $S(T)$.
 
-The objectives are aggregated accross the $K$ replications to obtain point estimates and uncertainty quantification for each configuration. Point estimates are simply the averages across replications, i.e., the configuration performance is
+The objectives are aggregated across the $K$ replications to obtain point estimates and uncertainty quantification for each configuration. Point estimates are simply the averages across replications, i.e., the configuration performance is
 summarised by the sample means $(\bar{value}, \bar{quality}, \bar{cost})$. The uncertainty is
 quantified with 95\% percentile bootstrap confidence intervals (CIs):
 $B = 1\,000$ bootstrap resamples of size $K$ (with replacement) are drawn from
 the empirical replication distribution, and the 2.5th and 97.5th percentiles of
-the bootstrap mean distribution give the interval endpoints. We use the bootstrap confidence intervals to establish
-statistically significant differences between configurations: when the intervals of two configurations overlap, their difference can be explained by random effects and is not statistically significant; when the intervals do not overlap, their difference is statistically significant at the 5\% level.
+the bootstrap mean distribution give the interval endpoints. We use the bootstrap confidence intervals as a conservative decision rule for comparing configurations: only when the intervals of two configurations do not overlap do we treat their difference as statistically significant. Non-overlap of two 95\% confidence intervals is a stricter criterion than a hypothesis test at the 5\% level, so this rule errs on the side of treating configurations as equivalent.
 
 
 % ---- 3.9 ----
@@ -1008,7 +1026,7 @@ statistically significant differences between configurations: when the intervals
 The feasible set $\mathcal{F}$ is defined as the set of all configurations
 $\mathbf{c} = (N,\,M,\,\mathbf{A}_\mathrm{dev},\,\mathbf{A}_\mathrm{qa},\,R,\,F_\mathrm{freeze})$
 satisfying the structural constraints of Section~\ref{sec:model:team} and the
-the human-capacity feasibility condition of Eq.~\eqref{eq:feas_monitoring}.
+human-capacity feasibility condition of Eq.~\eqref{eq:feas_monitoring}.
 The goal is to find a configuration in $\mathcal{F}$ that maximises $\mathit{value}$
 while minimising $\mathit{quality}$ and $\mathit{cost}$:
 \begin{equation}
@@ -1027,16 +1045,16 @@ optimal on all three, and the solution is a Pareto frontier rather than a single
 \label{sec:model:pareto}
 
 To account for the uncertainty of the software development process and the resulting Monte Carlo noise in the objective estimates, we establish the Pareto frontier with a CI-aware dominance rule.
-The rule consist of two parts. The first is the commonly-used point-dominance relation, i.e., $\mathbf{c}$ \emph{point-dominates} $\mathbf{c}'$, iff
+The rule consists of two parts. The first is the commonly-used point-dominance relation, i.e., $\mathbf{c}$ \emph{point-dominates} $\mathbf{c}'$, iff
 \begin{equation}
-  \bar{v}_{\mathbf{c}} \ge \bar{v}_\mathbf{c}',\quad
-  \bar{q}_{\mathbf{c}} \le \bar{q}_\mathbf{c}',\quad
-  \bar{c}_{\mathbf{c}} \le \bar{c}_\mathbf{c}',
+  \bar{v}_{\mathbf{c}} \ge \bar{v}_{\mathbf{c}'},\quad
+  \bar{q}_{\mathbf{c}} \le \bar{q}_{\mathbf{c}'},\quad
+  \bar{c}_{\mathbf{c}} \le \bar{c}_{\mathbf{c}'},
   \label{eq:point-dom}
 \end{equation}
 with at least one strict inequality.
 
-The uncertainty-aware extension of this rule is that $\mathbf{c}$ is considered to dominate $\mathbf{c}'$ only if it also satisfies the second part of the rule, which is that $\mathbf{c}$ is \emph{CI-significantly better} than $\mathbf{c}'$ on at least one objective, established by at least one none-overlapping confidence interval:
+The uncertainty-aware extension of this rule is that $\mathbf{c}$ is considered to dominate $\mathbf{c}'$ only if it also satisfies the second part of the rule, which is that $\mathbf{c}$ is \emph{CI-significantly better} than $\mathbf{c}'$ on at least one objective, established by at least one non-overlapping confidence interval:
 \begin{equation}
   v^-_{\mathbf{c}} > v^+_{\mathbf{c}'}
   \quad\text{or}\quad
@@ -1054,25 +1072,25 @@ Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \em
 
 Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is infeasible due to the combinatorial explosion of possible configurations. For example, for a fixed
 $(N, M)$ pair with agent budget $B = N \cdot M$, the number of non-negative
-integer compositions of $B$ into 8 roles is $\binom{B+7}{7}$ is already
-$\approx\!888\,000$ for $B = 20$ and $\approx\!314$ million for $B = 40$.
+integer compositions of $B$ into 8 roles, $\binom{B+7}{7}$, is already
+$\approx\!888\,000$ for $B = 20$ and $\approx\!63$ million for $B = 40$.
 Across all choices of $N$, $M$, $R$, $F_\mathrm{freeze}$, and separate development
 and QA compositions the full space is several orders of magnitude larger.
 
-We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configurations using two different approaches. Within both approaches, we first define a general search range for the parameters. \emph{Uniform random sampling} is our simple baseline strategy that randomly selects configurations uniformly from this search range. \emph{Evolutionary search} is a more sophisticated strategy that also states with a uniform random sampling, but then looks for better configurations through evolutionary search.
+We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configurations using two different approaches. Within both approaches, we first define a general search range for the parameters. \emph{Uniform random sampling} is our simple baseline strategy that randomly selects configurations uniformly from this search range. \emph{Evolutionary search} is a more sophisticated strategy that also starts with a uniform random sampling, but then looks for better configurations through evolutionary search.
 
 \subsubsection{Search range}
 
 The search range constrains four discrete parameters: the human developer count
-$N \in \mathcal{N}$, the span of control $M \in \mathcal{M}$, and the
-release cadence $R \in \mathcal{R}$.
-The sets $\mathcal{N}$ and $\mathcal{R}$ are
-explicit finite sets. This allows both the definition of ranges, but also the possibility of non-contiguous values, e.g., $\mathcal{N} = \{5, 10, 15\}$. The number of agents that each developer supervises is considered as a range $\mathcal{M} = \{1, \ldots, M_\mathrm{max}\}$. 
+$N \in \mathcal{N}$, the span of control $M \in \mathcal{M}$, the
+release cadence $R \in \mathcal{R}$, and the feature-freeze length $F_\mathrm{freeze} \in \mathcal{F}_\mathrm{freeze}$.
+The sets $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{freeze}$ are
+explicit finite sets. This allows both the definition of ranges and of non-contiguous values, e.g., $\mathcal{N} = \{5, 10, 15\}$. The number of agents that each developer supervises is specified as a range $\mathcal{M} = \{1, \ldots, M_\mathrm{max}\}$.
 
-While the agent composition are also part of the search space,
+While the agent compositions are also part of the search space,
 there is no need to explicitly define their search range. Instead, the allowed values are implicitly
-defined by the constraints of the simulation model. Once $N \in \mathcal{N}$ and $M \in \{1, \ldots, M_\mathrm{max}\}$ are fixed, there can be at most $N \cdot M$ agents in total. Additionaly, and the development composition $\mathbf{A}_\mathrm{dev}$ and QA compositions $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring} must be satisfied. These constraints implicitly define the allowed compositions for each $(N, M)$ pair, and therefore the search range for $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$.
-Similarly, the feature freeze duration $F_\mathrm{freeze}$ is also implicitly defined by the release cadence $R$ once this is sampled, since it must satisfy $0 \leq F_\mathrm{freeze} \leq R-1$. 
+defined by the constraints of the simulation model. Once $N \in \mathcal{N}$ and $M \in \{1, \ldots, M_\mathrm{max}\}$ are fixed, there can be at most $N \cdot M$ agents in total. Additionally, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. These constraints implicitly define the allowed compositions for each $(N, M)$ pair, and therefore the search range for $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$.
+The feature-freeze duration is additionally constrained by the release cadence: once $R$ is sampled, only values from $\mathcal{F}_\mathrm{freeze}$ with $0 \leq F_\mathrm{freeze} \leq R-1$ are admissible.
 
 
 \subsubsection{Uniform Random Search}
@@ -1081,24 +1099,24 @@ Similarly, the feature freeze duration $F_\mathrm{freeze}$ is also implicitly de
 In random search, each candidate configuration is drawn independently. A single candidate is generated using the following rejection sampling approach: 
 \begin{enumerate}
   \item Draw $N, M, R$ uniformly from $\mathcal{N}$, $\mathcal{M}$, and $\mathcal{R}$ respectively.
-  \item Draw $F_\mathrm{freeze}$ uniformly from $[0, R-1]$
-        (those satisfying $0 \leq F_\mathrm{freeze} \leq R-1$).
+  \item Draw $F_\mathrm{freeze}$ uniformly from the admissible values
+        $\{f \in \mathcal{F}_\mathrm{freeze} : 0 \leq f \leq R-1\}$.
   \item Draw the development agent count $B_\mathrm{dev}$ uniformly from $\{1, \ldots, N \cdot M\}$
-        and sample $\mathbf{A}_\mathrm{dev}$ as a composition such that $\sum_{k=1}^{K} a_{\mathrm{dev},k} = B_\mathrm{dev}$, with $a_{\mathrm{dev},1} \geq 1$.
+        and sample $\mathbf{A}_\mathrm{dev}$ as a composition such that $\sum_{k=1}^{8} a_{\mathrm{dev},k} = B_\mathrm{dev}$, with $a_{\mathrm{dev},1} \geq 1$.
   \item Draw the QA agent count $B_\mathrm{qa}$ uniformly from $\{0, \ldots, N \cdot M\}$
-        and sample $\mathbf{A}_\mathrm{qa}$ as a QA-phase composition of such that $\sum_{k=1}^{K} a_{\mathrm{qa},k} = B_\mathrm{qa}$, with $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$.
-  \item Reject the candidate if it violates the human-capacity feasibility condition of
-        Eq.~\eqref{eq:feas_monitoring} and repeat the sampling.
+        and sample $\mathbf{A}_\mathrm{qa}$ as a QA-phase composition such that $\sum_{k=1}^{8} a_{\mathrm{qa},k} = B_\mathrm{qa}$, with $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$.
+  \item Discard the candidate if it violates the human-capacity feasibility condition of
+        Eq.~\eqref{eq:feas_monitoring}.
 \end{enumerate}
 
-Using this approach, we determine $n_\mathrm{rand}$ random configurations that are feasible and evaluate each of them with $K$ Monte Carlo replications. The CI-aware Pareto frontier is then computed over the set of all evaluated configurations.
+Using this approach, we draw $n_\mathrm{rand}$ random candidate configurations and evaluate each feasible candidate with $K$ Monte Carlo replications. The CI-aware Pareto frontier is then computed over the set of all evaluated configurations.
 
 \subsubsection{Evolutionary Search}
 \label{sec:model:search:evo}
 
 While the random search strategy is simple and can discover diverse configurations, it is inefficient for finding Pareto-optimal configurations in a large search space: while the probability of randomly sampling something that is in the general area of the Pareto frontier is non-negligible, the probability of sampling a configuration that is actually on the Pareto frontier is low. 
 
-We use a evolutionary search strategy to address this inefficiency. As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the Pareto frontier. In our case, we use a simple mutation-based algorithm that create new solutions by modifying existing ones. 
+We use an evolutionary search strategy to address this inefficiency. As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the Pareto frontier. In our case, we use a simple mutation-based algorithm that creates new solutions by modifying existing ones.
 
 \paragraph{Initialisation.}
 The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathrm{init}$ configurations. These configurations are generated using the same random sampling approach as in the random search strategy, ensuring that the initial pool is diverse and covers a broad area of the search space. Each configuration in the initial pool is evaluated with $K$ Monte Carlo replications. 
@@ -1107,25 +1125,25 @@ The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathr
 The mutation operator receives a parent configuration
 $\mathbf{c} = (N, M, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$
 and produces a child by perturbing exactly one randomly chosen parameter.
-$R$ is never mutated, i.e, the release cadence is only sampled when generating the initial population. 
+$R$ is never mutated, i.e., the release cadence is only sampled when generating the initial population.
 The parameter to perturb is selected uniformly at random from five choices:
 \begin{itemize}
   \item \emph{Mutate $N$:} replace the current value with an adjacent value in the
-        discrete set $\mathcal{N}_\mathrm{vals}$ (the next smaller or larger element;
+        discrete set $\mathcal{N}$ (the next smaller or larger element;
         a boundary value shifts inward).
   \item \emph{Mutate $M$:} increment $M$ by 1 if $M < M_\mathrm{max}$ and
         simultaneously add one agent to a randomly chosen role in $\mathbf{A}_\mathrm{dev}$,
         so that the expanded capacity $N \cdot M$ is immediately used during development sprints.
         Decreasing $M$ is excluded, because reducing the capacity bound without changing the compositions cannot alter simulation behaviour. 
   \item \emph{Mutate $F_\mathrm{freeze}$:} apply $\pm 1$ while ensuring that $F_\mathrm{freeze}$ stays in $[0, R-1]$.
-  \item \emph{Mutate $\mathbf{A}_\mathrm{dev}$:} randomly chosen elementary operations drawn uniformly from:
+  \item \emph{Mutate $\mathbf{A}_\mathrm{dev}$:} apply one elementary operation drawn uniformly from:
         \begin{itemize}
           \item \emph{Add}: increment one randomly chosen role by~1.
           \item \emph{Remove}: decrement one randomly chosen non-empty role by~1.
           \item \emph{Move}: select a random non-empty donor role and transfer one agent to a randomly chosen
                 recipient role.
         \end{itemize}
-  \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, applying, except that implementation role and architecture role at index 1 and 2 remain fixed at zero.
+  \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero.
 \end{itemize}
 If a mutation attempt produces an invalid configuration or leaves the parent unchanged
 (e.g.\ because $M$ is already at $M_\mathrm{max}$, or a randomly chosen operation
@@ -1135,9 +1153,9 @@ returned unchanged.
 
 \paragraph{Generation loop.} The generation loop iteratively produces new configurations by mutating selected parents from the current pool of configurations. The loop is repeated for $g=1,\ldots,G$ generations. In each generation, the following steps are performed:
 \begin{enumerate}
-  \item Compute the current CI-aware Pareto frontier $\mathcal{F}_{g-1}$ over the previously generated populations $\mathcal{P}_{g-1}$.
-  \item Sample $n_\mathrm{off}$ parent configurations. 80\% of the parents are drawn uniformly from $\mathcal{F}_{g-1}$ to search for better solution along the Pareto front. 20\% of the parents are drawn uniformly from $\mathcal{P}_{g-1} \setminus \mathcal{F}_{g-1}$ to enable exploration of the search space in other regions.
-  \item Apply the mutation operator to each parent, producing valid children that are distinct from the parent creating $\mathcal{P}_{g,child}$.
+  \item Compute the current CI-aware Pareto frontier $\mathcal{F}_{g-1}$ over the previously generated population $\mathcal{P}_{g-1}$.
+  \item Sample $n_\mathrm{off}$ parent configurations. 80\% of the parents are drawn uniformly from $\mathcal{F}_{g-1}$ to search for better solutions along the Pareto front. 20\% of the parents are drawn uniformly from $\mathcal{P}_{g-1} \setminus \mathcal{F}_{g-1}$ to enable exploration of the search space in other regions.
+  \item Apply the mutation operator to each parent, creating the child population $\mathcal{P}_{g,child}$.
   \item Create the new population $\mathcal{P}_g$ as the union of the child population and the current population: $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$.
 \end{enumerate}
 
@@ -1149,70 +1167,194 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 % TODO: Figure 5 -- flowchart of the two-phase search with feasibility pre-filter
 
 % ============================================================
-\section{Simulation Methodology}
-\label{sec:methodology}
-% ============================================================
-
-% ---- 5.2 ----
-\subsection{Parameter Distributions}
-\label{sec:methodology:params}
-%
-% - ~74 scenario-level parameters drawn per replication from parameterised distributions:
-%   * Throughput rates (r_F, r_fix, r_refactor, etc.): Log-normal (right-skewed;
-%     most tasks fast, occasional long ones).
-%   * Feature arrival rate r_arrival: fixed constant.
-%   * Bug injection rate r_bugs: fixed constant.
-%   * Detection rates (d_CR, d_SA, d_UT, d_IT, d_ST): Beta (bounded [0,1]).
-%   * Bug type fractions theta_maj, theta_sec: Beta.
-%   * Cost parameters: Log-normal (except c_salary: fixed).
-%   * CI/CD parameters (tau_CI_base, alpha_F_CI, alpha_test_CI): Log-normal or fixed.
-%
-% - Distribution justifications: reference empirical SE data where available
-%   (defect injection rates from Basili et al., review detection rates from
-%   Kemerer \& Paulk, CI pipeline latency from Hilton et al.); flag expert-elicited.
-%
-% - Three scenario parameterisations as shifts on the common baseline:
-%   * Default: r_arrival = 2, balanced cost structure.
-%   * High-load: r_arrival = 4 (2x feature pressure).
-%   * Low-budget: c_token_k halved, c_salary unchanged (AI cost advantage).
-%
-% - Table 4: full parameter table with distribution family, baseline parameters,
-%   scenario-specific overrides, and data source / justification.
-
-% ---- 5.3 ----
-
-
-
-% ============================================================
 \section{Experimental Setup}
 \label{sec:setup}
 % ============================================================
 
-% ---- 6.1 ----
+% ---- 4.1 ----
 \subsection{Scenarios}
 \label{sec:setup:scenarios}
-%
-% Three scenarios representing distinct industrial contexts:
-%
-% Default (src/config/default_scenario.json):
-%   - Steady-state product team; moderate feature demand r_arrival = 2.
-%   - Balanced cost structure; tau_CI_base = 0.5 sprints.
-%   - Representative of a mid-size agile product team.
-%
-% High-load (config/high_load.json):
-%   - Startup-phase feature rush; r_arrival = 4 (2x default).
-%   - Higher CI latency tau_CI_base = 0.75; larger codebase assumed.
-%   - Tests whether optimal compositions for default generalise under pressure.
-%
-% Low-budget (config/low_budget.json):
-%   - Resource-constrained team; AI token costs halved vs. default.
-%   - Human salary unchanged; incentivises heavier AI-agent utilisation.
-%   - Tests cost-efficiency frontier when API pricing is more favourable.
-%
-% - For each scenario provide the complete parameter vector (reference Table 4).
-% - Justify scenario choices as covering a representative range of practical settings.
 
-% ---- 6.2 ----
+There are eight orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters, i.e., the agent capabilitites and efforts, the human developer capabilities, the debt dynamics, the project dynamics, the agent costs, the human costs, and the bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the number of features implemented per sprint by the implementation agents, the number of bugs fixed per sprint by the bug-fixing agents, and so on. Orthogonally, pricing of these agents can be cheaper or more expensive. Since they are orthogonal, we can freely combine all eight groups into a diverse set of scenarios.
+
+Tables~\ref{tab:scenario:agents}--\ref{tab:scenario:bugimpact} give the concrete parameter values for each group across the three scenarios. 
+
+\begin{itemize}
+  \item \textbf{Agent capabilities and efforts.} How effectively and how much each AI agent role performs its primary function, covering both detection quality and per-sprint throughput rates.
+  \begin{itemize}
+    \item $r_F$, $r_\mathrm{arch,chg}$, $r_\mathrm{refactor}$, $r_\mathrm{test}$, $r_\mathrm{doc}$, $r_\mathrm{fix,min}$, $r_\mathrm{fix,maj}$, $r_\mathrm{fix,sec}$, $d_\mathrm{CR}$, $d_\mathrm{SA}$, $d_\mathrm{test}$, $c_\mathrm{test,ceil}$, $\alpha_\mathrm{size}$, $\mathrm{baseline\_size}$, $r_\mathrm{bugs,human}$
+  \end{itemize}
+
+  \item \textbf{Human developer capabilities.} The gross time budget of each developer and the effort consumed by peer communication, agent supervision, architecture review, and escalation handling, leaving residual capacity for direct coding.
+  \begin{itemize}
+    \item $H_\mathrm{capacity}$, $c_\mathrm{comm}$, $H_\mathrm{mon.overhead}$, $H_\mathrm{review\_time}$, $H_\mathrm{esc\_time}$, $h_\mathrm{feature}$, $h_\mathrm{fix}$, $f_\mathrm{fix}$
+  \end{itemize}
+
+  \item \textbf{Debt dynamics.} How fast technical and architectural debt accumulates from development activity, and how steeply accumulated debt degrades team productivity.
+  \begin{itemize}
+    \item $\delta_\mathrm{impl}$, $\delta_\mathrm{fix}$, $\delta_\mathrm{min}$, $\delta_\mathrm{exp}$, $f_\mathrm{arch,chg}$, $\rho_\mathrm{esc}$, $\Gamma_\mathrm{doc}$, $c_\mathrm{doc,ceil}$
+  \end{itemize}
+
+  \item \textbf{Project dynamics.} The external demand placed on the team through the feature arrival rate, the base bug injection rate, and the bug severity distribution.
+  \begin{itemize}
+    \item $r_\mathrm{arrival}$, $r_\mathrm{bugs}$, $\theta_\mathrm{maj}$, $\theta_\mathrm{sec}$
+  \end{itemize}
+
+  \item \textbf{Agent costs.} The API token cost per unit of throughput for each agent role, directly scaling the agent component of the cost objective.
+  \begin{itemize}
+    \item $c_\mathrm{token}$ (one entry per role $k = 1,\ldots,8$)
+  \end{itemize}
+
+  \item \textbf{Human costs.} The fully-loaded annual salary of a human developer, which determines the human personnel component of the cost objective.
+  \begin{itemize}
+    \item $c_\mathrm{salary}$
+  \end{itemize}
+
+  \item \textbf{Bug impact.} The relative severity weights assigned to the three bug types when computing the quality objective, reflecting the real-world consequences of minor, major, and security defects.
+  \begin{itemize}
+    \item $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, $\omega_\mathrm{sec}$
+  \end{itemize}
+\end{itemize}
+
+
+
+\begin{table}[t]
+\caption{Agent capability and effort parameters across scenarios.}
+\label{tab:scenario:agents}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Low & Medium & High & Source \\
+\midrule
+$r_F$                      & 3.0  & 3.0  & 3.0  & Assumed; calibrated to mid-range LLM coding agent performance \\[2pt]
+$r_\mathrm{arch,chg}$     & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
+$r_\mathrm{refactor}$     & 0.2  & 0.2  & 0.2  & Assumed; low rate reflecting structural complexity \\[2pt]
+$r_\mathrm{test}$         & 3.0  & 3.0  & 3.0  & Assumed \\[2pt]
+$r_\mathrm{doc}$          & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
+$r_\mathrm{fix,min}$      & 5.0  & 5.0  & 5.0  & Assumed; rates ordered by defect severity \\[2pt]
+$r_\mathrm{fix,maj}$      & 2.0  & 2.0  & 2.0  & Assumed; rates ordered by defect severity \\[2pt]
+$r_\mathrm{fix,sec}$      & 1.5  & 1.5  & 1.5  & Assumed; rates ordered by defect severity \\[2pt]
+$d_\mathrm{CR}$            & 0.70 & 0.70 & 0.70 & Mid-range of empirical code review effectiveness studies \\[2pt]
+$d_\mathrm{SA}$            & 0.85 & 0.85 & 0.85 & Assumed higher due to security-domain specialisation \\[2pt]
+$d_\mathrm{test}$          & 0.60 & 0.60 & 0.60 & Mid-range of mutation testing effectiveness literature \\[2pt]
+$c_\mathrm{test,ceil}$    & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
+$\alpha_\mathrm{size}$    & 0.10 & 0.10 & 0.10 & Assumed \\[2pt]
+$\mathrm{baseline\_size}$ & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
+$r_\mathrm{bugs,human}$   & 0.80 & 0.80 & 0.80 & Assumed; human defect density lower than AI-generated code \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\caption{Human developer capability parameters across scenarios.}
+\label{tab:scenario:human}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Low & Medium & High & Source \\
+\midrule
+$H_\mathrm{capacity}$         & 40.0 & 40.0 & 40.0 & Standard 40-hour full-time sprint \\[2pt]
+$c_\mathrm{comm}$             & 1.0  & 1.0  & 1.0  & Per-peer communication overhead; cf.\ Brooks (1975) \\[2pt]
+$H_\mathrm{mon.overhead}$     & 2.0  & 2.0  & 2.0  & Assumed; 2\,h/sprint per supervised agent \\[2pt]
+$H_\mathrm{review\_time}$     & 4.0  & 4.0  & 4.0  & Assumed; half a working day per architecture review \\[2pt]
+$H_\mathrm{esc\_time}$        & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
+$h_\mathrm{feature}$          & 8.0  & 8.0  & 8.0  & Assumed; one working day per feature \\[2pt]
+$h_\mathrm{fix}$              & 4.0  & 4.0  & 4.0  & Assumed; half a working day per bug fix \\[2pt]
+$f_\mathrm{fix}$              & 0.10 & 0.10 & 0.10 & Assumed \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\caption{Debt dynamics parameters across scenarios.}
+\label{tab:scenario:debt}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Low & Medium & High & Source \\
+\midrule
+$\delta_\mathrm{impl}$ & 0.010 & 0.010 & 0.010 & Assumed; slow debt accumulation per implemented feature \\[2pt]
+$\delta_\mathrm{fix}$  & 0.005 & 0.005 & 0.005 & Assumed; half the rate of feature work \\[2pt]
+$\delta_\mathrm{min}$  & 0.50  & 0.50  & 0.50  & Assumed; 50\% productivity floor at maximum debt \\[2pt]
+$\delta_\mathrm{exp}$  & 1.5   & 1.5   & 1.5   & Assumed; slightly super-linear debt impact \\[2pt]
+$f_\mathrm{arch,chg}$  & 0.30  & 0.30  & 0.30  & Assumed; 30\% of features trigger an architecture change request \\[2pt]
+$\rho_\mathrm{esc}$    & 0.010 & 0.010 & 0.010 & Assumed; low per-agent escalation probability \\[2pt]
+$\Gamma_\mathrm{doc}$  & 0.50  & 0.50  & 0.50  & Assumed; up to 50\% reduction in monitoring overhead \\[2pt]
+$c_\mathrm{doc,ceil}$  & 1.0   & 1.0   & 1.0   & Assumed \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\caption{Project dynamics parameters across scenarios.}
+\label{tab:scenario:project}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Slow & Medium & Fast & Source \\
+\midrule
+$r_\mathrm{arrival}$  & 2.0  & \textbf{4.0}  & 2.0  & Default/low-budget: moderate workload; high-load: doubled demand \\[2pt]
+$r_\mathrm{bugs}$     & 0.10 & 0.10 & 0.10 & Assumed; low defect density consistent with AI-assisted development \\[2pt]
+$\theta_\mathrm{maj}$ & 0.18 & 0.18 & 0.18 & Assumed \\[2pt]
+$\theta_\mathrm{sec}$ & 0.10 & 0.10 & 0.10 & Assumed \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\caption{Agent cost parameters ($c_\mathrm{token}$, USD per unit of the role's
+         throughput rate $r_k$; per sprint per agent for Code Review/Security
+         Audit, whose $r_k=1$). Architecture \& Design carries a higher cost due
+         to larger context requirements; all values are halved in the
+         low-budget scenario.}
+\label{tab:scenario:agentcosts}
+\footnotesize
+\begin{tabularx}{\linewidth}{cp{3.2cm}rrrX}
+\toprule
+$k$ & Role & Low & Medium & High & Source \\
+\midrule
+1 & Feature Implementation & 0.033 & 0.033 & \textbf{0.017} & LLM API pricing \\[2pt]
+2 & Architecture \& Design & 0.100 & 0.100 & \textbf{0.050} & LLM API pricing \\[2pt]
+3 & Bug Fixing             & 0.0118 & 0.0118 & \textbf{0.0059} & LLM API pricing \\[2pt]
+4 & Refactoring            & 0.500 & 0.500 & \textbf{0.250} & LLM API pricing \\[2pt]
+5 & Code Review            & 0.100 & 0.100 & \textbf{0.050} & LLM API pricing \\[2pt]
+6 & Security Audit         & 0.150 & 0.150 & \textbf{0.075} & LLM API pricing \\[2pt]
+7 & Test Development       & 0.033 & 0.033 & \textbf{0.017} & LLM API pricing \\[2pt]
+8 & Dev.\ Documentation   & 0.040 & 0.040 & \textbf{0.020} & LLM API pricing \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\caption{Human cost parameter across scenarios.}
+\label{tab:scenario:costs}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Low & Medium & High & Source \\
+\midrule
+$c_\mathrm{salary}$ & 150{,}000 & 150{,}000 & \textbf{75{,}000} & Approximate senior software developer annual salary (USD) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\caption{Bug impact parameters across scenarios.}
+\label{tab:scenario:bugimpact}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Low & Medium & High & Source \\
+\midrule
+$\omega_\mathrm{min}$ &  1.0 &  1.0 &  1.0 & Assumed; unit weight for minor bugs \\[2pt]
+$\omega_\mathrm{maj}$ &  3.0 &  3.0 &  3.0 & Assumed; $3\times$ more severe than minor \\[2pt]
+$\omega_\mathrm{sec}$ & 10.0 & 10.0 & 10.0 & Assumed; $10\times$ more severe than minor \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+% ---- 4.2 ----
 \subsection{Experimental Variables and Sweep Settings}
 \label{sec:setup:sweep}
 %
@@ -1225,7 +1367,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 % - Hardware: [fill in after runs] CPU-hours, parallelised per configuration.
 % - Software: Python 3.x, NumPy PCG-64, src/ simulation package.
 
-% ---- 6.3 ----
+% ---- 4.3 ----
 \subsection{Evaluation Metrics and Comparisons}
 \label{sec:setup:metrics}
 %
@@ -1254,7 +1396,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 \label{sec:results}
 % ============================================================
 
-% ---- 7.1 ----
+% ---- 5.1 ----
 \subsection{Pareto Frontiers by Scenario}
 \label{sec:results:pareto}
 %
@@ -1276,7 +1418,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 %
 % - Answer RQ1 in summary.
 
-% ---- 7.2 ----
+% ---- 5.2 ----
 \subsection{Optimal Agent Compositions}
 \label{sec:results:compositions}
 %
@@ -1296,7 +1438,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 %
 % - Span-of-control M: distribution of M across Pareto-optimal vs. dominated configs.
 
-% ---- 7.3 ----
+% ---- 5.3 ----
 \subsection{Effect of Degradation Functions}
 \label{sec:results:degradation}
 %
@@ -1314,7 +1456,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 %
 % - Answer RQ2.
 
-% ---- 7.4 ----
+% ---- 5.4 ----
 \subsection{Sensitivity Analysis}
 \label{sec:results:sensitivity}
 %
@@ -1338,7 +1480,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 \label{sec:discussion}
 % ============================================================
 
-% ---- 8.1 ----
+% ---- 6.1 ----
 \subsection{Interpretation of Findings}
 \label{sec:discussion:interpretation}
 %
@@ -1359,7 +1501,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 % - Connect to the formal theorems: optimal a_5/a_3 ratio predicted by
 %   Theorem 4; M_max bound from Theorem 3 confirmed by empirical results.
 
-% ---- 8.2 ----
+% ---- 6.2 ----
 \subsection{Practical Implications for AI-Human Team Design}
 \label{sec:discussion:implications}
 %
@@ -1379,7 +1521,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 %   directly to cloud LLM API pricing, making C_F directly actionable.
 %   Compare cost at Pareto-optimal vs. a naive all-human baseline.
 
-% ---- 8.3 ----
+% ---- 6.3 ----
 \subsection{Threats to Validity}
 \label{sec:discussion:threats}
 %
