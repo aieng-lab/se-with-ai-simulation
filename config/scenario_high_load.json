@@ -42,8 +42,7 @@
     "delta_fix": 0.005
   },
   "documentation": {
-    "Gamma_doc": 0.5,
-    "c_doc_ceil": 1.0
+    "Gamma_doc": 0.5
   },
   "escalation": {
     "rho_esc": 0.01

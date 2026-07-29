@@ -68,7 +68,7 @@ def step_sprint(
     # Human capacity allocation
     # ------------------------------------------------------------------
     H_net = params.H_capacity - params.c_comm * (config.N - 1)
-    doc_cov = min(params.c_doc_ceil, state.N_doc / max(1.0, state.F_completed))
+    doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
     H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
     # Monitoring overhead is proportional to actual agents per developer.
     # Feasibility guarantees H_net - agents_per_dev * H_mon_eff >= 0.

@@ -44,7 +44,7 @@ def base_params():
         alpha_size=0.1, baseline_size=2.0,
         delta_min=0.5, delta_exp=1.5,
         delta_impl=0.01, delta_fix=0.005,
-        Gamma_doc=0.5, c_doc_ceil=1.0,
+        Gamma_doc=0.5,
         rho_esc=0.01,
     )
 

@@ -15,6 +15,7 @@
 \usepackage{algorithmic}
 \usepackage{multirow}
 \usepackage{tabularx}
+\usepackage{natbib}
 
 
 \begin{document}
@@ -42,20 +43,6 @@ University of Passau, Passau, Germany.
 % --- ABSTRACT (write last) ---
 % Structure: problem -- gap -- approach -- model highlights -- key findings -- implications
 %
-% - Problem: AI agents are increasingly deployed alongside human developers, yet no
-%   principled quantitative framework guides how many agents of each type to use.
-% - Gap: existing SE process models treat team headcount as a scalar and ignore
-%   role-specific quality degradation, CI/CD latency effects, and multi-objective trade-offs.
-% - Approach: we present a formal discrete-time stochastic model of
-%   mixed AI-human sprint dynamics, with 10 transition steps, six proved stability
-%   conditions, and Monte Carlo + evolutionary search over agent composition vectors.
-% - Model highlights: three Pareto objectives (V = throughput, Q = escaped bugs per
-%   feature, C_F = cost per feature); 8 agent roles + 1 human role; four degradation
-%   functions linking technical debt and review coverage to quality and productivity.
-% - Key findings: summarize after experiments are run (Pareto frontier shape,
-%   dominant configurations, sensitivity insights).
-% - Implications: practical guidance on minimum Code Review / Testing allocation,
-%   Refactoring-to-Implementation ratio, and span-of-control limits.
 %
 % Target length: 150--200 words.
 TODO: write abstract.
@@ -82,37 +69,21 @@ TODO: write abstract.
 %
 % [Core tension]
 % - More agents raise throughput but also raise coordination cost, review load,
-%   technical debt pressure, and CI/CD latency -- objectives conflict and cannot
+%   technical debt pressure -- objectives conflict and cannot
 %   be optimized in isolation.
 % - Human developers are a bottleneck resource: span-of-control M (agents per human)
 %   is bounded by human capacity, review quality degradation, and escalation load.
 %
 % [Research questions]
-% - RQ1: What agent compositions are Pareto-optimal on (V, Q, C_F) under realistic
+% - RQ1: What agent compositions are Pareto-optimal under realistic
 %        sprint dynamics?
-% - RQ2: How do degradation effects (technical debt, review quality decay,
-%        escalation overload) shift the Pareto frontier relative to a simplified
+% - RQ2: How do degradation effects shift the Pareto frontier relative to a simplified
 %        no-degradation baseline?
-% - RQ3: How sensitive are optimal configurations to workload scenario
-%        (default / high-load / low-budget)?
 %
 % [Contributions -- four bullet points]
-% 1. Formal state-space model of AI-human sprint dynamics with
-%    10 ordered transition steps and proved convergence properties.
-% 2. Six stability/feasibility theorems establishing conditions for bounded
-%    feature backlog, bug queue, human capacity, and technical debt.
-% 3. Monte Carlo + evolutionary Pareto search over the agent composition space,
-%    with a deterministic feasibility pre-filter to prune infeasible configurations.
-% 4. Empirical results across three parameterised scenarios identifying which
-%    agent roles drive each Pareto objective and quantifying degradation effects.
-%
-% [Optional teaser figure]
-% - Figure 1: schematic of a mixed team (human developers supervising AI agents)
-%   and a sketch of the resulting tri-objective Pareto frontier.
-%
-% [Paper structure -- one sentence per section]
-
-
+% 1. Formal state-space model of AI-human sprint dynamics
+% 3. Monte Carlo + evolutionary Pareto search
+% 4. Empirical results across parameterised scenarios
 
 % ============================================================
 \section{Background and Related Work}
@@ -341,11 +312,11 @@ the Developer Documentation Agent and grows monotonically each sprint.
 Documentation \emph{coverage} is derived from this count relative to
 $F_\mathrm{completed}(t-1)$ in the same way as test coverage:
 \begin{equation}
-  \mathrm{doc\_cov}(t-1) = \min\!\left(c_\mathrm{doc,ceil},\;
+  \mathrm{doc\_cov}(t-1) = \min\!\left(1,\;
     \frac{N_\mathrm{doc}(t-1)}{\max\!\bigl(1,\,F_\mathrm{completed}(t-1)\bigr)}\right),
   \label{eq:doc_cov}
 \end{equation}
-capped at ceiling $c_\mathrm{doc,ceil}$.
+capped at 1, i.e.\ full documentation coverage.
 The $t-1$ index reflects that the documentation is updated at the end of the sprint, i.e., the new documentation only becomes available in the next sprint. This means that the benefits of documentation investment (i.e., reduced monitoring effort for human developers) are always lagged by one sprint.
 
 
@@ -483,7 +454,6 @@ $\delta_\mathrm{exp}$           & Shape exponent of the debt amplifier $\delta_D
 $f_\mathrm{arch,chg}$  & Fraction of implemented features that generate an architecture change request & $[0,1]$            & 6 \\[2pt]
 $\delta_\mathrm{impl}$          & Additive debt increase per feature implemented        & $\mathbb{R}_{>0}$     & 9 \\[2pt]
 $\delta_\mathrm{fix}$           & Additive debt increase per bug repaired               & $\mathbb{R}_{\geq 0}$ & 9 \\[2pt]
-$c_\mathrm{doc,ceil}$           & Upper bound on documentation coverage                                     & $(0,\infty)$          & 1 \\[2pt]
 $\rho_\mathrm{esc}$             & Per-agent escalation arrival rate; Poisson rate                                     & $\mathbb{R}_{\geq 0}$ & 7 \\[2pt]
 $\Gamma_\mathrm{doc}$           & Maximum fractional reduction of monitoring overhead at full documentation coverage & $[0,1]$ & 1 \\
 \bottomrule
@@ -537,7 +507,7 @@ leaving post-monitoring capacity
     \frac{n(t)}{N}\,H_\mathrm{mon,eff}(t).
   \label{eq:hafter_mon}
 \end{equation}
-We assume $\Gamma_\mathrm{doc}\,c_\mathrm{doc,ceil} \leq 1$, so that documentation reduces, but never inverts, the monitoring effort.
+We assume $\Gamma_\mathrm{doc} \leq 1$, so that documentation reduces, but never inverts, the monitoring effort.
 
 Architecture reviews are served from this remainder and drain the architecture review queue $Q_\mathrm{rev}(t-1)$ at rate
 $N/H_\mathrm{review\_time}$:
@@ -591,7 +561,7 @@ Configurations for which this is unavoidable cannot perform any productive human
 \begin{align}
   H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1) &\geq 0 \\
   \frac{\sum_{k=1}^{8} a_{\mathrm{dev},k}}{N}\,H_\mathrm{mon.overhead}\,
-    (1 - \Gamma_\mathrm{doc}\,c_\mathrm{doc,ceil}) &< H_\mathrm{net}.
+    (1 - \Gamma_\mathrm{doc}) &< H_\mathrm{net}.
   \label{eq:feas_monitoring}
 \end{align}
 This check ensures that the developers have sufficient capacity for the communication between
@@ -1175,95 +1145,74 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 \subsection{Scenarios}
 \label{sec:setup:scenarios}
 
-There are eight orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters, i.e., the agent capabilitites and efforts, the human developer capabilities, the debt dynamics, the project dynamics, the agent costs, the human costs, and the bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the number of features implemented per sprint by the implementation agents, the number of bugs fixed per sprint by the bug-fixing agents, and so on. Orthogonally, pricing of these agents can be cheaper or more expensive. Since they are orthogonal, we can freely combine all eight groups into a diverse set of scenarios. Where real-world data is available, we ground the low/medium/high tiers in the API pricing and SWE-bench Verified coding-capability scores of three current Claude models spanning the low, mid, and high end of the price/capability range -- Haiku 4.5, Opus 4.8, and Fable 5, respectively \cite{anthropic2026haiku45,anthropic2026opus48,anthropic2026fable5,valsai2026swebench} -- which is how the bug-injection ($r_\mathrm{bugs}$, $r_\mathrm{bugs,human}$) tiers below are calibrated. The agent cost ($c_\mathrm{token}$) tiers additionally incorporate the empirical cumulative token volume (input and output, accounting for prompt caching) of representative agentic coding tasks \cite{morph2026aicodingcosts}, converted to each model's pricing. The human per-task coding times ($h_\mathrm{feature}$, $h_\mathrm{fix}$) are grounded in SWE-bench Verified's human-effort time annotations and a corroborating human baseline study \cite{openai2026swebenchverified,epochai2026sweskills}. No published study directly measures the hours a human developer spends per sprint on ambient monitoring of an autonomous coding agent ($H_\mathrm{mon.overhead}$) or resolving a single agent escalation ($H_\mathrm{esc\_time}$), so both remain assumed; we cross-checked the assumed values against telemetry-based studies of real coding-agent usage, which report human-agent interruption rates of only 3--9\% of turns and turn durations ranging from under a minute to several minutes \cite{anthropic2026autonomy,baumann2026swechat}. This indirect evidence suggests that both monitoring and escalation events are individually short relative to a full sprint, which is broadly consistent with, though does not tightly pin down, our assumed magnitudes. The same telemetry studies additionally report that agent-initiated clarification requests -- the closest observable analogue to an agent escalating to a human developer -- occur in as few as 1--3\% of turns \cite{anthropic2026autonomy,baumann2026swechat}. We use this range to ground the per-agent escalation rate ($\rho_\mathrm{esc}$) directly, adopting its low and high ends as the Low and High tiers and its midpoint as the Medium tier, in the absence of sprint-granularity escalation telemetry. The architecture-review time ($H_\mathrm{review\_time}$) sits between two published anchor points at different granularities than our per-proposal review: lightweight architecture decision record reviews are commonly run as 30--45\,minute meetings (including 10--15\,minutes of individual reading) \cite{zimmermann2023adrreview}, dedicated one-hour review sessions per RFC are reported in industry practice \cite{squarespace2019rfc}, while formal, heavyweight architecture reviews of entire subsystems can take one to five days of meeting time after up to six weeks of preparation \cite{maranzano2005architecture}. Since a single architecture change request in our model is a much smaller unit of work than a full subsystem review but typically involves more scrutiny than a routine ADR sign-off, our assumed half working day is consistent with, and roughly centered between, these lightweight and heavyweight anchors. The debt-dynamics group's qualitative structure -- that AI-driven feature implementation accumulates technical debt ($\delta_\mathrm{impl}$) and that accumulated debt in turn suppresses development velocity in a super-linear way ($\delta_\mathrm{exp} > 1$, with a substantial floor $\delta_\mathrm{min}$) -- is directly supported by a large-scale mining study of AI-assisted (Cursor) open-source repositories, which finds that AI-tool adoption measurably increases static-analysis warnings and code complexity, and that a doubling of these debt indicators is associated with a 50--65\% drop in subsequent development velocity, with debt increases of roughly 3--5$\times$ fully cancelling the tool's short-term speed gains \cite{he2026cursordebt}. Because this study measures debt via unbounded static-analysis metrics rather than our normalised $D_\mathrm{tech} \in [0,1]$ state, it cannot be converted into exact values for $\delta_\mathrm{impl}$, $\delta_\mathrm{fix}$, $\delta_\mathrm{min}$, or $\delta_\mathrm{exp}$, but it corroborates both the direction and the convex shape of the modelled debt penalty. The bug type-split parameters ($\theta_\mathrm{maj}$, $\theta_\mathrm{sec}$) are grounded in the priority-by-type cross-tabulation (Table IV) of a manually-labelled dataset of 4,000 issue reports across four Apache projects \cite{ohira2015highimpact}. Treating every issue instance tagged with their \emph{Security} label as a security bug (160 of 2,461 labelled instances across all four projects) and splitting the remaining, non-security-labelled instances by priority into a major bucket (Critical, Blocker, and Major priority; 1,659 instances) and a minor bucket (Minor and Trivial priority; 642 instances) yields $\theta_\mathrm{sec} = 0.065$, $\theta_\mathrm{maj} = 0.674$, and $\theta_\mathrm{min} = 0.261$. We adopt these as our new estimates. The resulting security share is close to our previous assumption, but the major share is substantially higher than previously assumed. We note this as a threat to validity: Ohira et al.\ themselves caution that priority and severity tags in issue trackers are often unreliable and cluster at middle (``Major'') levels regardless of true impact, so part of the shift towards a higher $\theta_\mathrm{maj}$ may reflect triage-tagging convention rather than true bug severity. The Low tier of the feature arrival rate ($r_\mathrm{arrival}$) is grounded in a manually-curated dataset of 476 feature-request issues from two long-running open-source GitHub repositories, \texttt{signalapp/Signal-Android} (414 issues) and \texttt{mastodon/mastodon-android} (62 issues) \cite{kc2025featurerequests}. Since the source does not report a collection date range, we normalise each project's count by its repository lifetime (creation dates verified directly via the GitHub API rather than taken from the paper), yielding a pooled rate of $\approx$0.5 feature requests per project per week; because a sprint is calibrated as a standard 40-hour work week ($H_\mathrm{capacity}$, Table~\ref{tab:scenario:human}), this converts directly to $r_\mathrm{arrival} = 0.5$ features/sprint with no further unit conversion. This figure reflects organic, user-submitted demand for a small open-source team and is qualitatively consistent with evidence that feature requests constitute a substantial, non-trivial share of user-generated software demand more broadly \cite{iacob2013mobileapps}. The Medium and High tiers (2.0 and 4.0, used respectively by the default/low-budget and high-load scenarios) remain a design choice representing product-team, roadmap-driven demand beyond organic community submissions, which we could not find directly measured in the literature. The monitoring-overhead reduction attributable to documentation coverage ($\Gamma_\mathrm{doc}$) is similarly re-grounded downward from a previously flat, purely assumed 50\% ceiling. A controlled experiment with professional developers maintaining an industrial system with and without {UML} documentation found a large, significant increase in functional correctness (54\%, p=0.03) but only a non-significant 14\% increase in maintenance time (p=0.35) attributable to keeping the documentation current \cite{dzidek2008uml} -- i.e.\ no reliable \emph{time}-savings benefit was found in that study, only a correctness benefit. A more recent eye-tracking study of code comments found an even more variable, non-monotonic effect on comprehension performance, ranging from a 30\% decrease to a 34\% increase depending on the snippet \cite{abdelsalam2026comments}. We adopt the null time-effect from \cite{dzidek2008uml} as the Low tier ($\Gamma_\mathrm{doc}=0$) and the positive ceiling from \cite{abdelsalam2026comments} as the Medium tier ($\Gamma_\mathrm{doc}=0.34$), and retain the previous 50\% assumption as an explicitly optimistic High tier that exceeds the strongest evidence we found (and which is still the value used by all three named scenario configurations, pending future recalibration). This evidence also surfaces a mismatch with our model structure: the clearest, most reliably measured real-world benefit of documentation is on \emph{correctness}, not time, whereas our model channels documentation's benefit exclusively through reduced monitoring time, leaving any correctness/defect benefit of documentation uncaptured. The AI-agent-specific half of this assumption -- that documentation also reduces the burden of \emph{supervising} an AI coding agent, specifically -- is not directly measured by any study we found; a recent large-scale mining study of AI-agent context files (e.g.\ {AGENTS.md}) confirms such files are now common and empirically studyable, but reports no quantitative link between context-file quality and either agent task success or human supervision burden \cite{chatlatanagulchai2025agentreadmes}, so this half of the assumption remains an extrapolation from the general human-developer comprehension literature above. The documentation-coverage ceiling ($c_\mathrm{doc,ceil}$) is a normalisation bound rather than a directly measurable real-world quantity, and we found no literature addressing it; it remains assumed.
+There are eight orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters, i.e., the agent capabilitites and efforts, the human developer capabilities, the debt dynamics, the project dynamics, the agent costs, the human costs, and the bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the number of features implemented per sprint by the implementation agents, the number of bugs fixed per sprint by the bug-fixing agents, and so on. Orthogonally, pricing of these agents can be cheaper or more expensive. Since they are orthogonal, we can freely combine all eight groups into a diverse set of scenarios. We use real-world data to ground the low/medium/high tiers of the eight scenario aspects. 
 
-Tables~\ref{tab:scenario:agents}--\ref{tab:scenario:bugimpact} give the concrete parameter values for each group across the three scenarios. 
+\subsubsection{Human developer parameters}
 
-\begin{itemize}
-  \item \textbf{Agent capabilities and efforts.} How effectively and how much each AI agent role performs its primary function, covering both detection quality and per-sprint throughput rates.
-  \begin{itemize}
-    \item $r_F$, $r_\mathrm{arch,chg}$, $r_\mathrm{refactor}$, $r_\mathrm{test}$, $r_\mathrm{doc}$, $r_\mathrm{fix,min}$, $r_\mathrm{fix,maj}$, $r_\mathrm{fix,sec}$, $d_\mathrm{CR}$, $d_\mathrm{SA}$, $d_\mathrm{test}$, $c_\mathrm{test,ceil}$, $\alpha_\mathrm{size}$, $\mathrm{baseline\_size}$, $r_\mathrm{bugs,human}$
-  \end{itemize}
+The scenario parameters for human developers are summarized in Table~\ref{tab:params:human}.
+We assume that human developers work a 40-hour week and assume that the communication overhead is one hour per team member. We further assume that humans spent equal time bug fixing and implementing features within the time not required for other tasks. The salaries are estimated based on average salaries reported by Indeed~\citep{indeed2026salary}. We round low, average and high salaries to the next \$50k, to account for the employer overhead costs. 
 
-  \item \textbf{Human developer capabilities.} The gross time budget of each developer and the effort consumed by peer communication, agent supervision, architecture review, and escalation handling, leaving residual capacity for direct coding.
-  \begin{itemize}
-    \item $H_\mathrm{capacity}$, $c_\mathrm{comm}$, $H_\mathrm{mon.overhead}$, $H_\mathrm{review\_time}$, $H_\mathrm{esc\_time}$, $h_\mathrm{feature}$, $h_\mathrm{fix}$, $f_\mathrm{fix}$
-  \end{itemize}
+While there is no data yet on how much time developers require to monitor agents, early results indicate that there is a fairly low interruption frequency~\Citep[prefix][postfix]{keylist}{baumann2026swechat}, so we set the monitoring overhead at a modest 2.5 hours per week, i.e., 30 minutes per day. These three variables are independent of developer skill and are therefore the same across all three tiers. There are also no estimates yet how much time developers require to resolve an agent escalation. It is reasonable to assume that these are non-trivial problems that require developers to get involved with the code base, so we assume that the time required is similar as to implement a feature (estimate see below).
 
-  \item \textbf{Debt dynamics.} How fast technical and architectural debt accumulates from development activity, and how steeply accumulated debt degrades team productivity.
-  \begin{itemize}
-    \item $\delta_\mathrm{impl}$, $\delta_\mathrm{fix}$, $\delta_\mathrm{min}$, $\delta_\mathrm{exp}$, $f_\mathrm{arch,chg}$, $\rho_\mathrm{esc}$, $\Gamma_\mathrm{doc}$, $c_\mathrm{doc,ceil}$
-  \end{itemize}
+We use the review of architectural decision records (ADRs) to ground the architecture-review time within our model. Amazon estimates 10-15 minutes to read the document~\citep{amazonArchitecturalDecision}. The process is assumed to be iterative and done by multiple developers. Assuming that updating the ADR based on comments requires 45 minutes, one iteration would require 1 hour. With 4 iterations, this would require a total of 4 hours, which we use for the medium tier. We assume that low capable developers require twice as long and highly capable developers are twice as fast, resulting in 8 hours for the low tier, and 2 hours for the high tier.
 
-  \item \textbf{Project dynamics.} The external demand placed on the team through the feature arrival rate, the base bug injection rate, and the bug severity distribution.
-  \begin{itemize}
-    \item $r_\mathrm{arrival}$, $r_\mathrm{bugs}$, $\theta_\mathrm{maj}$, $\theta_\mathrm{sec}$
-  \end{itemize}
+To have a comparable baseline for human effort, we assume the time required to solve SWE-bench Verified coding tasks, which are designed to be representative of real-world coding tasks by basing them on issues reported in open-source repositories~\citep{openai2026swebenchverified,jimenez2024swe}. We use METR's estimate for the human baseline of the time required to solve substantial issues within 1-4 hour time bucket of the benchmark, which estimates the time at 2 hours~\citep{kwa2026measuringaiabilitycomplete}. Since this seems reasonable, we use this for the medium tier. We use the pattern that low capable developers require twice as long as the medium tier and highly capable developers are twice as fast, resulting in 4 hours for the low tier, and 1 hour for the high tier. Since METR found that the $<15$ minute time bucket underestimates the time required to solve tasks, we instead use the 15 to 60 minute time bucket to estimate the time required to fix bugs in a similar manner, i.e., 30 minutes for the medium tier, 60 minutes for the low tier, and 15 minutes for the high tier. 
 
-  \item \textbf{Agent costs.} The API token cost per unit of throughput for each agent role, directly scaling the agent component of the cost objective.
-  \begin{itemize}
-    \item $c_\mathrm{token}$ (one entry per role $k = 1,\ldots,8$)
-  \end{itemize}
-
-  \item \textbf{Human costs.} The fully-loaded annual salary of a human developer, which determines the human personnel component of the cost objective.
-  \begin{itemize}
-    \item $c_\mathrm{salary}$
-  \end{itemize}
-
-  \item \textbf{Bug impact.} The relative severity weights assigned to the three bug types when computing the quality objective, reflecting the real-world consequences of minor, major, and security defects.
-  \begin{itemize}
-    \item $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, $\omega_\mathrm{sec}$
-  \end{itemize}
-\end{itemize}
-
-
+We estimate the bug introduction using the general defect density of software, which is estimated to be at about 4.3 per 1,000 \citep{shah2012overview}. Since SWE-Bench features change, on average, 107 lines of code~\cite{scaleSWEBenchPublic}, this translates to 0.44 bugs per feature, which we use as medium tier. We assume that low capable developers introduce twice as many bugs and highly capable developers introduce half as many, resulting in 0.88 bugs per feature for the low tier, and 0.22 bugs per feature for the high tier.
 
 \begin{table}[t]
-\caption{Agent capability and effort parameters across scenarios.}
-\label{tab:scenario:agents}
-\footnotesize
-\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
-\toprule
-Symbol & Low & Medium & High & Source \\
-\midrule
-$r_F$                      & 3.0  & 3.0  & 3.0  & Assumed; calibrated to mid-range LLM coding agent performance \\[2pt]
-$r_\mathrm{arch,chg}$     & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
-$r_\mathrm{refactor}$     & 0.2  & 0.2  & 0.2  & Assumed; low rate reflecting structural complexity \\[2pt]
-$r_\mathrm{test}$         & 3.0  & 3.0  & 3.0  & Assumed \\[2pt]
-$r_\mathrm{doc}$          & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
-$r_\mathrm{fix,min}$      & 5.0  & 5.0  & 5.0  & Assumed; rates ordered by defect severity \\[2pt]
-$r_\mathrm{fix,maj}$      & 2.0  & 2.0  & 2.0  & Assumed; rates ordered by defect severity \\[2pt]
-$r_\mathrm{fix,sec}$      & 1.5  & 1.5  & 1.5  & Assumed; rates ordered by defect severity \\[2pt]
-$d_\mathrm{CR}$            & 0.70 & 0.70 & 0.70 & Mid-range of empirical code review effectiveness studies \\[2pt]
-$d_\mathrm{SA}$            & 0.85 & 0.85 & 0.85 & Assumed higher due to security-domain specialisation \\[2pt]
-$d_\mathrm{test}$          & 0.60 & 0.60 & 0.60 & Mid-range of mutation testing effectiveness literature \\[2pt]
-$c_\mathrm{test,ceil}$    & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
-$\alpha_\mathrm{size}$    & 0.10 & 0.10 & 0.10 & Assumed \\[2pt]
-$\mathrm{baseline\_size}$ & 2.0  & 2.0  & 2.0  & Assumed \\[2pt]
-$r_\mathrm{bugs,human}$   & 0.59 & 0.59 & 0.59 & AI-generated code has $\sim$1.7$\times$ more bugs than human-written code \cite{coderabbit2025aicode} \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\begin{table}[t]
-\caption{Human developer capability parameters across scenarios.}
+\caption{Human developer parameters. Low represents a junior developer, medium a mid-level developer, and high a senior developer.}
 \label{tab:scenario:human}
 \footnotesize
 \begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
 \toprule
 Symbol & Low & Medium & High & Source \\
 \midrule
-$H_\mathrm{capacity}$         & 40.0 & 40.0 & 40.0 & Standard 40-hour full-time sprint \\[2pt]
-$c_\mathrm{comm}$             & 1.0  & 1.0  & 1.0  & Per-peer communication overhead; cf.\ Brooks (1975) \\[2pt]
-$H_\mathrm{mon.overhead}$     & 2.0  & 2.0  & 2.0  & Assumed; 2\,h/sprint per supervised agent; no direct measurement exists, but not inconsistent with low interruption frequencies reported for real coding-agent usage \cite{anthropic2026autonomy,baumann2026swechat} \\[2pt]
-$H_\mathrm{review\_time}$     & 4.0  & 4.0  & 4.0  & Assumed; half a working day per architecture review, between lightweight ADR/RFC review meetings (30\,min--1\,h) and formal multi-day subsystem reviews \cite{zimmermann2023adrreview,squarespace2019rfc,maranzano2005architecture} \\[2pt]
-$H_\mathrm{esc\_time}$        & 2.0  & 2.0  & 2.0  & Assumed; no study measures agent hand-back resolution time directly \cite{anthropic2026autonomy,baumann2026swechat} \\[2pt]
-$h_\mathrm{feature}$          & 2.5  & 2.5  & 2.5  & SWE-bench Verified ``1--4\,h'' bucket (largest, most substantial issues, $\sim$50 changed LOC), METR-measured midpoint, used as a proxy for feature-scale work \cite{openai2026swebenchverified,epochai2026sweskills} \\[2pt]
-$h_\mathrm{fix}$              & 0.73 & 0.73 & 0.73 & SWE-bench Verified issue-resolution time, weighted across the four annotated time buckets using METR's baseline-calibrated point estimates \cite{openai2026swebenchverified,epochai2026sweskills} \\[2pt]
-$f_\mathrm{fix}$              & 0.10 & 0.10 & 0.10 & Assumed \\
+$H_\mathrm{capacity}$         & 40.0 & 40.0 & 40.0 & One 40h work-week. \\[2pt]
+$c_\mathrm{comm}$             & 1.0  & 1.0  & 1.0  & - \\[2pt]
+$H_\mathrm{mon.overhead}$     & 2.5  & 2.5  & 2.5  & - \\[2pt]
+$H_\mathrm{esc\_time}$        & 4.0  & 2.0  & 1.0  & Assumed to be similar to feature implementation time. \\[2pt]
+$H_\mathrm{review\_time}$     & 8.0  & 4.0  & 2.0  & Extrapolated from \cite{amazonArchitecturalDecision} \\[2pt]
+$h_\mathrm{feature}$          & 4.0  & 2.0  & 1.0  & Based on SWE-bench Verified, 1-4h bucket \citep{openai2026swebenchverified,epochai2026sweskills} \\[2pt]
+$h_\mathrm{fix}$              & 1.0 & 0.5 & 0.25 & Based on SWE-bench Verified, 0.25-1h bucket\citep{openai2026swebenchverified,epochai2026sweskills} \\[2pt]
+$r_\mathrm{bugs,human}$   & 0.88 & 0.44 & 0.22 & Based on defect density by \cite{shah2012overview} \\
+$f_\mathrm{fix}$              & 0.5 & 0.5 & 0.5 & Assumed to be without prioritisation. \\
+$c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salaries} \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+\subsubsection{Project dynamics parameters}
+
+To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5\%-percentile for the low tier, the 50\%-percentile for the medium tier, and the 95\%-percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative for closed-source projects. 
+
+To understand how often issues affect architecture, we use data from \cite{shahbazian2018toward}, who used automated methods to determine whether the change triggered by an issue caused architectural changes. Depending on the method used, ranged from 13\% of issues to 26\% of issues. Since an automated approach was used, that possibly overestimates the differences based on purely structural changes, we use the lower bound and use 13\%. We derive the data for the distribution of the severity of bugs from data collected by \cite{ohira2015highimpact}. They distinguish between critical, blocker, and major issues (which we map to major bugs), , and minor and trivial issues (which we map to minor bugs). Orthogonally, they determine which of these bugs are security related, which we use to infer the ratio of security bugs. We exclude one of the collected projects (Ambari) for the estimation of the ratio of major bugs, since it did not mark issues as minor. As already discussed above, we estimate the size per feature based SWE-Bench as 107 lines of code~\cite{scaleSWEBenchPublic}.
+These numers are independent from the number of issues per week and therefore the same across all three tiers.
+
+\begin{table}[t]
+\caption{Project dynamics parameters guiding the feature arrival and bug severity distributions.}
+\label{tab:scenario:project}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\toprule
+Symbol & Low & Medium & High & Source \\
+\midrule
+$r_\mathrm{arrival}$  & 3  & 12  & 75  & Collected data \\[2pt]
+$\mathrm{baseline\_size}$ & 107  & 107  & 107  & Assumed size per feature~\cite{scaleSWEBenchPublic} \\[2pt]
+$f_\mathrm{arch,chg}$  & 0.13  & 0.13  & 0.13  & \cite{shahbazian2018toward} \\[2pt]
+$\theta_\mathrm{maj}$ & 0.44 & 0.44 & 0.44 & \cite{ohira2015highimpact} \\[2pt]
+$\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsubsection{Debt dynamics parameters}
+
+There is a limited amount of literate on the impact of documentation and the studies are typically with small sets of developers, limiting their ability to find significant effects. \cite{dzidek2008uml} found an increase of mainetance time by 40\% when no UML documentation was made available based on a group of 20 developers. In a recent eye tracking experiment using 12 (mostly junior) developers, \cite{abdelsalam2026comments} found an increase in program comprehension time of up to 34\% based on code comments, but this effect dependend on the complexity of the code and comprehesion time was even reduced for simpler code snipptes. Based on these studies, we set the low tier to 0\% (no effect due to lack of significance of results), the medium tier to 34\% (the maximum effect found by \cite{abdelsalam2026comments}), and the high tier to 40\% (the effect found by \cite{dzidek2008uml}).
+
+We estimate the addition of technical debt based on data from \cite{he2026cursordebt}, who found that AI-assisted coding increases code complexity and static analysis warnings. We note that this is particular for AI-assisted development as the technical debt otherwise seems to be decreasing over time \cite{trautsch2020longitudinal}. Since the average treatment effect found that AI-assisted developments leads to 28\% more lines, but 30\% more static analysis warnings, we assume that the debt increases by at least 2\% for every feature added. Since \cite{he2026cursordebt} also found that the complexity increase by 41\% due to the use of AI, we assume that the upper bound for the debt-increase is 13\% per feature added. We therefore set the low tier to 2\%, the medium tier to 6\% and the high tier to 13\% per feature added. Since \cite{trautsch2023automated} found that there is no detectable difference between the static analysis warnings added by bug fixing commits and other commits, we use the same values for the debt increase due to bug fixing.
+
+We set the values for the maximum slow-down of maximal debt based on a developer survey from \cite{besker2018technical}. They found that developers spent on average 23\% of their time dealing with technical debt with a standard deviation of 17\%. We therefore set the low value at 6\% (i.e., one standard deviation below the average), the medium value at 23\% (the average), and the high value at 40\% (i.e., one standard deviation above the average). The work \cite{martini2027interest} found that technical debt can be contagious, which supports a non-linear effect of the technical debt. Since there is no data how strong this non-linearity is, we assume a slightly super-linear effect with $\delta_\mathrm{exp} = 1.5$ accross all scenarios.
 
 \begin{table}[t]
 \caption{Debt dynamics parameters across scenarios.}
@@ -1273,79 +1222,112 @@ $f_\mathrm{fix}$              & 0.10 & 0.10 & 0.10 & Assumed \\
 \toprule
 Symbol & Low & Medium & High & Source \\
 \midrule
-$\delta_\mathrm{impl}$ & 0.010 & 0.010 & 0.010 & Assumed; slow debt accumulation per implemented feature; direction supported by mining evidence that AI-assisted coding increases code complexity and static-analysis warnings \cite{he2026cursordebt} \\[2pt]
-$\delta_\mathrm{fix}$  & 0.005 & 0.005 & 0.005 & Assumed; half the rate of feature work \\[2pt]
-$\delta_\mathrm{min}$  & 0.50  & 0.50  & 0.50  & Assumed; 50\% productivity floor at maximum debt \\[2pt]
-$\delta_\mathrm{exp}$  & 1.5   & 1.5   & 1.5   & Assumed; slightly super-linear debt impact, consistent with the convex debt--velocity relationship reported for AI-assisted repositories \cite{he2026cursordebt} \\[2pt]
-$f_\mathrm{arch,chg}$  & 0.30  & 0.30  & 0.30  & Assumed; 30\% of features trigger an architecture change request \\[2pt]
-$\rho_\mathrm{esc}$    & 0.010 & 0.020 & 0.030 & Telemetry-based studies of real coding-agent usage report agent-initiated clarification requests -- the closest analogue to an agent escalation -- in 1--3\% of turns; tiers span this empirical range \cite{anthropic2026autonomy,baumann2026swechat} \\[2pt]
-$\Gamma_\mathrm{doc}$  & 0.0  & 0.34  & 0.50  & Low: no significant time-savings from documentation in a controlled industrial maintenance experiment \cite{dzidek2008uml}; Medium: upper bound of a comment eye-tracking study's comprehension-performance effect \cite{abdelsalam2026comments}; High: prior optimistic assumption, exceeding the strongest evidence found \\[2pt]
-$c_\mathrm{doc,ceil}$  & 1.0   & 1.0   & 1.0   & Assumed; no literature found addresses this normalisation ceiling directly \\
+$\delta_\mathrm{impl}$ & 0.02 & 0.06 & 0.13 & \cite{he2026cursordebt} \\[2pt]
+$\delta_\mathrm{fix}$  & 0.02 & 0.06 & 0.13 & \cite{he2026cursordebt} \\[2pt]
+$\delta_\mathrm{min}$  & 0.06  & 0.23  & 0.40  & \cite{besker2018technical} \\[2pt]
+$\delta_\mathrm{exp}$  & 1.5   & 1.5   & 1.5   & Assumed based on contagiosness of debt \cite{martini2027interest}. \\[2pt]
+$\Gamma_\mathrm{doc}$  & 0.0  & 0.34  & 0.40  &  \cite{dzidek2008uml, abdelsalam2026comments} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
+\subsubsection{Agent costs and throughput parameters}
+
+The agent cost parameters are summarized in Table~\ref{tab:params:costs}. While there is no direct scientific evidence for the exact costs per feature implementation, we assume that implementing a feature requires 100 tool calls and 2M cumulative input tokens, and 40k output tokens~\citep{morph2026aicodingcosts}. For bug fixes, we assume 25 tool calls, 400K cumulative input tokens, and 10K output tokens~\citep{morph2026aicodingcosts}. The costs for the other activities are grounded on these two costs:
+\begin{itemize}
+  \item Code review is assumed to be comparable to bug fixing, since similar analysis needs to be performed to understand the code and its implications. Security audits are more thourough and assumed to be ten times more expensive than normal code review.
+  \item Architecture and design changes possibly require an analysis of the whole code base to understand the implications. Therefore, we assume that these carry high costs, comparable to the cost of implementing five features. 
+  \item Refactoring is assumed to be comparable to implementing a feature, since it requires a similar amount of analysis and code changes.
+  \item Writing tests and documentation are assumed to be comparable to bug fixing, since it requires a similar analysis of a local context.
+\end{itemize} 
+We further ground the pricing based on the API procing of Claude Sonnet, Opus, and Fable for low, medium, and high, respectively.
+
+We model the throughput using the same assumptions on the relation between the throughput of the models as for the cost parameters, but base these estimations on the latency of the models, i.e., the time to solve a task. Since a concrete latency is hard to define as this depends not only on model size, but also on the current load of cloud providers, we do not estimate this on single latency values that are reported. Similar to other tasks, we ground this in SWE-Bench, where the reference solutions require 107 lines of code on average~\citep{scaleSWEBenchPublic}. Based on data from \cite{baumann2026swechat}, autonomous coding required 12.6 minutes on average per 100 commit lines. Assuming that agents only run during work hours, this would result in 190 features per sprint, resulting in the throughput rates reported in Table~\ref{tab:scenario:agents}.
+
+We estimate the agentic bug introduction rate based on the SWE-bench Verfied benchmark score, assuming that each failure in the benchmark results in a bug in the code base. We collect the data for Claude 5 Sonnet, Opus, and Fable analogue to the cost estimations. The values are taken from the vals.ai leaderboard~\citep{valsai2026swebench}, i.e., we do not use the Anthropics estimates both those of independent benchmark executions. While we are aware that these results likely overestimate the actual benchmark performance~\citep{liang2026swe}, we nevertheless use this as (optimistic) estimate for the capabilities of the agents. 
+
+We use CyberBench~\cite{liu2024cyberbench} to estimate the security bug introduction rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that is not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude 5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026cyberbench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available, we therefore estiamte the the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e.,the SWE-bench scores reduced by 0.2. 
+
+We use SWE-Review~\citep{wang2026swe} to estimate how good language models are at code review. Within this benchmark, Claude Opus 4.6 was able to correctly judge pull requests for between 75\% and 89\% of the cases. We use these as low and high tier respectively and use the mid-point 0.82 for the medium tier.
+
+Finally, we estimate the escalation rate based on telemetry data from \cite{baumann2026swechat}: in their study, the agents escalated between 1\% and 3\% of the time, which we use as low and high tier respectively. We use the mid-point 0.02 for the medium tier.
+
+
+
 \begin{table}[t]
-\caption{Project dynamics parameters across scenarios.}
-\label{tab:scenario:project}
+\caption{Agent cost, capability, and effort parameters across scenarios, grouped by role. $c_\mathrm{token}$ is USD per unit of the role's throughput rate $r_k$.}
+\label{tab:scenario:agents}
 \footnotesize
-\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\begin{tabularx}{\linewidth}{p{2.4cm}p{1.7cm}rrrX}
 \toprule
-Symbol & Low & Medium & High & Source \\
+Role & Parameter & Low & Medium & High & Source \\
 \midrule
-$r_\mathrm{arrival}$  & 0.5  & 2.0  & \textbf{4.0}  & Low: pooled feature-request rate from 476 GitHub issues across two OSS projects, normalised by repository lifetime \cite{kc2025featurerequests}; Medium/High: moderate vs.\ doubled roadmap-driven demand (design choice; default/low-budget vs.\ high-load) \\[2pt]
-$r_\mathrm{bugs}$     & 0.044 & 0.10 & 0.23 & SWE-bench Verified failure rate (1$-$accuracy) for Fable 5 / Opus 4.8 / Haiku 4.5, scaled relative to the Opus-anchored Medium baseline \cite{anthropic2026opus48,anthropic2026haiku45,valsai2026swebench} \\[2pt]
-$\theta_\mathrm{maj}$ & 0.674 & 0.674 & 0.674 & Derived from the priority-by-type cross-tabulation of a manually-labelled MSR issue-report dataset \cite{ohira2015highimpact}; likely inflated by triage tagging convention (see Section~\ref{sec:setup:scenarios}) \\[2pt]
-$\theta_\mathrm{sec}$ & 0.065 & 0.065 & 0.065 & Derived from the same cross-tabulation \cite{ohira2015highimpact} \\
+\multirow{3}{2.4cm}{1 -- Feature Impl.}
+  & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & \cite{morph2026aicodingcosts} \\
+  & $r_F$                  & 190  & 190  & 190  & Assumes 100 lines per feature based on \cite{baumann2026swechat,scaleSWEBenchPublic} \\
+  & $r_\mathrm{bugs}$      & 0.20 & 0.03 & 0.05 & \cite{valsai2026swebench} \\
+\midrule
+\multirow{2}{2.4cm}{2 -- Architecture \& Design}
+  & $c_\mathrm{token}$     & 11.14 & 19.00 & 38.00 & 5 times the cost of feature implementation \\
+  & $r_\mathrm{arch,chg}$  & 38    & 38    & 38    & Five times slower than feature implementation \\
+\midrule
+\multirow{4}{2.4cm}{3 -- Bug Fixing}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & \cite{morph2026aicodingcosts} \\
+  & $r_\mathrm{fix,min}$   & 798  & 798  & 798  & 4.2 times faster than feature implementation, based on cost estimate \\
+  & $r_\mathrm{fix,maj}$   & 798  & 798  & 798  & Same as $r_\mathrm{fix,min}$ \\
+  & $r_\mathrm{fix,sec}$   & 798  & 798  & 798  & Same as $r_\mathrm{fix,min}$ \\
+\midrule
+\multirow{2}{2.4cm}{4 -- Refactoring}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
+  & $r_\mathrm{refactor}$  & 798  & 798  & 798  & Same as bug fixing \\
+\midrule
+\multirow{3}{2.4cm}{5 -- Code Review}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
+  & $d_\mathrm{CR}$        & 0.75 & 0.82 & 0.89 & \cite{wang2026swe} \\
+  & $\alpha_\mathrm{size}$ & 0.10 & 0.10 & 0.10 & Assumed \\
+\midrule
+\multirow{2}{2.4cm}{6 -- Security Audit}
+  & $c_\mathrm{token}$     & 5.40 & 9.00 & 18.00 & 10 times the cost of code review \\
+  & $d_\mathrm{SA}$        & 0.78 & 0.83 & 0.88 & \cite{liu2024cyberbench} \\
+\midrule
+\multirow{4}{2.4cm}{7 -- Test Development}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
+  & $r_\mathrm{test}$      & 798  & 798  & 798  & Same as bug fixing \\
+  & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
+  & $c_\mathrm{test,ceil}$ & 2.0  & 2.0  & 2.0  & Assumed \\
+\midrule
+\multirow{2}{2.4cm}{8 -- Dev.\ Documentation}
+  & $c_\mathrm{token}$     & 0.54 & 0.54 & 1.80 & Same as bug fixing \\
+  & $r_\mathrm{doc}$       & 798  & 798  & 798  & Same as bug fixing \\
+\midrule
+All roles & $\rho_\mathrm{esc}$ & 0.01 & 0.02 & 0.03 & \cite{baumann2026swechat} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\begin{table}[t]
-\caption{Agent cost parameters ($c_\mathrm{token}$, USD per unit of the role's
-         throughput rate $r_k$; per sprint per agent for Code Review/Security
-         Audit, whose $r_k=1$). Feature Implementation and Bug Fixing (roles~1,
-         3) are anchored on the empirical cumulative token volume of
-         representative agentic coding tasks -- a feature-sized task (100 tool
-         calls, 2M cumulative input tokens, 40K output tokens) and a bug fix
-         (25 tool calls, 400K cumulative input tokens, 10K output tokens) --
-         converted to Claude Haiku~4.5, Opus~4.8, and Fable~5 pricing under
-         Anthropic's cache-read discount
-         \cite{morph2026aicodingcosts,anthropic2026haiku45,anthropic2026opus48,anthropic2026fable5}.
-         The remaining six roles preserve their previous cost ratio relative to
-         Feature Implementation; Architecture \& Design and Refactoring carry
-         a higher multiplier due to larger context requirements and
-         whole-codebase scope, respectively.}
-\label{tab:scenario:agentcosts}
-\footnotesize
-\begin{tabularx}{\linewidth}{cp{3.2cm}rrrX}
-\toprule
-$k$ & Role & Low & Medium & High & Source \\
-\midrule
-1 & Feature Implementation & 0.76  & 3.80  & 7.60  & Token volume of a feature-sized agentic coding task \cite{morph2026aicodingcosts}, Claude Haiku 4.5 / Opus 4.8 / Fable 5 pricing \cite{anthropic2026haiku45,anthropic2026opus48,anthropic2026fable5} \\[2pt]
-2 & Architecture \& Design & 2.30  & 11.5  & 23.0  & Scaled from role 1 by its previous relative cost ratio ($3.03\times$) \\[2pt]
-3 & Bug Fixing             & 0.18  & 0.90  & 1.80  & Token volume of a bug-fix agentic coding task \cite{morph2026aicodingcosts}, Claude Haiku 4.5 / Opus 4.8 / Fable 5 pricing \cite{anthropic2026haiku45,anthropic2026opus48,anthropic2026fable5} \\[2pt]
-4 & Refactoring            & 11.5  & 57.6  & 115   & Scaled from role 1 by its previous relative cost ratio ($15.15\times$) \\[2pt]
-5 & Code Review            & 2.30  & 11.5  & 23.0  & Scaled from role 1 by its previous relative cost ratio ($3.03\times$) \\[2pt]
-6 & Security Audit         & 3.45  & 17.3  & 34.5  & Scaled from role 1 by its previous relative cost ratio ($4.55\times$) \\[2pt]
-7 & Test Development       & 0.76  & 3.80  & 7.60  & Scaled from role 1 by its previous relative cost ratio ($1.00\times$) \\[2pt]
-8 & Dev.\ Documentation   & 0.92  & 4.61  & 9.21  & Scaled from role 1 by its previous relative cost ratio ($1.21\times$) \\
-\bottomrule
-\end{tabularx}
-\end{table}
 
-\begin{table}[t]
-\caption{Human cost parameter across scenarios.}
-\label{tab:scenario:costs}
-\footnotesize
-\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
-\toprule
-Symbol & Low & Medium & High & Source \\
-\midrule
-$c_\mathrm{salary}$ & 150{,}000 & 150{,}000 & \textbf{75{,}000} & Approximate senior software developer annual salary (USD) \\
-\bottomrule
-\end{tabularx}
-\end{table}
+ 
+
+\subsubsection{Other parameters}
+
+\begin{itemize}
+  \item \textbf{Bug impact.} The relative severity weights assigned to the three bug types when computing the quality objective, reflecting the real-world consequences of minor, major, and security defects.
+  \begin{itemize}
+    \item $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, $\omega_\mathrm{sec}$
+  \end{itemize}
+\end{itemize}
+
+
+
+
+
+
+
+
+
+
+
+
 
 \begin{table}[t]
 \caption{Bug impact parameters across scenarios.}

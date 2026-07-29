@@ -61,7 +61,6 @@ class ScenarioParameters:
 
     # --- Documentation ---
     Gamma_doc: float                 # Documentation overhead reduction [0, 1]
-    c_doc_ceil: float                # Documentation coverage ceiling
 
     # --- Escalation ---
     rho_esc: float                   # Per-agent escalation rate

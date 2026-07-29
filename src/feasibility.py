@@ -2,7 +2,7 @@
 
   Step 1 — Human capacity: monitoring must not exhaust H_net; compound
             span-of-control bound (monitoring + escalation vs. available capacity).
-            Evaluated at doc_cov = c_doc_ceil (perfect documentation), giving the
+            Evaluated at doc_cov = 1 (perfect documentation), giving the
             minimum possible monitoring overhead.
 """
 
@@ -26,8 +26,8 @@ def check_feasibility(
     params: ScenarioParameters,
 ) -> FeasibilityReport:
     """Run the single feasibility check; return failure or OK."""
-    # doc_cov = c_doc_ceil (perfect documentation) minimises monitoring overhead.
-    H_mon_eff_star = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * params.c_doc_ceil)
+    # doc_cov = 1 (perfect documentation) minimises monitoring overhead.
+    H_mon_eff_star = params.H_monitoring_overhead * (1.0 - params.Gamma_doc)
 
     # ------------------------------------------------------------------
     # Step 1 — Human capacity (monitoring + escalation vs. available capacity)
