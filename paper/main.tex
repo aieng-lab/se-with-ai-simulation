@@ -1308,17 +1308,17 @@ All roles & $\rho_\mathrm{esc}$ & 0.01 & 0.02 & 0.03 & \cite{baumann2026swechat}
 
  
 
-\subsubsection{Other parameters}
+\subsubsection{Bug impact parameters}
 
-\begin{itemize}
-  \item \textbf{Bug impact.} The relative severity weights assigned to the three bug types when computing the quality objective, reflecting the real-world consequences of minor, major, and security defects.
-  \begin{itemize}
-    \item $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, $\omega_\mathrm{sec}$
-  \end{itemize}
-\end{itemize}
+The severity weights $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, and $\omega_\mathrm{sec}$ reflect how much a minor, major, or security bug that escapes to production actually costs once it affects real users. We ground these weights in real-world estimates of such costs, distinguishing three system contexts that match our low, medium, and high tiers: a simple web application (e.g., a small SaaS product), an enterprise system with a large user base and a formal incident-response process, and a safety-critical system such as a medical device. Since $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, and $\omega_\mathrm{sec}$ are only used as relative weights within the quality objective, we fix $\omega_\mathrm{min}=1$ for every tier and derive $\omega_\mathrm{maj}$ and $\omega_\mathrm{sec}$ as the ratio between the estimated real-world cost of a major, respectively security, incident and the cost of a minor bug for that tier.
 
+We estimate the cost of a minor bug as the direct engineering cost of a single feature for a human developer, i.e., two hours of time. We compute this using the fully-loaded hourly rate implied by $c_\mathrm{salary}$ in Table~\ref{tab:scenario:human} (assuming a 2080-hour work year), giving \$100, \$150, and \$250 for the low, medium, and high tier, respectively. Notably, this also means that such bugs have no direct external incident costs, i.e., because they are just nuisance bugs that do not affect functionality. 
 
+For major bugs, i.e., defects that break or degrade a feature in production for a non-trivial period, we ground our estimate in reported downtime costs. For the low tier, ITIC's 2024 downtime survey reports that small and mid-sized businesses commonly estimate the cost of an hour of downtime at around \$25,000~\citep{itic2026downtime}.  For the medium tier, industry estimates put the cost of an hour of downtime for a critical enterprise application at over \$300,000~\citep{cloudqa2026bugcost}, which is consistent with ITIC's finding that 97\% of large enterprises report hourly downtime costs exceeding \$100,000~\citep{itic2026downtime}. In both cases, we use these numbers directly, i.e., we assume that a prompt response mitigating the issue within one hours. For the high tier, we ground the estimate in the medical device industry: McKinsey estimates that significant quality events (recalls, FDA enforcement actions, and litigation) cost the global medical device industry \$7--8.5 billion annually~\citep{mckinsey2026medtech}, and software defects caused an estimated 8.2\% of the 1,059 US medical device recall events recorded in 2024, i.e., about 87 events~\citep{meddeviceguide2026recalls}. Distributing the midpoint of McKinsey's estimate (\$7.75 billion) proportionally over these 87 software-related recalls gives an average cost of about \$7 million per event, which we use as our high-tier estimate.
 
+For security bugs, i.e., defects that are exploited after reaching production, we ground our estimate in reported breach and incident costs from CISA's systematic review and cross-validation of cyber incident cost data~\citep{cisa2020cybercost}, which pools several commercial claims datasets and recommends using the median rather than the mean per-incident cost, since the underlying loss distributions are heavily right-skewed. For the low tier, we use the median total incident cost of \$48,000 reported for small and mid-sized businesses in NetDiligence's 2019 Cyber Claims Study (2,003 claims, revenue-based segmentation), as tabulated in the CISA review~\citep{cisa2020cybercost}; we use this as representative of a small web application operator. For the medium tier, we use the median total incident cost of \$1.0 million reported for large entities in the same NetDiligence (2019) dataset (78 claims)~\citep{cisa2020cybercost}, which reflects the larger, more heavily regulated organizations that make up a typical enterprise. For the high tier, we retain the cost of the 2017 WannaCry ransomware attack on the UK's National Health Service, which exploited a security vulnerability to disrupt hospital operations and cancel 19,000 patient appointments at an estimated cost of \pounds92 million (about \$120 million), as reported by the UK Department of Health and Social Care~\citep{nhe2018wannacry}, since the CISA review does not contain a comparable estimate for safety-critical or healthcare-specific systems and this figure directly ties a real security exploit to disruption of safety-critical services rather than to data loss alone.
+
+Dividing the major- and security-bug cost estimates by the corresponding minor-bug cost gives the severity weight ratios reported in Table~\ref{tab:scenario:bugimpact}. The resulting weights increase substantially from the low to the high tier, reflecting that the same class of defect is far more costly to accommodate in systems with larger user bases, stricter regulatory obligations, or direct safety implications.
 
 
 
@@ -1330,16 +1330,16 @@ All roles & $\rho_\mathrm{esc}$ & 0.01 & 0.02 & 0.03 & \cite{baumann2026swechat}
 
 
 \begin{table}[t]
-\caption{Bug impact parameters across scenarios.}
+\caption{Bug impact parameters across scenarios. Low represents a simple web application, medium an enterprise system, and high a safety-critical system.}
 \label{tab:scenario:bugimpact}
 \footnotesize
 \begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
 \toprule
 Symbol & Low & Medium & High & Source \\
 \midrule
-$\omega_\mathrm{min}$ &  1.0 &  1.0 &  1.0 & Assumed; unit weight for minor bugs \\[2pt]
-$\omega_\mathrm{maj}$ &  3.0 &  3.0 &  3.0 & Assumed; $3\times$ more severe than minor \\[2pt]
-$\omega_\mathrm{sec}$ & 10.0 & 10.0 & 10.0 & Assumed; $10\times$ more severe than minor \\
+$\omega_\mathrm{min}$ &      1.0 &      1.0 &      1.0 & Reference; $\approx$\$100/\$150/\$250, 2h of engineering time at $c_\mathrm{salary}$ \\[2pt]
+$\omega_\mathrm{maj}$ &    250   &  2{,}000 & 28{,}000 & Downtime cost estimates~\citep{itic2026downtime,cloudqa2026bugcost,mckinsey2026medtech,meddeviceguide2026recalls} \\[2pt]
+$\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost estimates~\citep{cisa2020cybercost,nhe2018wannacry} \\
 \bottomrule
 \end{tabularx}
 \end{table}
