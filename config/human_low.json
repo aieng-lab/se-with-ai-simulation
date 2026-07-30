@@ -1,0 +1,15 @@
+{
+  "description": "Human developer parameters, low tier (junior developer). See paper/main.tex tab:scenario:human. H_capacity, c_comm, H_monitoring_overhead and f_fix are skill-independent and identical across tiers.",
+  "human": {
+    "H_capacity": 40.0,
+    "c_comm": 1.0,
+    "H_monitoring_overhead": 2.5,
+    "H_escalation_time": 4.0,
+    "H_review_time": 8.0,
+    "h_feature": 4.0,
+    "h_fix": 1.0,
+    "r_bugs_human": 1.0,
+    "f_fix": 0.5,
+    "c_salary": 100000.0
+  }
+}

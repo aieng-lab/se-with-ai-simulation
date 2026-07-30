@@ -37,6 +37,7 @@ from .analysis import final_distribution, mean_trajectory
 from .config import (
     AGENT_ROLE_NAMES,
     BACKGROUND_ROLE_INDICES,
+    SCENARIO_GROUPS,
     TeamConfiguration,
     supervised_agent_count,
 )
@@ -46,6 +47,26 @@ from .results import load_result, load_traces, save_result, save_traces
 from .search_configurations import _run_evolutionary_search, _run_random_search
 from .simulation import ConfigResult, ConfigTrace, run_configuration
 from .visualization import visualize_multi, visualize_single
+
+
+#: Default file per scenario group; every group defaults to its medium tier.
+DEFAULT_SCENARIO_PATHS: dict[str, str] = {
+    group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
+}
+
+
+def _add_scenario_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add one --<group> path option per scenario group (paper §4.1)."""
+    for group, default in DEFAULT_SCENARIO_PATHS.items():
+        parser.add_argument(
+            f"--{group}", default=default, metavar="PATH",
+            help=f"{group} scenario parameters JSON file (default: {default})",
+        )
+
+
+def _scenario_paths_from_args(args: argparse.Namespace) -> dict[str, str]:
+    """Collect the five --<group> options into a group -> path mapping."""
+    return {group: getattr(args, group) for group in SCENARIO_GROUPS}
 
 
 def _print_config(config: TeamConfiguration) -> None:
@@ -72,13 +93,16 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
     horizon = load_simulation_horizon(args.horizon)
     config = load_team_config(args.team)
-    priors = load_scenario_params(args.scenario)
+    scenario_paths = _scenario_paths_from_args(args)
+    params = load_scenario_params(scenario_paths)
     _print_config(config)
     print()
 
     initial_state = load_initial_state(args.start_state)
 
-    print(f"Scenario:   {args.scenario}")
+    print("Scenario:")
+    for group, path in scenario_paths.items():
+        print(f"  {group:<10} {path}")
     print(f"Team:       {args.team}")
     print(f"Start state:{args.start_state}")
     print(f"Horizon:   K={horizon.K} replications * T={horizon.T} sprints  "
@@ -90,11 +114,11 @@ def _cmd_run(args: argparse.Namespace) -> None:
     trace: ConfigTrace | None = None
 
     if args.traces:
-        trace = run_configuration(config, horizon, priors, capture_traces=True,
+        trace = run_configuration(config, horizon, params, capture_traces=True,
                                   initial_state=initial_state)
         cr = ConfigResult(config=config, replications=trace.replications)
     else:
-        cr = run_configuration(config, horizon, priors, initial_state=initial_state)
+        cr = run_configuration(config, horizon, params, initial_state=initial_state)
 
     agg = aggregate_config_result(cr, master_seed=horizon.master_seed)
 
@@ -176,12 +200,17 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     strategy = args.strategy or search_cfg.strategy
 
     horizon = load_simulation_horizon(search_cfg.horizon_path)
-    scenario_values = json.loads(Path(search_cfg.scenario_path).read_text(encoding="utf-8"))
-    params = load_scenario_params(search_cfg.scenario_path)
+    scenario_values = {
+        group: json.loads(Path(path).read_text(encoding="utf-8"))
+        for group, path in search_cfg.scenario_paths.items()
+    }
+    params = load_scenario_params(search_cfg.scenario_paths)
     initial_state = load_initial_state(args.start_state)
 
     print(f"Search:      {cfg_path}")
-    print(f"Scenario:    {search_cfg.scenario_path}")
+    print("Scenario:")
+    for group, path in search_cfg.scenario_paths.items():
+        print(f"  {group:<10} {path}")
     print(f"Start state: {args.start_state}")
     print(f"Strategy:    {strategy}")
     print(f"Horizon:     K={horizon.K} replications * T={horizon.T} sprints  "
@@ -209,7 +238,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
 
     manifest_out = {
         "search_config": str(cfg_path),
-        "scenario": {"path": search_cfg.scenario_path, "values": scenario_values},
+        "scenario": {"paths": search_cfg.scenario_paths, "values": scenario_values},
         "strategy": strategy,
         "horizon": {"path": search_cfg.horizon_path, "K": horizon.K, "T": horizon.T, "master_seed": horizon.master_seed},
         "n_evaluated": len(manifest),
@@ -280,10 +309,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # -- run --
     p_run = sub.add_parser("run", help="Run a simulation.")
-    p_run.add_argument(
-        "--scenario", default="config/scenario_default.json", metavar="PATH",
-        help="Scenario parameters JSON file (default: config/scenario_default.json)",
-    )
+    _add_scenario_arguments(p_run)
     p_run.add_argument(
         "--team", default="config/team_default.json", metavar="PATH",
         help="Team configuration JSON file (default: config/team_default.json)",
@@ -298,7 +324,8 @@ def main(argv: list[str] | None = None) -> None:
                        help="Capture and save full per-sprint time-series traces")
     p_run.add_argument(
         "--start-state", default="config/startstate_default.json", metavar="PATH",
-        help="JSON file with initial SystemState values (default: all-zero)",
+        help="JSON file with initial SystemState values "
+             "(default: config/startstate_default.json, which is all-zero)",
     )
 
     # -- analyze --
@@ -318,7 +345,8 @@ def main(argv: list[str] | None = None) -> None:
                          help="Override strategy from config")
     p_optimize.add_argument(
         "--start-state", default="config/startstate_default.json", metavar="PATH",
-        help="JSON file with initial SystemState values (default: all-zero)",
+        help="JSON file with initial SystemState values "
+             "(default: config/startstate_default.json, which is all-zero)",
     )
 
     # -- visualize --
@@ -337,7 +365,8 @@ def main(argv: list[str] | None = None) -> None:
     # Default: run smoke test if no subcommand given
     if args.cmd is None:
         args.cmd = "run"
-        args.scenario = "config/scenario_default.json"
+        for group, default in DEFAULT_SCENARIO_PATHS.items():
+            setattr(args, group, default)
         args.team = "config/team_default.json"
         args.horizon = "config/horizon_default.json"
         args.start_state = "config/startstate_default.json"

@@ -1,6 +1,12 @@
 {
-  "description": "Random search over agent compositions under default scenario (λ_F = 2 features/sprint)",
-  "scenario": "config/scenario_default.json",
+  "description": "Random search over agent compositions with all five scenario parameter groups at their medium tier",
+  "scenario": {
+    "human": "config/human_medium.json",
+    "project": "config/project_medium.json",
+    "debt": "config/debt_medium.json",
+    "agent": "config/agent_medium.json",
+    "bugimpact": "config/bugimpact_medium.json"
+  },
   "horizon": "config/horizon_default.json",
   "search": {
     "strategy": "random",

@@ -1,8 +1,8 @@
 """Scenario-level parameters per paper/main.tex (§3).
 
-Holds the concrete numeric values drawn once per replication and held fixed across
-all T sprints. Values are loaded from scenario JSON files via
-`src.io.load_scenario_config`.
+Holds the concrete numeric values held fixed across all T sprints. Values are
+composed from the five per-group scenario JSON files via
+`src.io.load_scenario_params` (see paper §4.1).
 """
 
 from __future__ import annotations

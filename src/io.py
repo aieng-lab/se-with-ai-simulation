@@ -3,26 +3,39 @@
 All scenario parameters are fixed constants; no sampling occurs.
 
 Public API:
-    load_simulation_horizon(path)    -> SimulationHorizon
-    load_team_config(path)     -> TeamConfiguration
-    load_scenario_params(path) -> ScenarioParameters
-    load_initial_state(path)   -> SystemState
+    load_simulation_horizon(path)          -> SimulationHorizon
+    load_team_config(path)                 -> TeamConfiguration
+    load_scenario_params(group_paths)      -> ScenarioParameters
+    load_search_config(path)               -> SearchConfiguration
+    load_initial_state(path)               -> SystemState
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .config import AGENT_ROLE_COUNT, SearchConfiguration, SimulationHorizon, TeamConfiguration
+from .config import (
+    AGENT_ROLE_COUNT,
+    SCENARIO_GROUPS,
+    SearchConfiguration,
+    SimulationHorizon,
+    TeamConfiguration,
+)
 from .parameters import ScenarioParameters
 from .state import SystemState
 
-
-# Fields of ScenarioParameters that must be stored as int
-_INT_FIELDS: frozenset[str] = frozenset()
+__all__ = [
+    "SCENARIO_GROUPS",
+    "load_initial_state",
+    "load_scenario_params",
+    "load_search_config",
+    "load_simulation_horizon",
+    "load_team_config",
+]
 
 
 def _parse_value(key: str, value: Any) -> float:
@@ -43,9 +56,15 @@ def _parse_value(key: str, value: Any) -> float:
 
 
 def _flatten_scenario(scenario_dict: dict) -> dict[str, Any]:
-    """Merge all nested section dicts into a single {field_name: raw_value} mapping."""
+    """Merge all nested section dicts into a single {field_name: raw_value} mapping.
+
+    A top-level ``"description"`` string is treated as documentation and skipped;
+    every other top-level value must be a JSON object.
+    """
     flat: dict[str, Any] = {}
     for section, entries in scenario_dict.items():
+        if section == "description" and isinstance(entries, str):
+            continue
         if not isinstance(entries, dict):
             raise ValueError(
                 f"Scenario section {section!r} must be a JSON object, not {type(entries).__name__}"
@@ -87,18 +106,39 @@ def load_team_config(path: str | Path) -> TeamConfiguration:
     )
 
 
-def load_scenario_params(path: str | Path) -> ScenarioParameters:
-    """Parse a scenario parameters JSON file and return ScenarioParameters.
+def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParameters:
+    """Compose ScenarioParameters from one JSON file per scenario group (paper §4.1).
 
-    Every value must be a plain number (or a legacy ``{"value": x}`` dict).
-    No distribution metadata is accepted.
+    ``group_paths`` must have exactly one entry per element of SCENARIO_GROUPS.
+    The groups partition the parameter set, so each field must be defined in
+    exactly one file. Every value must be a plain number (or a legacy
+    ``{"value": x}`` dict); no distribution metadata is accepted.
     """
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
+    missing_groups = sorted(set(SCENARIO_GROUPS) - group_paths.keys())
+    unknown_groups = sorted(group_paths.keys() - set(SCENARIO_GROUPS))
+    if missing_groups or unknown_groups:
+        raise ValueError(
+            f"Expected exactly one file per scenario group {list(SCENARIO_GROUPS)}; "
+            f"missing groups: {missing_groups}, unknown groups: {unknown_groups}"
+        )
 
-    flat = _flatten_scenario(data)
+    flat: dict[str, Any] = {}
+    defined_by: dict[str, str] = {}
+    for group in SCENARIO_GROUPS:
+        with open(group_paths[group], encoding="utf-8") as fh:
+            data = json.load(fh)
+        for key, val in _flatten_scenario(data).items():
+            if key in flat:
+                raise ValueError(
+                    f"Parameter {key!r} is defined in both the {defined_by[key]!r} and "
+                    f"{group!r} group files; the groups must partition the parameters"
+                )
+            flat[key] = val
+            defined_by[key] = group
 
     # c_token is always a list — extract before building kwargs
+    if "c_token" not in flat:
+        raise ValueError("JSON is missing parameters: ['c_token']")
     raw_c_token = flat.pop("c_token")
     if not isinstance(raw_c_token, list) or len(raw_c_token) != AGENT_ROLE_COUNT:
         raise ValueError(
@@ -117,13 +157,7 @@ def load_scenario_params(path: str | Path) -> ScenarioParameters:
     if extra:
         raise ValueError(f"JSON contains unknown parameters: {sorted(extra)}")
 
-    kwargs: dict = {}
-    for key, raw in flat.items():
-        val = _parse_value(key, raw)
-        if key in _INT_FIELDS:
-            kwargs[key] = max(1, round(val))
-        else:
-            kwargs[key] = val
+    kwargs = {key: _parse_value(key, raw) for key, raw in flat.items()}
 
     return ScenarioParameters(**kwargs, c_token=c_token)
 
@@ -133,8 +167,14 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     s = data["search"]
+    raw_scenario = data["scenario"]
+    if not isinstance(raw_scenario, dict):
+        raise ValueError(
+            f"'scenario' must be a JSON object mapping each of the scenario groups "
+            f"{list(SCENARIO_GROUPS)} to a file path, not {type(raw_scenario).__name__}"
+        )
     return SearchConfiguration(
-        scenario_path=data["scenario"],
+        scenario_paths={str(g): str(p) for g, p in raw_scenario.items()},
         horizon_path=data["horizon"],
         strategy=s["strategy"],
         N_values=tuple(int(x) for x in s["N_values"]),

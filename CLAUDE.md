@@ -17,12 +17,12 @@ paper/
     main.tex            formal model specification (AUTHORITATIVE)
 
 src/                    Python simulation package
-    config.py           TeamConfiguration, SimulationHorizon
-    parameters.py       ScenarioParameters (~74 fields)
+    config.py           TeamConfiguration, SimulationHorizon, SearchConfiguration, SCENARIO_GROUPS
+    parameters.py       ScenarioParameters (36 fields)
     state.py            SystemState, LatencyBuffer
     rng.py              reproducible PCG-64 seeding (FNV-1a config hash)
-    sampling.py         ParameterSpec distributions, ScenarioPriors, sample_scenario_parameters
-    io.py               load_simulation_horizon / load_team_config / load_scenario_params / load_initial_state
+    io.py               load_simulation_horizon / load_team_config / load_scenario_params
+                        / load_search_config / load_initial_state
     feasibility.py      check_feasibility — human-capacity feasibility condition (§3.3)
     sprint.py           step_sprint — full 10-step sprint transition + SprintRecord
     simulation.py       run_configuration (K replications); SprintSnapshot / ConfigTrace
@@ -34,17 +34,17 @@ src/                    Python simulation package
     main.py             CLI: `python -m src.main run|analyze|optimize|visualize`
 
 config/
-    horizon_default.json          simulation horizon (T, K, master_seed) shared across scenarios
+    horizon_default.json      simulation horizon (T, K, master_seed) shared across scenarios
     team_default.json         default team configuration (N, M, R, F_freeze, A_dev, A_qa)
-    scenario_default.json     baseline scenario parameters (r_arrival = 2, balanced costs)
-    scenario_high_load.json   high feature-arrival rate (r_arrival = 4)
-    scenario_low_budget.json  halved AI token + salary costs
-    search_default.json       search config: default scenario
-    search_high_load.json     search config: high-load scenario
-    search_budget.json        search config: low-budget scenario
+    human_{low,medium,high}.json      scenario group: human developers (§4.1)
+    project_{low,medium,high}.json    scenario group: project dynamics
+    debt_{low,medium,high}.json       scenario group: debt dynamics
+    agent_{low,medium,high}.json      scenario group: agent costs and throughput
+    bugimpact_{low,medium,high}.json  scenario group: bug impact
+    search_default.json       search config: all five groups at medium tier
     startstate_default.json   initial SystemState values (all-zero baseline)
 
-tests/                  pytest suite (129 tests, ~0.6 s)
+tests/                  pytest suite (170 tests, ~0.9 s)
 results/                persisted sweep results (not committed)
 ```
 
@@ -57,10 +57,12 @@ results/                persisted sweep results (not committed)
 python -m src.main
 ```
 
-**Run and save a simulation:**
+**Run and save a simulation** (each `--<group>` defaults to that group's `_medium` file):
 ```bash
 python -m src.main run --out results/my_run
-python -m src.main run --scenario config/scenario_high_load.json --out results/high_load
+python -m src.main run --project config/project_high.json --out results/high_load
+python -m src.main run --human config/human_low.json --agent config/agent_high.json \
+    --bugimpact config/bugimpact_high.json --out results/junior_team_critical_system
 ```
 
 **Analyse persisted results:**
@@ -99,7 +101,8 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 - **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`.
 - **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` uses uniform composition sampling (stars-and-bars) and/or evolutionary mutation across both vectors.
 - **Feasibility pre-filter** runs before any simulation. The human-capacity condition (§3.3, Eq. monitoring) is checked; infeasible configs are recorded and skipped.
-- **Scenario parameters** are sampled once per replication from distributions specified in JSON (lognormal, beta, uniform, or fixed). See `src/sampling.py`.
+- **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
+- **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, giving 3^5 = 243 scenarios. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
 - **21-dimensional state vector**: features (2), bugs by type×stage (12), technical debt and human capacity queues (5), test infrastructure and documentation (2).
 

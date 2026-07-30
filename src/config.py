@@ -7,6 +7,11 @@ from typing import Optional
 
 AGENT_ROLE_COUNT = 8
 
+# The five orthogonal groups of scenario parameters (paper §4.1).  Each group is
+# supplied by its own JSON file; together they cover every ScenarioParameters
+# field exactly once.
+SCENARIO_GROUPS: tuple[str, ...] = ("human", "project", "debt", "agent", "bugimpact")
+
 AGENT_ROLE_NAMES: tuple[str, ...] = (
     "Feature Implementation Agent",           # k=1
     "Architecture & Design Proposal Agent",   # k=2
@@ -137,7 +142,7 @@ class TeamConfiguration:
 class SearchConfiguration:
     """Parameters controlling a configuration-space search."""
 
-    scenario_path: str
+    scenario_paths: dict[str, str]          # one path per entry of SCENARIO_GROUPS
     horizon_path: str
     strategy: str                           # "random" or "evolutionary"
     N_values: tuple[int, ...]
@@ -151,6 +156,13 @@ class SearchConfiguration:
     seed: int = 0                           # RNG seed for search
 
     def __post_init__(self) -> None:
+        if set(self.scenario_paths) != set(SCENARIO_GROUPS):
+            missing = sorted(set(SCENARIO_GROUPS) - self.scenario_paths.keys())
+            unknown = sorted(self.scenario_paths.keys() - set(SCENARIO_GROUPS))
+            raise ValueError(
+                f"scenario_paths must have exactly one entry per scenario group "
+                f"{list(SCENARIO_GROUPS)}; missing={missing}, unknown={unknown}"
+            )
         if self.strategy not in ("random", "evolutionary"):
             raise ValueError(f"strategy must be 'random' or 'evolutionary', got {self.strategy!r}")
         if not self.N_values:

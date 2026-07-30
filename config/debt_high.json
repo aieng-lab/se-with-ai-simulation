@@ -1,0 +1,10 @@
+{
+  "description": "Debt dynamics parameters, high tier (strongest debt dynamics). See paper/main.tex tab:scenario:debt. Note delta_min is the throughput fraction retained at maximal debt, so it decreases as the tier rises.",
+  "debt": {
+    "delta_impl": 0.13,
+    "delta_fix": 0.13,
+    "delta_min": 0.60,
+    "delta_exp": 1.5,
+    "Gamma_doc": 0.40
+  }
+}

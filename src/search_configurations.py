@@ -38,11 +38,11 @@ from .state import SystemState
 # Composition sampling
 # ---------------------------------------------------------------------------
 
-#: Success probability of the geometric draw used for the two background detection
-#: services (paper §3.11).  Support {0, 1, 2, ...} with mean 1.5: unbounded, as the
-#: model imposes no cap on them, but concentrated on the small counts that the token
-#: cost makes plausible.  This is a sampling choice, not a model constraint.
-P_BG_GEOMETRIC = 0.4
+#: The two background detection services (paper §3.11) are drawn uniformly from
+#: {0, ..., floor(r_arrival)}, i.e., at most one service instance per feature that
+#: arrives in a sprint.  The model imposes no cap on these roles; this bound is a
+#: sampling choice that scales the candidate counts with the review volume the
+#: scenario generates, not a model constraint.
 
 _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
     i for i in SUPERVISED_ROLE_INDICES if i >= 2
@@ -61,28 +61,35 @@ def _sample_composition(total: int, n_roles: int, rng: np.random.Generator) -> t
     return tuple(int(x) for x in np.diff(boundaries))
 
 
-def _sample_background_count(rng: np.random.Generator) -> int:
-    """Draw one background-service count from a geometric distribution on {0, 1, ...}."""
-    return int(rng.geometric(P_BG_GEOMETRIC)) - 1
+def background_count_max(params) -> int:
+    """Upper bound of the background-service draw: features arriving per sprint."""
+    return int(params.r_arrival)
+
+
+def _sample_background_count(rng: np.random.Generator, bg_max: int) -> int:
+    """Draw one background-service count uniformly from {0, ..., bg_max}."""
+    return int(rng.integers(0, bg_max + 1))
 
 
 def _assemble_composition(
-    supervised: dict[int, int], rng: np.random.Generator
+    supervised: dict[int, int], rng: np.random.Generator, bg_max: int
 ) -> tuple[int, ...]:
     """Build a full 8-role vector from supervised counts plus fresh background draws."""
     A = [0] * AGENT_ROLE_COUNT
     for idx, count in supervised.items():
         A[idx] = count
     for idx in BACKGROUND_ROLE_INDICES:
-        A[idx] = _sample_background_count(rng)
+        A[idx] = _sample_background_count(rng, bg_max)
     return tuple(A)
 
 
-def _sample_composition_with_impl(total: int, rng: np.random.Generator) -> tuple[int, ...]:
+def _sample_composition_with_impl(
+    total: int, rng: np.random.Generator, bg_max: int
+) -> tuple[int, ...]:
     """Sample a dev composition spending `total` on supervised roles, with a_1 >= 1.
 
     `total` is the supervised budget (bounded by N*M); the two background services
-    are drawn separately and are not part of it.
+    are drawn separately from {0, ..., bg_max} and are not part of it.
     """
     if total < 1:
         raise ValueError(f"total must be >= 1, got {total}")
@@ -90,15 +97,17 @@ def _sample_composition_with_impl(total: int, rng: np.random.Generator) -> tuple
     base = _sample_composition(total - 1, len(SUPERVISED_ROLE_INDICES), rng)
     supervised = dict(zip(SUPERVISED_ROLE_INDICES, base))
     supervised[0] += 1   # role 1 = index 0 (Feature Implementation Agent)
-    return _assemble_composition(supervised, rng)
+    return _assemble_composition(supervised, rng, bg_max)
 
 
-def _sample_qa_composition(total: int, rng: np.random.Generator) -> tuple[int, ...]:
+def _sample_qa_composition(
+    total: int, rng: np.random.Generator, bg_max: int
+) -> tuple[int, ...]:
     """Sample a QA-phase composition: a_1=a_2=0; `total` spread over supervised QA roles."""
     # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture
     # proposals during feature freeze).
     base = _sample_composition(total, len(_QA_SUPERVISED_INDICES), rng)
-    return _assemble_composition(dict(zip(_QA_SUPERVISED_INDICES, base)), rng)
+    return _assemble_composition(dict(zip(_QA_SUPERVISED_INDICES, base)), rng, bg_max)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +225,7 @@ def _random_configs(
     search_cfg: SearchConfiguration,
     rng: np.random.Generator,
     n_samples: int,
+    bg_max: int,
 ) -> list[TeamConfiguration]:
     """Draw `n_samples` random (N, M, A_dev, R, F_freeze, A_qa) configurations."""
     configs: list[TeamConfiguration] = []
@@ -229,10 +239,10 @@ def _random_configs(
         # the samplers and are not bounded by the budget.
         B_dev = int(rng.integers(1, budget + 1))
         B_qa  = int(rng.integers(0, budget + 1))
-        A_dev = _sample_composition_with_impl(B_dev, rng)
+        A_dev = _sample_composition_with_impl(B_dev, rng, bg_max)
         # Sample F_freeze, clamped so it respects [0, R-1]
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1] or [1]))
-        A_qa = _sample_qa_composition(B_qa, rng)
+        A_qa = _sample_qa_composition(B_qa, rng, bg_max)
         try:
             cfg = TeamConfiguration(N=N, M=M, A_dev=A_dev, R=R, F_freeze=F_freeze, A_qa=A_qa)
             configs.append(cfg)
@@ -297,7 +307,7 @@ def _run_random_search(
     initial_state: SystemState | None = None,
 ) -> tuple[dict, list, list]:
     """Random search. Returns (manifest_configs, feasible_configs, all_aggs)."""
-    configs = _random_configs(search_cfg, rng, n_samples)
+    configs = _random_configs(search_cfg, rng, n_samples, background_count_max(params))
     manifest: dict[str, dict] = {}
     feasible: list[TeamConfiguration] = []
     aggs = []
@@ -348,7 +358,7 @@ def _run_evolutionary_search(
         return False
 
     print(f"Random initialisation ({n_initial} samples) …")
-    init_configs = _random_configs(search_cfg, rng, n_initial)
+    init_configs = _random_configs(search_cfg, rng, n_initial, background_count_max(params))
     for cfg in init_configs:
         evaluate_new(cfg, generation=0)
 

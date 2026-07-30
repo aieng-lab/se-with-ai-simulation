@@ -1,20 +1,39 @@
 """Tests for src/io.py — value parsing, schema validation, round-trips."""
 
+import dataclasses
 import json
 from pathlib import Path
 
 import pytest
 
 from src.io import (
+    SCENARIO_GROUPS,
     _flatten_scenario,
     _parse_value,
     load_initial_state,
     load_scenario_params,
+    load_search_config,
     load_simulation_horizon,
     load_team_config,
 )
 from src.parameters import ScenarioParameters
 from src.state import SystemState
+
+
+def tier_paths(tier: str, **overrides: str) -> dict[str, str]:
+    """Paths to the five group files for `tier`, with optional per-group overrides."""
+    paths = {group: f"config/{group}_{tier}.json" for group in SCENARIO_GROUPS}
+    paths.update(overrides)
+    return paths
+
+
+def copy_group_file(group: str, tier: str, tmp_path: Path, mutate) -> Path:
+    """Write a mutated copy of a group config to tmp_path and return its path."""
+    data = json.loads(Path(f"config/{group}_{tier}.json").read_text())
+    mutate(data[group])
+    out = tmp_path / f"{group}_mutated.json"
+    out.write_text(json.dumps(data))
+    return out
 
 
 class TestParseValue:
@@ -49,6 +68,14 @@ class TestFlattenScenario:
         with pytest.raises(ValueError):
             _flatten_scenario({"s1": [1, 2, 3]})
 
+    def test_description_string_is_skipped(self):
+        flat = _flatten_scenario({"description": "docs", "s1": {"a": 1}})
+        assert flat == {"a": 1}
+
+    def test_non_string_description_still_validated(self):
+        with pytest.raises(ValueError):
+            _flatten_scenario({"description": [1, 2]})
+
     def test_empty_returns_empty(self):
         assert _flatten_scenario({}) == {}
 
@@ -80,47 +107,111 @@ class TestLoadTeamConfig:
 
 
 class TestLoadScenarioParams:
-    def test_default_scenario_loads(self):
-        params = load_scenario_params("config/scenario_default.json")
+    def test_medium_scenario_loads(self):
+        params = load_scenario_params(tier_paths("medium"))
         assert isinstance(params, ScenarioParameters)
         assert len(params.c_token) == 8
 
     def test_returns_correct_values(self):
-        params = load_scenario_params("config/scenario_default.json")
-        assert params.r_arrival == pytest.approx(2.0)
-        assert params.r_bugs == pytest.approx(0.1)
-        assert params.r_bugs_human == pytest.approx(0.8)
+        params = load_scenario_params(tier_paths("medium"))
+        assert params.r_arrival == pytest.approx(12.0)
+        assert params.r_bugs == pytest.approx(0.03)
+        assert params.r_bugs_human == pytest.approx(0.74)
+        assert params.c_salary == pytest.approx(150_000.0)
+        assert params.c_token[0] == pytest.approx(3.80)
 
-    def test_high_load_scenario_loads(self):
-        params = load_scenario_params("config/scenario_high_load.json")
-        assert params.r_arrival == pytest.approx(4.0)
+    @pytest.mark.parametrize("tier", ["low", "medium", "high"])
+    def test_every_tier_loads(self, tier):
+        params = load_scenario_params(tier_paths(tier))
+        assert isinstance(params, ScenarioParameters)
+
+    def test_groups_can_be_mixed(self):
+        """The five groups are orthogonal, so tiers combine freely (paper §4.1)."""
+        params = load_scenario_params(
+            tier_paths("medium", project="config/project_high.json")
+        )
+        assert params.r_arrival == pytest.approx(75.0)
+        assert params.r_bugs_human == pytest.approx(0.74)   # human group still medium
+
+    def test_groups_partition_all_parameters(self):
+        """Union of the group files must be exactly the ScenarioParameters fields."""
+        keys: set[str] = set()
+        for group in SCENARIO_GROUPS:
+            data = json.loads(Path(f"config/{group}_medium.json").read_text())
+            group_keys = set(_flatten_scenario(data))
+            assert not (keys & group_keys), f"{group} duplicates {keys & group_keys}"
+            keys |= group_keys
+        assert keys == {f.name for f in dataclasses.fields(ScenarioParameters)}
+
+    def test_missing_group_raises(self):
+        paths = tier_paths("medium")
+        del paths["debt"]
+        with pytest.raises(ValueError, match="missing groups"):
+            load_scenario_params(paths)
+
+    def test_unknown_group_raises(self):
+        paths = tier_paths("medium")
+        paths["nonexistent_group"] = "config/debt_medium.json"
+        with pytest.raises(ValueError, match="unknown groups"):
+            load_scenario_params(paths)
+
+    def test_parameter_in_two_groups_raises(self, tmp_path):
+        overlap = tmp_path / "debt_overlap.json"
+        overlap.write_text(json.dumps({"debt": {"r_arrival": 1.0}}))
+        with pytest.raises(ValueError, match="defined in both"):
+            load_scenario_params(tier_paths("medium", debt=str(overlap)))
 
     def test_c_token_wrong_length_raises(self, tmp_path):
-        path = Path("config/scenario_default.json")
-        data = json.loads(path.read_text())
-        data["costs"]["c_token"] = [0.1] * 5  # wrong length
-        bad = tmp_path / "bad.json"
-        bad.write_text(json.dumps(data))
-        with pytest.raises(ValueError):
-            load_scenario_params(bad)
+        def mutate(section):
+            section["c_token"] = [0.1] * 5
+
+        bad = copy_group_file("agent", "medium", tmp_path, mutate)
+        with pytest.raises(ValueError, match="c_token"):
+            load_scenario_params(tier_paths("medium", agent=str(bad)))
 
     def test_missing_parameter_raises(self, tmp_path):
-        path = Path("config/scenario_default.json")
-        data = json.loads(path.read_text())
-        del data["productivity"]["r_arrival"]
-        bad = tmp_path / "bad.json"
-        bad.write_text(json.dumps(data))
+        bad = copy_group_file(
+            "project", "medium", tmp_path, lambda s: s.pop("r_arrival")
+        )
         with pytest.raises(ValueError, match="missing"):
-            load_scenario_params(bad)
+            load_scenario_params(tier_paths("medium", project=str(bad)))
 
     def test_extra_parameter_raises(self, tmp_path):
-        path = Path("config/scenario_default.json")
-        data = json.loads(path.read_text())
-        data["productivity"]["nonexistent_param"] = 1.0
-        bad = tmp_path / "bad.json"
-        bad.write_text(json.dumps(data))
+        def mutate(section):
+            section["nonexistent_param"] = 1.0
+
+        bad = copy_group_file("project", "medium", tmp_path, mutate)
         with pytest.raises(ValueError, match="unknown"):
-            load_scenario_params(bad)
+            load_scenario_params(tier_paths("medium", project=str(bad)))
+
+
+class TestLoadSearchConfig:
+    def test_default_search_config_loads(self):
+        cfg = load_search_config("config/search_default.json")
+        assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
+        assert cfg.horizon_path == "config/horizon_default.json"
+        assert cfg.strategy == "random"
+
+    def test_scenario_paths_resolve_to_params(self):
+        cfg = load_search_config("config/search_default.json")
+        params = load_scenario_params(cfg.scenario_paths)
+        assert params.r_arrival == pytest.approx(12.0)
+
+    def test_scalar_scenario_raises(self, tmp_path):
+        data = json.loads(Path("config/search_default.json").read_text())
+        data["scenario"] = "config/human_medium.json"
+        bad = tmp_path / "search.json"
+        bad.write_text(json.dumps(data))
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            load_search_config(bad)
+
+    def test_incomplete_scenario_group_set_raises(self, tmp_path):
+        data = json.loads(Path("config/search_default.json").read_text())
+        del data["scenario"]["debt"]
+        bad = tmp_path / "search.json"
+        bad.write_text(json.dumps(data))
+        with pytest.raises(ValueError, match="scenario_paths"):
+            load_search_config(bad)
 
 
 class TestLoadInitialState:

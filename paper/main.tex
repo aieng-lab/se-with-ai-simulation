@@ -1081,11 +1081,9 @@ In random search, each candidate configuration is drawn independently. A single 
   \item Draw the supervised QA agent count $B_\mathrm{qa}$ uniformly from $\{0, \ldots, N \cdot M\}$
         and sample the supervised part of $\mathbf{A}_\mathrm{qa}$ as a QA-phase composition such that $\sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\mathrm{qa},k} = B_\mathrm{qa}$, with $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$.
   \item Draw the four background service counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$,
-        $a_{\mathrm{qa},5}$, $a_{\mathrm{qa},6}$ independently from a geometric distribution on
-        $\{0, 1, 2, \ldots\}$ with success probability $p_\mathrm{bg} = 0.4$, i.e., with a mean of
-        1.5. This distribution has unbounded support, as required, while concentrating the samples
-        on the small counts that the token cost makes plausible. It is a sampling choice made for
-        efficiency, not a constraint of the model.
+        $a_{\mathrm{qa},5}$, $a_{\mathrm{qa},6}$ independently and uniformly from
+        $\{0, 1, \ldots, \lfloor r_\mathrm{arrival} \rfloor\}$, i.e., we allow up to one instance
+        of each service per feature that arrives in a sprint.
   \item Discard the candidate if it violates the human-capacity feasibility condition of
         Eq.~\eqref{eq:feas_monitoring}.
 \end{enumerate}
@@ -1160,7 +1158,8 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 \subsection{Scenarios}
 \label{sec:setup:scenarios}
 
-There are eight orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters, i.e., the agent capabilities, the agent efforts, the human developer capabilities, the debt dynamics, the project dynamics, the agent costs, the human costs, and the bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the number of features implemented per sprint by the implementation agents, the number of bugs fixed per sprint by the bug-fixing agents, and so on. Orthogonally, pricing of these agents can be cheaper or more expensive. Since they are orthogonal, we can freely combine all eight groups into a diverse set of scenarios. We use real-world data to ground the low/medium/high tiers of these scenario aspects.
+There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level developers, or seniors resulting in different capabilitites and salaries. 
+Since the groups are orthogonal, we can freely combine all five groups into a diverse set of scenarios. 
 
 \subsubsection{Human developer parameters}
 
@@ -1262,7 +1261,7 @@ We estimate the agentic bug introduction rate based on the SWE-bench Verified be
 
 We use CyberBench~\cite{liu2024cyberbench} to estimate the security bug detection rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for the detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that are not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude~5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026swebench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available; we therefore estimate that the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e., the SWE-bench scores reduced by 0.2.
 
-We use SWE-Review~\citep{wang2026swe} to estimate how good language models are at code review. Within this benchmark, Claude Opus 4.6 was able to correctly judge pull requests for between 75\% and 89\% of the cases. We use these as low and high tier respectively and use the mid-point 0.82 for the medium tier.
+We use SWE-Review~\citep{wang2026swe} to estimate how good language models are at code review. Within this benchmark, Claude Opus 4.6 was able to correctly judge pull requests for between 75\% and 89\% of the cases. We use these as low and high tier respectively and use the mid-point 0.82 for the medium tier. To estimate the ceiling of what testing can achieve, we use research from \cite{SCHWARTZ2018106} as foundation: they fond that even for highly covered projects, 46\% of mutants could not be detected by the test suite. We use this a medium estimate, and assume that less capable agents are worse at testing, while more capable agents are better, resulting in a low tier of 40\% and a high tier of 52\%.
 
 Finally, we estimate the escalation rate based on telemetry data from \cite{baumann2026swechat}: in their study, the agents escalated between 1\% and 3\% of the time, which we use as the high and low tier respectively, since less capable agents are expected to escalate more often. We use the mid-point 0.02 for the medium tier.
 
@@ -1281,7 +1280,7 @@ Role & Parameter & Low & Medium & High & Source \\
   & $r_\mathrm{bugs}$      & 0.20 & 0.03 & 0.05 & \cite{valsai2026swebench} \\
 \midrule
 \multirow{2}{2.4cm}{2 -- Architecture \& Design}
-  & $c_\mathrm{token}$     & 11.14 & 19.00 & 38.00 & 5 times the cost of feature implementation \\
+  & $c_\mathrm{token}$     & 11.40 & 19.00 & 38.00 & 5 times the cost of feature implementation \\
   & $r_\mathrm{arch,chg}$  & 35    & 35    & 35    & Five times slower than feature implementation \\
 \midrule
 \multirow{2}{2.4cm}{3 -- Bug Fixing}
@@ -1305,7 +1304,7 @@ Role & Parameter & Low & Medium & High & Source \\
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
   & $r_\mathrm{test}$      & 747  & 747  & 747  & Same as bug fixing \\
   & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
-  & $c_\mathrm{test,ceil}$ & 2.0  & 2.0  & 2.0  & Assumed \\
+  & $c_\mathrm{test,ceil}$ & 0.40  & 0.46  & 0.52  & \cite{SCHWARTZ2018106} \\
 \midrule
 \multirow{2}{2.4cm}{8 -- Dev.\ Documentation}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
@@ -1347,9 +1346,51 @@ $\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost e
 
 
 % ---- 4.2 ----
-\subsection{Experimental Variables and Sweep Settings}
+\subsection{Experiment Configurations}
 \label{sec:setup:sweep}
 
+\paragraph{Scenario grid.}
+Since we have five orthogonal aspects, each with three levels, we have a total of $3^5 = 243$ scenarios. We solve each of these problems twice, once with uniform random search and once with evolutionary search (Section~\ref{sec:model:search}), which yields 486 searches in total.
+All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two frontiers is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ an empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is choosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
+
+The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The developer counts range from a single developer supervising a small five-person team. Larger teams do not make sense, since this is not supported by the feature arrival speed. 
+The span of control is bounded by $M_\mathrm{max} = 30$. This bound is deliberately chosen to be inert, i.e., it lies above the point at which the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} becomes binding in every scenario: with $H_\mathrm{mon.overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a developer's net capacity at roughly 16, 24, and 27 supervised agents per developer, respectively. 
+
+The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. 
+
+Both search strategies receive the same budget of $E = 10\,000$ candidate evaluations per scenario, so that the comparison between them measures search efficiency and not effort. For random search this means $n_\mathrm{rand} = 1\,000$ candidates. For evolutionary search we spend 10\% of the budget on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation.
+
+Candidates that violate the human-capacity condition are recorded and counted against the budget, but not simulated, and the same accounting applies to both strategies. In addition, the mutation operator may fail to produce a new, distinct, feasible child within its attempt limit, and duplicate children are not re-evaluated, so the number of configurations that an evolutionary run actually simulates can fall slightly below the nominal budget. We therefore report the realised number of simulated configurations.
+
+\begin{table}[t]
+\caption{Experiment constants and search range, identical for all 243 scenarios.}
+\label{tab:setup:experiment}
+\footnotesize
+\begin{tabularx}{\linewidth}{p{2.2cm}rX}
+\toprule
+Symbol & Value & Rationale \\
+\midrule
+\multicolumn{3}{l}{\emph{Monte Carlo protocol and horizon}} \\[2pt]
+$S(0)$                          & $\mathbf{0}$        & Green-field project; no legacy state to justify \\[2pt]
+$T$                             & 104                  & Two calendar years at weekly sprints \\[2pt]
+$K$                             & 100                 & Relative CI half-width $<1\%$ for $\mathit{value}$ and $\mathit{cost}$ \\[2pt]
+$B$                             & 1{,}000             & Bootstrap resamples for the 95\% CIs (Section~\ref{sec:model:mc}) \\[2pt]
+$s_0$                           & 42            & Master seed \\[2pt]
+\midrule
+\multicolumn{3}{l}{\emph{Search range}} \\[2pt]
+$\mathcal{N}$                   & $\{1,2,3,4,5\}$     & Single developer to small team \\[2pt]
+$M_\mathrm{max}$                & 30                  & More supervised agents exceed supervisor capacity \\[2pt]
+$\mathcal{R}$                   & $\{1,2,4,13\}$      & Continuous, biweekly, monthly, quarterly releases \\[2pt]
+$\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two-week freeze; capped at $R-1$ \\[2pt]
+\midrule
+\multicolumn{3}{l}{\emph{Search budget per scenario and strategy}} \\[2pt]
+$E$                             & 10{,}000             & Identical budget for both strategies \\[2pt]
+$n_\mathrm{rand}$               & 1{,}000             & Random search: all of $E$ spent on independent draws \\[2pt]
+$n_\mathrm{init}$               & 1{,}000             & Evolutionary search: 10\% of $E$ on the initial pool \\[2pt]
+$G$ / $n_\mathrm{off}$          & 90 / 100            & Evolutionary search: 90\% of $E$ on the generation loop \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 % ---- 4.3 ----
 \subsection{Evaluation Metrics and Comparisons}
