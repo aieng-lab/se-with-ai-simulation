@@ -1173,7 +1173,7 @@ We use the review of architectural decision records (ADRs) to ground the archite
 
 To have a comparable baseline for human effort, we assume the time required to solve SWE-bench Verified coding tasks, which are designed to be representative of real-world coding tasks by basing them on issues reported in open-source repositories~\citep{openai2026swebenchverified,jimenez2024swe}. We use METR's estimate for the human baseline of the time required to solve substantial issues within the 1--4 hour time bucket of the benchmark, which estimates the time at 2 hours~\citep{kwa2026measuringaiabilitycomplete}. Since this seems reasonable, we use this for the medium tier. We use the pattern that less capable developers require twice as long as the medium tier and highly capable developers are twice as fast, resulting in 4 hours for the low tier, and 1 hour for the high tier. Since METR found that the $<15$ minute time bucket underestimates the time required to solve tasks, we instead use the 15 to 60 minute time bucket to estimate the time required to fix bugs in a similar manner, i.e., 30 minutes for the medium tier, 60 minutes for the low tier, and 15 minutes for the high tier.
 
-We estimate the bug introduction using the general defect density of software, which is estimated to be at about 4.3 defects per 1,000 lines of code~\citep{shah2012overview}. Since SWE-bench features change, on average, 107 lines of code~\cite{scaleSWEBenchPublic}, this translates to 0.44 bugs per feature, which we use as medium tier. We assume that less capable developers introduce twice as many bugs and highly capable developers introduce half as many, resulting in 0.88 bugs per feature for the low tier, and 0.22 bugs per feature for the high tier.
+As per our modeling assumptions, the rate that humans introduce bugs is based on the agentic bug introduction rate using a multiplicative factor, such that a value of 1 means equal behavior and values less than one mean that humans introduce fewer bugs than agents. \cite{coderabbit2025aicode} reports that AI introduces issues at 1.7 times the rate of humans. Since this number is at the time of writing one year, we use this model as baseline for the high tier, i.e., the most capable humans. Assuming progress by later models that improved performance in SWE-bench Verified (and other benchmarks). Since junior developers are frequently compared to AI agents~\cite{kumar2025ai}, we use a factor of 1 for the low tier. We use the mid-point, i.e., 1.35 for the medium tier. This results in a bug introduction rate factors of $\frac{1}{1.7}=0.58$ for the high tier, $\frac{1}{1.35}=0.74$ for the medium tier, and 1 for the low tier.
 
 \begin{table}[t]
 \caption{Human developer parameters. Low represents a junior developer, medium a mid-level developer, and high a senior developer.}
@@ -1190,7 +1190,7 @@ $H_\mathrm{esc\_time}$        & 4.0  & 2.0  & 1.0  & Assumed to be similar to fe
 $H_\mathrm{review\_time}$     & 8.0  & 4.0  & 2.0  & Extrapolated from \cite{amazonArchitecturalDecision}. \\[2pt]
 $h_\mathrm{feature}$          & 4.0  & 2.0  & 1.0  & Based on SWE-bench Verified, 1--4h bucket \citep{openai2026swebenchverified,kwa2026measuringaiabilitycomplete}. \\[2pt]
 $h_\mathrm{fix}$              & 1.0 & 0.5 & 0.25 & Based on SWE-bench Verified, 0.25--1h bucket \citep{openai2026swebenchverified,kwa2026measuringaiabilitycomplete}. \\[2pt]
-$r_\mathrm{bugs,human}$   & 0.88 & 0.44 & 0.22 & Based on defect density by \cite{shah2012overview}. \\
+$r_\mathrm{bugs,human}$   & 1.0 & 0.74 & 0.58 & \cite{coderabbit2025aicode}. \\
 $f_\mathrm{fix}$              & 0.5 & 0.5 & 0.5 & Assumed to be without prioritization. \\
 $c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salaries}. \\
 \bottomrule
@@ -1256,11 +1256,11 @@ The agent cost parameters are summarized in Table~\ref{tab:scenario:agents}. Whi
 \end{itemize}
 We further ground the pricing based on the API pricing of Claude Sonnet~5, Opus~5, and Fable~5 for low, medium, and high, respectively.
 
-We model the throughput using the same assumptions on the relation between the throughput of the models as for the cost parameters, but base these estimations on the latency of the models, i.e., the time to solve a task. Since a concrete latency is hard to define as this depends not only on model size, but also on the current load of cloud providers, we do not estimate this on single latency values that are reported. As for the other tasks, we ground this in SWE-bench, where the reference solutions require 107 lines of code on average~\citep{scaleSWEBenchPublic}. Based on data from \cite{baumann2026swechat}, autonomous coding required 12.6 minutes on average per 100 commit lines. Assuming that agents only run during work hours, this would result in 190 features per sprint, resulting in the throughput rates reported in Table~\ref{tab:scenario:agents}.
+We model the throughput using the same assumptions on the relation between the throughput of the models as for the cost parameters, but base these estimations on the latency of the models, i.e., the time to solve a task. Since a concrete latency is hard to define as this depends not only on model size, but also on the current load of cloud providers, we do not estimate this on single latency values that are reported. As for the other tasks, we ground this in SWE-bench, where the reference solutions require 107 lines of code on average~\citep{scaleSWEBenchPublic}. Based on data from \cite{baumann2026swechat}, autonomous coding required 12.6 minutes on average per 100 commit lines. Assuming that agents only run during work hours, this would result in 178 features per sprint, resulting in the throughput rates reported in Table~\ref{tab:scenario:agents}.
 
 We estimate the agentic bug introduction rate based on the SWE-bench Verified benchmark score, assuming that each failure in the benchmark results in a bug in the code base. We collect the data for Claude Sonnet~5, Opus~5, and Fable~5 analogously to the cost estimations. The values are taken from the vals.ai leaderboard~\citep{valsai2026swebench}, i.e., we do not use Anthropic's estimates but those of independent benchmark executions. While we are aware that these results likely overestimate the actual benchmark performance~\citep{liang2026swe}, we nevertheless use this as an (optimistic) estimate for the capabilities of the agents.
 
-We use CyberBench~\cite{liu2024cyberbench} to estimate the security bug detection rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for the detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that are not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude~5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026cyberbench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available; we therefore estimate that the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e., the SWE-bench scores reduced by 0.2.
+We use CyberBench~\cite{liu2024cyberbench} to estimate the security bug detection rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for the detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that are not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude~5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026swebench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available; we therefore estimate that the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e., the SWE-bench scores reduced by 0.2.
 
 We use SWE-Review~\citep{wang2026swe} to estimate how good language models are at code review. Within this benchmark, Claude Opus 4.6 was able to correctly judge pull requests for between 75\% and 89\% of the cases. We use these as low and high tier respectively and use the mid-point 0.82 for the medium tier.
 
@@ -1277,20 +1277,20 @@ Role & Parameter & Low & Medium & High & Source \\
 \midrule
 \multirow{3}{2.4cm}{1 -- Feature Impl.}
   & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & \cite{morph2026aicodingcosts} \\
-  & $r_F$                  & 190  & 190  & 190  & Based on 12.6\,min per 100 lines of code \cite{baumann2026swechat,scaleSWEBenchPublic} \\
+  & $r_F$                  & 178  & 178  & 178  & Based on 12.6\,min per 100 lines of code \cite{baumann2026swechat,scaleSWEBenchPublic} \\
   & $r_\mathrm{bugs}$      & 0.20 & 0.03 & 0.05 & \cite{valsai2026swebench} \\
 \midrule
 \multirow{2}{2.4cm}{2 -- Architecture \& Design}
   & $c_\mathrm{token}$     & 11.14 & 19.00 & 38.00 & 5 times the cost of feature implementation \\
-  & $r_\mathrm{arch,chg}$  & 38    & 38    & 38    & Five times slower than feature implementation \\
+  & $r_\mathrm{arch,chg}$  & 35    & 35    & 35    & Five times slower than feature implementation \\
 \midrule
 \multirow{2}{2.4cm}{3 -- Bug Fixing}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & \cite{morph2026aicodingcosts} \\
-  & $r_\mathrm{fix}$       & 798  & 798  & 798  & 4.2 times faster than feature implementation, based on cost estimate \\
+  & $r_\mathrm{fix}$       & 747  & 747  & 747  & 4.2 times faster than feature implementation, based on cost estimate \\
 \midrule
 \multirow{2}{2.4cm}{4 -- Refactoring}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $r_\mathrm{refactor}$  & 798  & 798  & 798  & Same as bug fixing \\
+  & $r_\mathrm{refactor}$  & 747  & 747  & 747  & Same as bug fixing \\
 \midrule
 \multirow{3}{2.4cm}{5 -- Code Review}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
@@ -1299,17 +1299,17 @@ Role & Parameter & Low & Medium & High & Source \\
 \midrule
 \multirow{2}{2.4cm}{6 -- Security Audit}
   & $c_\mathrm{token}$     & 5.40 & 9.00 & 18.00 & 10 times the cost of code review \\
-  & $d_\mathrm{SA}$        & 0.78 & 0.83 & 0.88 & \cite{liu2024cyberbench}, scores from \cite{valsai2026cyberbench} \\
+  & $d_\mathrm{SA}$        & 0.78 & 0.83 & 0.88 & \cite{liu2024cyberbench}, scores from \cite{valsai2026swebench} \\
 \midrule
 \multirow{4}{2.4cm}{7 -- Test Development}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $r_\mathrm{test}$      & 798  & 798  & 798  & Same as bug fixing \\
+  & $r_\mathrm{test}$      & 747  & 747  & 747  & Same as bug fixing \\
   & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
   & $c_\mathrm{test,ceil}$ & 2.0  & 2.0  & 2.0  & Assumed \\
 \midrule
 \multirow{2}{2.4cm}{8 -- Dev.\ Documentation}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $r_\mathrm{doc}$       & 798  & 798  & 798  & Same as bug fixing \\
+  & $r_\mathrm{doc}$       & 747  & 747  & 747  & Same as bug fixing \\
 \midrule
 All roles & $\rho_\mathrm{esc}$ & 0.03 & 0.02 & 0.01 & \cite{baumann2026swechat} \\
 \bottomrule
@@ -1349,38 +1349,12 @@ $\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost e
 % ---- 4.2 ----
 \subsection{Experimental Variables and Sweep Settings}
 \label{sec:setup:sweep}
-%
-% - Ranges swept: N in {1,...,8}, M in {1,...,M_max(N)} where M_max from Theorem 3.
-% - Composition space size: for total budget B = N*M agents across 13 roles,
-%   number of compositions = C(B+12, 12) -- grows rapidly; motivates search.
-% - Phase 1: n_random = 5000 configurations sampled per scenario.
-% - Phase 2: pop_size = 100, G_max = 200 generations, epsilon_HV = 0.001.
-% - K_max = 200 replications per configuration; T = 52 sprints; T_warmup = 5 sprints.
-% - Hardware: [fill in after runs] CPU-hours, parallelised per configuration.
-% - Software: Python 3.x, NumPy PCG-64, src/ simulation package.
+
 
 % ---- 4.3 ----
 \subsection{Evaluation Metrics and Comparisons}
 \label{sec:setup:metrics}
-%
-% Primary metric: Pareto hypervolume dominated by discovered front per scenario.
-%   - Computed with normalised objective values (nadir = reference point).
-%   - Statistical test for scenario differences: Kruskal-Wallis + post-hoc.
-%
-% Secondary:
-%   - Pairwise comparison of best-V, best-Q, best-C_F configurations.
-%   - Role-composition profiles of Pareto-extreme solutions (Table 5).
-%   - Fraction of configurations eliminated by each pre-filter step (Table 2).
-%
-% Ablation -- effect of degradation functions:
-%   - Baseline: no-degradation model (phi_D = psi_D = 1, eta_rev = eta_esc = 1).
-%   - Compare hypervolume and knee-point shift vs. full model (default scenario).
-%   - Partial ablation: remove each of the four functions independently.
-%
-% Sensitivity analysis:
-%   - Sobol' indices (first-order + total) for hypervolume w.r.t. all parameters.
-%   - Report top-6 influential parameters as tornado chart.
-%   - One-at-a-time +/- 20\% perturbation of top-6 to quantify Pareto-front shift.
+
 
 
 % ============================================================
@@ -1388,191 +1362,19 @@ $\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost e
 \label{sec:results}
 % ============================================================
 
-% ---- 5.1 ----
-\subsection{Pareto Frontiers by Scenario}
-\label{sec:results:pareto}
-%
-% - Present tri-objective Pareto frontiers for all three scenarios:
-%   3D scatter plot (V vs. Q vs. C_F) + three 2D projections (pairs of objectives).
-%   Colour / marker distinguishes scenarios; CI-aware dominance used.
-%
-% - Report hypervolume values per scenario; statistical significance of differences.
-%
-% - Qualitative shape description:
-%   * Knee point location (balanced V/Q/C_F).
-%   * Steepness of quality-cost trade-off curve.
-%   * Whether high-load front is dominated by default (throughput sacrifice).
-%
-% - Identify the practically interesting region (C_F within 10\% of min,
-%   V >= 0.8 * V_max) and characterise it.
-%
-% - Figure 6: tri-objective Pareto scatter -- MAIN RESULT FIGURE.
-%
-% - Answer RQ1 in summary.
-
-% ---- 5.2 ----
-\subsection{Optimal Agent Compositions}
-\label{sec:results:compositions}
-%
-% - Table 5: composition vector A for 4-5 Pareto-extreme solutions per scenario:
-%   throughput-optimal, quality-optimal, cost-optimal, knee-point configuration.
-%   Include objective values (V, Q, C_F) and confidence intervals.
-%
-% - Analysis -- which roles dominate quality-optimal configurations?
-%   Hypothesis: a_6 (Code Review) + a_7 (Security Audit) + a_8-10 (Testing)
-%   are over-allocated relative to throughput-optimal.
-%
-% - Role of Refactoring agents: do configurations with higher a_5/a_3 appear
-%   more frequently near the interior (balanced) region of the Pareto front?
-%
-% - Fraction of configurations eliminated per pre-filter step; which condition
-%   is most commonly triggered per scenario.
-%
-% - Span-of-control M: distribution of M across Pareto-optimal vs. dominated configs.
-
-% ---- 5.3 ----
-\subsection{Effect of Degradation Functions}
-\label{sec:results:degradation}
-%
-% - Compare full model vs. no-degradation baseline (default scenario):
-%   hypervolume ratio; shift in knee-point location.
-%
-% - Show that no-degradation model systematically overestimates V and
-%   underestimates Q, confirming degradation functions are necessary.
-%
-% - Partial ablation: rank contribution of each degradation function to
-%   hypervolume gap (phi_D, psi_D, eta_rev, eta_esc).
-%
-% - Figure 7: side-by-side Pareto front -- full model vs. no-degradation
-%   baseline (default scenario).
-%
-% - Answer RQ2.
-
-% ---- 5.4 ----
-\subsection{Sensitivity Analysis}
-\label{sec:results:sensitivity}
-%
-% - Sobol' indices: list top-6 influential parameters with first-order and
-%   total-effect indices; discuss interaction effects.
-%
-% - Tornado chart: hypervolume sensitivity to +/- 20\% perturbation of top-6.
-%   Parameters: likely candidates are r_arrival, r_bugs, r_F, phi_max, psi_min,
-%   theta_maj, theta_sec.
-%
-% - Cross-scenario interpretation: high-load and low-budget scenarios as
-%   perturbations along the most sensitive parameter directions.
-%
-% - Figure 8: tornado chart (or sensitivity scatter plots).
-%
-% - Answer RQ3.
-
 
 % ============================================================
 \section{Discussion}
 \label{sec:discussion}
 % ============================================================
 
-% ---- 6.1 ----
-\subsection{Interpretation of Findings}
-\label{sec:discussion:interpretation}
-%
-% - Synthesise answers to RQ1, RQ2, RQ3 in plain language:
-%   * RQ1: characterise the Pareto-optimal composition profile (e.g., heavy
-%     Feature Implementation core + proportional Code Review + at least 1
-%     Refactoring agent for balanced configurations).
-%   * RQ2: quantify the performance gap introduced by degradation functions;
-%     emphasise that ignoring technical debt dynamics leads to over-optimistic
-%     throughput predictions and under-resourced testing allocations.
-%   * RQ3: identify which aspects of optimal configurations are robust across
-%     scenarios vs. which are scenario-specific.
-%
-% - Counterintuitive findings (if any): e.g., adding more agents does NOT
-%   always improve throughput past M_max; highest-V configurations may not
-%   be cost-optimal due to escalation overhead.
-%
-% - Connect to the formal theorems: optimal a_5/a_3 ratio predicted by
-%   Theorem 4; M_max bound from Theorem 3 confirmed by empirical results.
-
-% ---- 6.2 ----
-\subsection{Practical Implications for AI-Human Team Design}
-\label{sec:discussion:implications}
-%
-% - Translate Pareto-extreme composition profiles into actionable heuristics:
-%   * Minimum Code Review + Testing allocation to avoid quality cliff in eta_rev.
-%   * Refactoring-to-Feature-Implementation ratio implied by Theorem 4.
-%   * Recommended span-of-control M range per scenario.
-%
-% - Span-of-control interaction: does higher M systematically shift the Pareto
-%   front? Is there an optimal M* below M_max?
-%
-% - Tool/platform selection guidance: high-sensitivity parameters (Section 7.4)
-%   identify the agent roles where capability improvements yield the largest
-%   Pareto-front improvement; these are the highest-value targets for model upgrades.
-%
-% - Cost operationalisation: the per-agent per-sprint cost structure maps
-%   directly to cloud LLM API pricing, making C_F directly actionable.
-%   Compare cost at Pareto-optimal vs. a naive all-human baseline.
-
-% ---- 6.3 ----
-\subsection{Threats to Validity}
-\label{sec:discussion:threats}
-%
-% INTERNAL VALIDITY
-% - Monte Carlo convergence: report that CV < epsilon_CV met in all scenarios;
-%   report actual K distribution.
-% - Local optima in evolutionary search: compare evolutionary vs. random-search
-%   hypervolume to bound sub-optimality gap.
-% - Pre-filter conservatism: estimate false-positive rate by simulating a sample
-%   of flagged-infeasible configurations.
-%
-% CONSTRUCT VALIDITY
-% - Rate parameters drawn from assumed distributions (not validated against
-%   specific industrial data); calibration strategy described in Section 5.2.
-% - Degradation function forms (power law, piecewise linear) are assumed;
-%   actual shapes may differ; ablation in Section 7.3 bounds the sensitivity.
-% - Model does not capture inter-agent communication overhead or LLM context
-%   limitations; these could be added as future extensions.
-%
-% EXTERNAL VALIDITY
-% - Three scenarios may not cover all industrial contexts; N and M ranges finite.
-% - Results may not generalise to very large teams (N > 10) where new bottlenecks
-%   (e.g., inter-team coordination) emerge.
-% - Single-project scope: multi-project portfolio settings introduce resource
-%   sharing not modelled here.
-%
-% MODEL VALIDITY
-% - 11-step sprint transition serialises steps that may overlap in practice.
-% - Single-value tau_CI approximates what is in practice a distribution over
-%   test execution times.
-% - Formal stability theorems partially mitigate internal-validity concerns
-%   by providing analytical guarantees in limiting cases.
 
 
 % ============================================================
 \section{Conclusion}
 \label{sec:conclusion}
 % ============================================================
-%
-% - Restate core contribution: first formal simulation framework for mixed
-%   AI-human software team composition, grounded in a sprint-state
-%   model with proved stability guarantees and multi-objective optimisation.
-%
-% - Three main empirical findings (one sentence each, fill in after experiments).
-%
-% - Limitations not covered in threats:
-%   * Static composition A; no adaptive re-allocation between sprints.
-%   * No agent capability improvement over time (learning curves or model upgrades).
-%   * Cost structure is static (no economy-of-scale effects).
-%
-% - Four concrete future-work directions:
-%   1. Empirical calibration of rate parameters from industrial sprint logs and
-%      LLM benchmark data (SWE-bench, HumanEval, CodeContests).
-%   2. Multi-project portfolio extension: human developers shared across teams;
-%      introduces cross-project capacity contention.
-%   3. Online/adaptive composition policy: replace static A with a sprint-level
-%      reallocation policy responding to observed S(t).
-%   4. Agent capability growth: incorporate learning curves and model version
-%      transitions (agent upgrades mid-project).
+
 
 
 %\begin{acknowledgements}
@@ -1592,25 +1394,6 @@ $\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost e
 % ============================================================
 % APPENDICES
 % ============================================================
-\appendix
-
-\section{Proof Details}
-\label{app:proofs}
-%
-% - Full proofs of Theorems 1-5 (proof sketches in Section 4 reference here).
-% - Derivation of sprint transition equations from first principles.
-% - Derivation of D* fixed-point (Theorem 4) and closed-form expression.
-% - Proof that CI/CD latency buffer variance is bounded (Theorem 5).
-
-\section{Parameter Tables}
-\label{app:params}
-%
-% - Complete listing of all ~74 model parameters.
-% - For each: symbol, description, distribution family, default parameters,
-%   scenario-specific overrides (default / high-load / low-budget),
-%   data source / justification.
-% - Separate sub-table for team-composition control variables (N, M, A, R)
-%   with sweep ranges used in experiments.
 
 
 \bibliographystyle{spbasic}      % basic style, author-year citations
