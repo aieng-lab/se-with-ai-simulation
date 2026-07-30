@@ -4,9 +4,22 @@
 #
 # 243 scenarios (5 orthogonal parameter groups x 3 tiers) are each solved twice, once
 # with uniform random and once with evolutionary search, giving 486 searches of 10,000
-# candidate evaluations each.  Jobs are independent, so they run in parallel; the
-# simulator itself is single-threaded, so throughput scales with $JOBS up to the core
-# count.  Expect roughly 300 core-hours in total (~21 h wall-clock on 14 workers).
+# candidate evaluations each.  Jobs are independent, so they run in parallel and the
+# simulator itself is single-threaded — but throughput does NOT scale to the core count.
+# Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
+#
+#     JOBS   throughput   speedup   wall-clock per search
+#        1    5.7 cand/s     1.0x      0.49 h
+#        2   10.2 cand/s     1.8x      0.54 h
+#        4   13.3 cand/s     2.4x      0.83 h
+#        6   14.5 cand/s     2.6x      1.12 h
+#        8   13.3 cand/s     2.3x      1.66 h
+#       14   13.7 cand/s     2.5x      2.81 h
+#
+# Throughput is flat from 4 workers on, so raising $JOBS beyond that does not finish the
+# campaign any sooner — it only stretches each individual search (and since a search
+# writes nothing until it completes, that is lost work if the run is interrupted).
+# Hence the default of 4.  Expect roughly 250 core-hours in total.
 #
 # Prerequisite:  .venv/bin/python scripts/generate_search_configs.py
 #
@@ -24,7 +37,7 @@
 
 set -euo pipefail
 
-usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '3,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
 
 # ---------------------------------------------------------------------------
@@ -39,7 +52,7 @@ STRATEGIES=${STRATEGIES:-"random evolutionary"}
 SAMPLES=${SAMPLES:-frontier}
 START_STATE=${START_STATE:-config/startstate_default.json}
 PROGRESS_EVERY=${PROGRESS_EVERY:-500}
-JOBS=${JOBS:-$(( $(nproc) > 2 ? $(nproc) - 2 : 1 ))}
+JOBS=${JOBS:-4}
 FILTER=${FILTER:-'*'}
 LIMIT=${LIMIT:-0}
 FORCE=${FORCE:-0}
