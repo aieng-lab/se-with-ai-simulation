@@ -18,7 +18,15 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import AGENT_ROLE_COUNT, SearchConfiguration, SimulationHorizon, TeamConfiguration
+from .config import (
+    AGENT_ROLE_COUNT,
+    BACKGROUND_ROLE_INDICES,
+    SUPERVISED_ROLE_INDICES,
+    SearchConfiguration,
+    SimulationHorizon,
+    TeamConfiguration,
+    supervised_agent_count,
+)
 from .feasibility import check_feasibility
 from .pareto import aggregate_config_result, pareto_frontier
 from .results import save_result
@@ -29,6 +37,17 @@ from .state import SystemState
 # ---------------------------------------------------------------------------
 # Composition sampling
 # ---------------------------------------------------------------------------
+
+#: Success probability of the geometric draw used for the two background detection
+#: services (paper §3.11).  Support {0, 1, 2, ...} with mean 1.5: unbounded, as the
+#: model imposes no cap on them, but concentrated on the small counts that the token
+#: cost makes plausible.  This is a sampling choice, not a model constraint.
+P_BG_GEOMETRIC = 0.4
+
+_QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
+    i for i in SUPERVISED_ROLE_INDICES if i >= 2
+)   # QA phase pins roles 1-2 (indices 0-1) to zero
+
 
 def _sample_composition(total: int, n_roles: int, rng: np.random.Generator) -> tuple[int, ...]:
     """Uniformly sample a non-negative integer composition of `total` into `n_roles` parts.
@@ -42,33 +61,88 @@ def _sample_composition(total: int, n_roles: int, rng: np.random.Generator) -> t
     return tuple(int(x) for x in np.diff(boundaries))
 
 
-def _sample_composition_with_impl(
-    total: int, n_roles: int, rng: np.random.Generator
+def _sample_background_count(rng: np.random.Generator) -> int:
+    """Draw one background-service count from a geometric distribution on {0, 1, ...}."""
+    return int(rng.geometric(P_BG_GEOMETRIC)) - 1
+
+
+def _assemble_composition(
+    supervised: dict[int, int], rng: np.random.Generator
 ) -> tuple[int, ...]:
-    """Sample a composition guaranteeing a_1 (Feature Implementation, index 0) >= 1."""
+    """Build a full 8-role vector from supervised counts plus fresh background draws."""
+    A = [0] * AGENT_ROLE_COUNT
+    for idx, count in supervised.items():
+        A[idx] = count
+    for idx in BACKGROUND_ROLE_INDICES:
+        A[idx] = _sample_background_count(rng)
+    return tuple(A)
+
+
+def _sample_composition_with_impl(total: int, rng: np.random.Generator) -> tuple[int, ...]:
+    """Sample a dev composition spending `total` on supervised roles, with a_1 >= 1.
+
+    `total` is the supervised budget (bounded by N*M); the two background services
+    are drawn separately and are not part of it.
+    """
     if total < 1:
         raise ValueError(f"total must be >= 1, got {total}")
-    # Reserve 1 for impl, distribute the rest freely
-    base = _sample_composition(total - 1, n_roles, rng)
-    A_dev = list(base)
-    A_dev[0] += 1   # role 1 = index 0 (Feature Implementation Agent)
-    return tuple(A_dev)
+    # Reserve 1 for impl, distribute the rest freely across the supervised roles
+    base = _sample_composition(total - 1, len(SUPERVISED_ROLE_INDICES), rng)
+    supervised = dict(zip(SUPERVISED_ROLE_INDICES, base))
+    supervised[0] += 1   # role 1 = index 0 (Feature Implementation Agent)
+    return _assemble_composition(supervised, rng)
 
 
-def _sample_qa_composition(
-    total: int, n_roles: int, rng: np.random.Generator
-) -> tuple[int, ...]:
-    """Sample a QA-phase composition: a_1=a_2=0; distribute total across roles 3–8."""
-    # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture proposals
-    # during feature freeze); Bug Fixing and other roles (indices 2-7) may be non-zero.
-    qa_roles = n_roles - 2
-    partial = _sample_composition(total, qa_roles, rng)
-    return (0, 0) + partial
+def _sample_qa_composition(total: int, rng: np.random.Generator) -> tuple[int, ...]:
+    """Sample a QA-phase composition: a_1=a_2=0; `total` spread over supervised QA roles."""
+    # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture
+    # proposals during feature freeze).
+    base = _sample_composition(total, len(_QA_SUPERVISED_INDICES), rng)
+    return _assemble_composition(dict(zip(_QA_SUPERVISED_INDICES, base)), rng)
 
 
 # ---------------------------------------------------------------------------
 # Mutation operator (for evolutionary search)
 # ---------------------------------------------------------------------------
+
+def _pick(indices: tuple[int, ...], rng: np.random.Generator) -> int:
+    """Uniformly pick one role index from `indices`."""
+    return indices[int(rng.integers(len(indices)))]
+
+
+def _mutate_composition(
+    A: list[int],
+    mutable: tuple[int, ...],
+    budget: int,
+    rng: np.random.Generator,
+    min_impl: bool,
+) -> None:
+    """Apply one elementary mutation to `A` in place.
+
+    `mutable` are the supervised role indices that may be changed; they share the
+    span-of-control `budget`.  The background services are mutated by a separate
+    +/-1 operation and are not subject to the budget.  With `min_impl`, index 0
+    (Feature Implementation) is protected from being drained to zero.
+    """
+    op = int(rng.integers(4))   # 0=move, 1=add, 2=remove, 3=background +/-1
+    if op == 3:
+        idx = _pick(BACKGROUND_ROLE_INDICES, rng)
+        delta = int(rng.choice([-1, 1]))
+        A[idx] = max(0, A[idx] + delta)
+        return
+
+    floor = 1 if min_impl else 0
+    donors = [i for i in mutable if A[i] > 0 and (i != 0 or A[i] > floor)]
+    current_sum = supervised_agent_count(tuple(A))
+    if op == 1 and current_sum < budget:
+        A[_pick(mutable, rng)] += 1
+    elif op == 2 and donors:
+        A[int(rng.choice(donors))] -= 1
+    elif donors:
+        src = int(rng.choice(donors))
+        A[src] -= 1
+        A[_pick(mutable, rng)] += 1
+
 
 def _mutate(
     config: TeamConfiguration,
@@ -105,50 +179,23 @@ def _mutate(
             # Decreasing M is skipped — it cannot change behavior, only tighten the budget.
             if M < search_cfg.M_max:
                 M += 1
-                A_dev[int(rng.integers(AGENT_ROLE_COUNT))] += 1
+                # The extra capacity is a supervision slot, so it must go to a
+                # supervised role — the background services do not use it.
+                A_dev[_pick(SUPERVISED_ROLE_INDICES, rng)] += 1
 
         elif mutation_type == 2:
             # Mutate F_freeze: ±1 clamped to [0, R-1]
             F_freeze = int(np.clip(F_freeze + int(rng.choice([-1, 1])), 0, config.R - 1))
 
         elif mutation_type == 3:
-            # Mutate A_dev: 1-3 add/remove/move ops, maintaining sum(A_dev) <= N*M and A_dev[0] >= 1
-            op = int(rng.integers(3))   # 0=move, 1=add, 2=remove
-            current_sum = sum(A_dev)
-            if op == 1 and current_sum < budget:
-                A_dev[int(rng.integers(AGENT_ROLE_COUNT))] += 1
-            elif op == 2 and current_sum > 1:
-                donors = [i for i in range(AGENT_ROLE_COUNT)
-                            if A_dev[i] > 0 and (i != 1 or A_dev[i] > 1)]
-                if donors:
-                    A_dev[int(rng.choice(donors))] -= 1
-            else:
-                donors = [i for i in range(AGENT_ROLE_COUNT)
-                            if A_dev[i] > 0 and (i != 1 or A_dev[i] > 1)]
-                if donors:
-                    src = int(rng.choice(donors))
-                    dst = int(rng.integers(AGENT_ROLE_COUNT))
-                    A_dev[src] -= 1
-                    A_dev[dst] += 1
+            # Mutate A_dev: exactly one elementary op, maintaining
+            # supervised_agent_count(A_dev) <= N*M and A_dev[0] >= 1
+            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, budget, rng, min_impl=True)
 
         else:
-            # Mutate A_qa: 1-2 ops restricted to QA roles (indices 2-7; 0-1 stay at 0)
-            _QA_MUTABLE = list(range(2, AGENT_ROLE_COUNT))
-            op = int(rng.integers(3))   # 0=move, 1=add, 2=remove
-            current_sum = sum(A_qa)
-            if op == 1 and current_sum < budget:
-                A_qa[_QA_MUTABLE[int(rng.integers(len(_QA_MUTABLE)))]] += 1
-            elif op == 2 and current_sum > 0:
-                donors = [i for i in _QA_MUTABLE if A_qa[i] > 0]
-                if donors:
-                    A_qa[int(rng.choice(donors))] -= 1
-            else:
-                donors = [i for i in _QA_MUTABLE if A_qa[i] > 0]
-                if donors:
-                    src = int(rng.choice(donors))
-                    dst = _QA_MUTABLE[int(rng.integers(len(_QA_MUTABLE)))]
-                    A_qa[src] -= 1
-                    A_qa[dst] += 1
+            # Mutate A_qa: exactly one elementary op restricted to the supervised QA
+            # roles (indices 0-1 stay at 0) plus the background services
+            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, budget, rng, min_impl=False)
 
         try:
             child = TeamConfiguration(N=N, M=M, A_dev=tuple(A_dev), R=config.R,
@@ -177,13 +224,15 @@ def _random_configs(
         M = int(rng.integers(1, search_cfg.M_max + 1))
         R = int(rng.choice(search_cfg.R_values))
         budget = N * M
-        # Sample actual agent totals uniformly in [1, budget] (dev) and [0, budget] (QA)
+        # Sample supervised agent totals uniformly in [1, budget] (dev) and
+        # [0, budget] (QA); the background services are drawn separately inside
+        # the samplers and are not bounded by the budget.
         B_dev = int(rng.integers(1, budget + 1))
         B_qa  = int(rng.integers(0, budget + 1))
-        A_dev = _sample_composition_with_impl(B_dev, AGENT_ROLE_COUNT, rng)
+        A_dev = _sample_composition_with_impl(B_dev, rng)
         # Sample F_freeze, clamped so it respects [0, R-1]
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1] or [1]))
-        A_qa = _sample_qa_composition(B_qa, AGENT_ROLE_COUNT, rng)
+        A_qa = _sample_qa_composition(B_qa, rng)
         try:
             cfg = TeamConfiguration(N=N, M=M, A_dev=A_dev, R=R, F_freeze=F_freeze, A_qa=A_qa)
             configs.append(cfg)

@@ -22,12 +22,26 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from .config import TeamConfiguration
+from .config import TeamConfiguration, supervised_agent_count
 from .parameters import ScenarioParameters
 from .state import SystemState
 
 if TYPE_CHECKING:
     from numpy.random import Generator
+
+
+def _volume_factor(impl: int, a: int, alpha_size: float) -> float:
+    """Log-linear detection degradation in the change volume per detection agent.
+
+    The `a` deployed agents of a background detection service share the sprint's
+    change volume, so each inspects impl/a features.  Returns 0.0 when the
+    service is not deployed, which gates the corresponding detection stage.
+    The reference volume is a single feature, so the result is bounded in [0, 1]
+    and the product with a detection probability needs no outer clamp.
+    """
+    if a <= 0:
+        return 0.0
+    return max(0.0, 1.0 - alpha_size * math.log(impl / a + 1.0))
 
 
 def step_sprint(
@@ -47,7 +61,9 @@ def step_sprint(
     # ------------------------------------------------------------------
     is_frozen = (t % config.R) >= (config.R - config.F_freeze)
     A_active = config.active_A(is_frozen)
-    n_agents = sum(A_active)   # actual deployed agents (may be < N*M)
+    # Only the supervised roles consume human oversight; the background detection
+    # services (k=5,6) are exempt (see config.SUPERVISED_ROLE_INDICES).
+    n_supervised = supervised_agent_count(A_active)   # may be < N*M
 
     # ------------------------------------------------------------------
     # Degradation functions at current debt D(t)
@@ -70,9 +86,10 @@ def step_sprint(
     H_net = params.H_capacity - params.c_comm * (config.N - 1)
     doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
     H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
-    # Monitoring overhead is proportional to actual agents per developer.
-    # Feasibility guarantees H_net - agents_per_dev * H_mon_eff >= 0.
-    agents_per_dev = n_agents / config.N
+    # Monitoring overhead is proportional to actual supervised agents per developer.
+    # The feasibility gate only guarantees this at doc_cov = 1, so H_after_mon can
+    # still be negative early in a run.
+    agents_per_dev = n_supervised / config.N
     H_after_mon = H_net - agents_per_dev * H_mon_eff
 
     # Architecture reviews served this sprint (eq. rev_done, H_after_rev)
@@ -140,20 +157,23 @@ def step_sprint(
     surv_maj_t = bugs_maj - test_det_maj
     surv_sec_t = bugs_sec - test_det_sec
 
-    # Stage 2 — Code Review (acts on all survivors)
-    size_factor = max(
-        0.0,
-        1.0 - params.alpha_size * math.log((impl + 1) / params.baseline_size),
-    )
-    d_CR_eff = min(1.0, params.d_CR * delta_D * size_factor)
+    # Stage 2 — Code Review (acts on all survivors).  Zero review agents means
+    # no code review takes place; more agents share the change volume and thus
+    # each degrade less.
+    a_CR = A_active[4]   # Code Review Agent (k=5, index 4) — background service
+    d_CR_eff = params.d_CR * delta_D * _volume_factor(impl, a_CR, params.alpha_size)
     CR_det_min = int(rng.binomial(surv_min_t, d_CR_eff)) if surv_min_t > 0 else 0
     CR_det_maj = int(rng.binomial(surv_maj_t, d_CR_eff)) if surv_maj_t > 0 else 0
     CR_det_sec = int(rng.binomial(surv_sec_t, d_CR_eff)) if surv_sec_t > 0 else 0
 
     surv_sec_cr = surv_sec_t - CR_det_sec
 
-    # Stage 3 — Security Audit (acts only on security bugs that survived test + CR)
-    SA_det_sec = int(rng.binomial(surv_sec_cr, params.d_SA)) if surv_sec_cr > 0 else 0
+    # Stage 3 — Security Audit (acts only on security bugs that survived test + CR).
+    # Same volume split as code review, but deliberately no delta_D factor: the
+    # audit is not sensitive to technical debt.
+    a_SA = A_active[5]   # Security Audit Agent (k=6, index 5) — background service
+    d_SA_eff = params.d_SA * _volume_factor(impl, a_SA, params.alpha_size)
+    SA_det_sec = int(rng.binomial(surv_sec_cr, d_SA_eff)) if surv_sec_cr > 0 else 0
 
     state.B_kno_min += test_det_min + CR_det_min
     state.B_kno_maj += test_det_maj + CR_det_maj
@@ -179,7 +199,9 @@ def step_sprint(
     # ------------------------------------------------------------------
     # Escalation queue update
     # ------------------------------------------------------------------
-    esc_new = int(rng.poisson(n_agents * params.rho_esc))
+    # Background detection services file findings rather than escalating to humans,
+    # so only the supervised agents generate escalations.
+    esc_new = int(rng.poisson(n_supervised * params.rho_esc))
     state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
 
     # ------------------------------------------------------------------

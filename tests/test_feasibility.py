@@ -22,10 +22,22 @@ class TestFeasiblePath:
 
 class TestStep1SpanControl:
     def test_M_too_large_infeasible(self, base_params):
-        # Gamma_doc=0 so doc_cov assumption is irrelevant; 6 agents * 2h = 12h > H_net≈9h
-        cfg = _cfg({1: 4, 3: 2, 4: 2, 5: 2, 7: 2}, N=2, M=6)
+        # Gamma_doc=0 so doc_cov assumption is irrelevant; 12 supervised agents over
+        # N=2 developers cost 6 * 2h = 12h of monitoring each > H_net ≈ 9h
+        cfg = _cfg({1: 4, 3: 3, 4: 3, 7: 2}, N=2, M=6)
         from dataclasses import replace
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
         report = check_feasibility(cfg, p)
         assert not report.feasible
         assert report.failed_step == 1
+
+    def test_background_services_never_cause_infeasibility(self, base_params):
+        """Piling on review/audit agents must not exhaust the monitoring budget."""
+        from dataclasses import replace
+        p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
+        # 4 supervised agents over N=2 developers = 2 * 2h = 4h < H_net ≈ 9h
+        lean = _cfg({1: 2, 3: 1, 7: 1}, N=2, M=6)
+        assert check_feasibility(lean, p).feasible
+        # Same supervised load, but 40 background services on top
+        loaded = _cfg({1: 2, 3: 1, 7: 1, 5: 20, 6: 20}, N=2, M=6)
+        assert check_feasibility(loaded, p).feasible

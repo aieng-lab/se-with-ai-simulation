@@ -19,11 +19,13 @@ def _make_A(*pairs) -> tuple[int, ...]:
 
 @pytest.fixture
 def base_config():
-    """N=2, M=3, R=4; a_1=2 impl, a_3=1 fix, a_4=1 refactor, a_5=1 review, a_7=1 test."""
+    """N=2, M=3, R=4; a_1=2 impl, a_3=1 fix, a_4=1 refactor, a_7=1 test (4 supervised
+    of N*M=6), plus one Code Review and one Security Audit background service so both
+    detection stages are exercised."""
     return TeamConfiguration(
         N=2, M=3,
-        A_dev=_make_A((1, 2), (3, 1), (4, 1), (5, 1), (7, 1)),
-        A_qa=_make_A((3, 2), (4, 1), (5, 1), (7, 2)),
+        A_dev=_make_A((1, 2), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1)),
+        A_qa=_make_A((3, 2), (4, 1), (5, 1), (6, 1), (7, 2)),
         R=4,
     )
 
@@ -41,7 +43,7 @@ def base_params():
         r_bugs=0.02, r_bugs_human=0.8,
         theta_maj=0.18, theta_sec=0.10,
         d_CR=0.7, d_SA=0.85, d_test=0.6, c_test_ceil=2.0,
-        alpha_size=0.1, baseline_size=2.0,
+        alpha_size=0.1,
         delta_min=0.5, delta_exp=1.5,
         delta_impl=0.01, delta_fix=0.005,
         Gamma_doc=0.5,

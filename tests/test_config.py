@@ -2,7 +2,12 @@
 
 import pytest
 
-from src.config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
+from src.config import (
+    AGENT_ROLE_COUNT,
+    SimulationHorizon,
+    TeamConfiguration,
+    supervised_agent_count,
+)
 
 
 def _A(*pairs) -> tuple[int, ...]:
@@ -12,8 +17,9 @@ def _A(*pairs) -> tuple[int, ...]:
     return tuple(A)
 
 
-_VALID_A = _A((1, 2), (3, 1), (4, 1), (5, 1), (7, 1))  # N=2, M=3 → sum=6
-_VALID_A_QA = _A((3, 1), (4, 1), (5, 1), (7, 2))       # a_qa,1=a_qa,2=0, sum=5
+# Roles 5 and 6 are background services and do not count against N*M.
+_VALID_A = _A((1, 2), (3, 1), (4, 1), (5, 1), (7, 1))  # N=2, M=3 → 5 supervised
+_VALID_A_QA = _A((3, 1), (4, 1), (5, 1), (7, 2))       # a_qa,1=a_qa,2=0, 4 supervised
 
 
 class TestTeamConfigurationValidation:
@@ -46,15 +52,48 @@ class TestTeamConfigurationValidation:
 
     def test_A_sum_exceeds_NM_raises(self):
         A = list(_VALID_A)
-        A[2] += 1  # sum(A_dev) = 7 > N*M = 6
-        with pytest.raises(ValueError):
+        A[2] += 2  # supervised count = 7 > N*M = 6
+        with pytest.raises(ValueError, match="supervised agents in A_dev"):
             TeamConfiguration(N=2, M=3, A_dev=tuple(A), R=4)
+
+    def test_A_qa_sum_exceeds_NM_raises(self):
+        A_qa = list(_VALID_A_QA)
+        A_qa[2] += 3  # supervised count = 7 > N*M = 6
+        with pytest.raises(ValueError, match="supervised agents in A_qa"):
+            TeamConfiguration(N=2, M=3, A_dev=_VALID_A, A_qa=tuple(A_qa), R=4)
 
     def test_A_sum_less_than_NM_valid(self):
         # Fewer agents than budget (sum=4 < N*M=6) is now allowed
         A = _A((1, 2), (3, 1), (7, 1))  # sum=4
         cfg = TeamConfiguration(N=2, M=3, A_dev=A, A_qa=_A((3, 1), (7, 1)), R=4)
         assert sum(cfg.A_dev) == 4
+
+
+class TestBackgroundServiceBudget:
+    """Roles 5 and 6 need no supervision, so they are exempt from the N*M bound."""
+
+    def test_background_agents_do_not_count_toward_NM(self):
+        # 6 supervised agents exactly fill N*M = 6, plus background services on top
+        A = _A((1, 2), (3, 2), (4, 1), (7, 1), (5, 3), (6, 2))
+        cfg = TeamConfiguration(N=2, M=3, A_dev=A, A_qa=_A((3, 1), (5, 1)), R=4)
+        assert supervised_agent_count(cfg.A_dev) == 6
+        assert sum(cfg.A_dev) == 11
+
+    def test_large_background_count_accepted(self):
+        A = _A((1, 1), (5, 50), (6, 25))
+        cfg = TeamConfiguration(N=1, M=1, A_dev=A, A_qa=_A((5, 7)), R=2)
+        assert cfg.agent_count_dev(5) == 50
+        assert cfg.agent_count_dev(6) == 25
+
+    def test_n_supervised_selects_active_composition(self):
+        cfg = TeamConfiguration(
+            N=2, M=3,
+            A_dev=_A((1, 2), (3, 1), (5, 4)),
+            A_qa=_A((3, 1), (6, 4)),
+            R=4, F_freeze=1,
+        )
+        assert cfg.n_supervised(is_frozen=False) == 3
+        assert cfg.n_supervised(is_frozen=True) == 1
 
     def test_no_impl_agent_raises(self):
         A = list(_VALID_A)

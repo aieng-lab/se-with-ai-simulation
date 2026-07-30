@@ -50,8 +50,7 @@ class ScenarioParameters:
     d_SA: float                      # Security audit detection rate
     d_test: float                    # Test suite maximum detection rate
     c_test_ceil: float               # Test coverage ceiling
-    alpha_size: float                # Code review size degradation rate
-    baseline_size: float             # Baseline PR size (features/sprint)
+    alpha_size: float                # Detection degradation slope in change volume per agent
 
     # --- Debt amplifier ---
     delta_min: float                 # Debt amplifier floor at D_eff=1 (applied to throughput, review, escalation)

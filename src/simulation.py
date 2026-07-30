@@ -171,7 +171,8 @@ def _run_replication(
     )
     dev_sprint_count = settings.T - qa_sprint_count
     # c_token is a cost per unit of role-specific throughput; Code Review and
-    # Security Audit (indices 4, 5) have no throughput rate and keep rate 1.
+    # Security Audit (indices 4, 5) are background services with no discrete unit
+    # of output, so they keep rate 1 — a flat per-sprint subscription cost.
     r_fix = params.r_fix_minor + params.r_fix_major + params.r_fix_sec
     agent_rates = (
         params.r_F, params.r_arch_chg, r_fix, params.r_refactor,

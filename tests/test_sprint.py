@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from src.config import TeamConfiguration
-from src.sprint import step_sprint
+from src.sprint import _volume_factor, step_sprint
 from src.state import SystemState
 
 
@@ -142,7 +142,7 @@ class TestArchChangeQueue:
         """Return a config with a2 arch agents; reduces impl agents to stay within N*M."""
         A = list(base_config.A_dev)
         A[1] = a2
-        A[0] = max(1, A[0] - a2)   # keep a_1 >= 1 and sum(A_dev) <= N*M
+        A[0] = max(1, A[0] - a2)   # keep a_1 >= 1 and the supervised count <= N*M
         return dataclasses.replace(base_config, A_dev=tuple(A))
 
     def test_Q_arch_grows_without_arch_agents(self, base_config, base_params):
@@ -215,3 +215,124 @@ class TestArchChangeQueue:
             step_sprint(t, state, base_config, params, rng)
             assert state.Q_arch >= 0, f"Q_arch={state.Q_arch} at t={t}"
             assert state.Q_arch_impl >= 0, f"Q_arch_impl={state.Q_arch_impl} at t={t}"
+
+
+def _A(**by_role) -> tuple[int, ...]:
+    """Build an 8-element composition from role_k=count keyword args (e.g. k1=2)."""
+    A = [0] * 8
+    for key, count in by_role.items():
+        A[int(key[1:]) - 1] = count
+    return tuple(A)
+
+
+class TestVolumeFactor:
+    """The log-linear degradation in change volume per detection agent."""
+
+    def test_zero_agents_gates_the_stage(self):
+        assert _volume_factor(impl=10, a=0, alpha_size=0.1) == 0.0
+
+    def test_no_change_volume_means_no_degradation(self):
+        assert _volume_factor(impl=0, a=1, alpha_size=0.1) == pytest.approx(1.0)
+
+    def test_increasing_in_agent_count(self):
+        factors = [_volume_factor(impl=40, a=a, alpha_size=0.1) for a in (1, 2, 4, 8)]
+        assert factors == sorted(factors)
+        assert factors[0] < factors[-1]
+
+    def test_decreasing_in_change_volume(self):
+        factors = [_volume_factor(impl=impl, a=2, alpha_size=0.1) for impl in (0, 5, 50, 500)]
+        assert factors == sorted(factors, reverse=True)
+
+    def test_bounded_in_unit_interval(self):
+        for impl in (0, 1, 10, 1000, 10**6):
+            for a in (1, 3, 17):
+                for alpha in (0.0, 0.1, 2.0):
+                    f = _volume_factor(impl=impl, a=a, alpha_size=alpha)
+                    assert 0.0 <= f <= 1.0
+
+    def test_zero_alpha_removes_the_dependency(self):
+        assert _volume_factor(impl=1000, a=1, alpha_size=0.0) == pytest.approx(1.0)
+
+
+class TestDetectionGating:
+    """Code Review and Security Audit only detect when actually deployed."""
+
+    def _no_fix_params(self, base_params, **overrides):
+        """High injection rate, nothing ever gets fixed, so B_kno reflects detection only."""
+        return dataclasses.replace(
+            base_params, r_bugs=2.0,
+            r_fix_minor=0.0, r_fix_major=0.0, r_fix_sec=0.0, f_fix=0.0,
+            **overrides,
+        )
+
+    def _cfg(self, A_dev):
+        # F_freeze=0 keeps every sprint in the development phase; R=4 with 3 sprints
+        # run means no release fires, so nothing is flushed out of B_hid/B_kno.
+        return TeamConfiguration(N=2, M=3, A_dev=A_dev, A_qa=A_dev, R=4, F_freeze=0)
+
+    def test_no_detection_agents_leaves_all_bugs_hidden(self, base_params):
+        """a_5 = a_6 = a_7 = 0: bugs are injected but nothing is ever detected."""
+        state = _run_sprints(3, self._cfg(_A(k1=2)), self._no_fix_params(base_params),
+                             np.random.default_rng(20), initial_backlog=100)
+        assert state.B_hid > 0, "no bugs were injected — test is vacuous"
+        assert state.B_kno == 0
+
+    def test_code_review_requires_a_review_agent(self, base_params):
+        """With tests and audit disabled, detection happens iff a_5 >= 1."""
+        params = self._no_fix_params(base_params, d_test=0.0)
+        without = _run_sprints(3, self._cfg(_A(k1=2)), params,
+                               np.random.default_rng(21), initial_backlog=100)
+        with_cr = _run_sprints(3, self._cfg(_A(k1=2, k5=1)), params,
+                               np.random.default_rng(21), initial_backlog=100)
+        assert without.B_kno == 0
+        assert with_cr.B_kno > 0
+
+    def test_security_audit_requires_an_audit_agent(self, base_params):
+        """With tests and review disabled, security bugs are found iff a_6 >= 1."""
+        params = self._no_fix_params(base_params, d_test=0.0, theta_sec=0.9, theta_maj=0.05)
+        without = _run_sprints(3, self._cfg(_A(k1=2)), params,
+                               np.random.default_rng(22), initial_backlog=100)
+        with_sa = _run_sprints(3, self._cfg(_A(k1=2, k6=1)), params,
+                               np.random.default_rng(22), initial_backlog=100)
+        assert without.B_kno_sec == 0
+        assert with_sa.B_kno_sec > 0
+
+    def test_more_review_agents_detect_more(self, base_params):
+        """Sharing the change volume across more review agents raises detection."""
+        params = self._no_fix_params(base_params, d_test=0.0, alpha_size=0.3)
+        few = _run_sprints(3, self._cfg(_A(k1=2, k5=1)), params,
+                           np.random.default_rng(23), initial_backlog=100)
+        many = _run_sprints(3, self._cfg(_A(k1=2, k5=16)), params,
+                            np.random.default_rng(23), initial_backlog=100)
+        assert many.B_kno > few.B_kno
+
+
+class TestBackgroundServicesSkipOversight:
+    """Background services consume no monitoring capacity and raise no escalations."""
+
+    def test_extra_background_agents_do_not_change_the_run(self, base_config, base_params):
+        # alpha_size=0 makes detection independent of the service counts, so any
+        # difference between the two runs could only come from human oversight.
+        params = dataclasses.replace(base_params, alpha_size=0.0, rho_esc=0.5)
+        lean = dataclasses.replace(
+            base_config, A_dev=_A(k1=2, k3=1, k4=1, k5=1, k6=1, k7=1), F_freeze=0,
+        )
+        loaded = dataclasses.replace(
+            base_config, A_dev=_A(k1=2, k3=1, k4=1, k5=9, k6=9, k7=1), F_freeze=0,
+        )
+        a = _run_sprints(8, lean, params, np.random.default_rng(24), initial_backlog=100)
+        b = _run_sprints(8, loaded, params, np.random.default_rng(24), initial_backlog=100)
+        assert dataclasses.asdict(a) == dataclasses.asdict(b)
+
+    def test_supervised_agents_do_change_the_run(self, base_config, base_params):
+        """Guard against the previous test passing for the wrong reason."""
+        params = dataclasses.replace(base_params, alpha_size=0.0, rho_esc=0.5)
+        lean = dataclasses.replace(
+            base_config, A_dev=_A(k1=2, k3=1, k4=1, k5=1, k6=1, k7=1), F_freeze=0,
+        )
+        loaded = dataclasses.replace(
+            base_config, A_dev=_A(k1=2, k3=1, k4=1, k5=1, k6=1, k7=1, k8=1), F_freeze=0,
+        )
+        a = _run_sprints(8, lean, params, np.random.default_rng(24), initial_backlog=100)
+        b = _run_sprints(8, loaded, params, np.random.default_rng(24), initial_backlog=100)
+        assert dataclasses.asdict(a) != dataclasses.asdict(b)

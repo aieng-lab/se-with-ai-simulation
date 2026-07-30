@@ -18,16 +18,34 @@ AGENT_ROLE_NAMES: tuple[str, ...] = (
     "Developer Documentation Agent",          # k=8
 )
 
+# Roles are split into two tiers with respect to human oversight (paper §3.3).
+# Supervised roles consume monitoring capacity and are bounded by the span of
+# control N*M.  The two background detection services (Code Review, Security
+# Audit) are triggered automatically by the CI infrastructure and report their
+# findings asynchronously, so they need no human supervision and are therefore
+# neither counted against N*M nor charged monitoring overhead.
+SUPERVISED_ROLE_INDICES: tuple[int, ...] = (0, 1, 2, 3, 6, 7)   # k = 1,2,3,4,7,8
+BACKGROUND_ROLE_INDICES: tuple[int, ...] = (4, 5)               # k = 5,6
+
+
+def supervised_agent_count(A: tuple[int, ...]) -> int:
+    """Number of agents in `A` that consume human supervision (n_sup, paper §3.3)."""
+    return sum(A[i] for i in SUPERVISED_ROLE_INDICES)
+
 
 @dataclass(frozen=True, slots=True)
 class TeamConfiguration:
     """Configuration tuple (N, M, A_dev, R, F_freeze, A_qa) fixed across replications.
 
-    A_dev = (a_1, ..., a_8) — development-phase composition (sum <= N*M, a_1 >= 1).
-    A_qa  = (a_1, ..., a_8) — QA/stabilisation-phase composition (sum <= N*M).
+    A_dev = (a_1, ..., a_8) — development-phase composition, a_1 >= 1.
+    A_qa  = (a_1, ..., a_8) — QA/stabilisation-phase composition.
             Defaults to A_dev when omitted.  Expected to have a_1=a_2=0 so the
             deployed agents are redeployed to bug-fixing, testing, and
             refactoring during the feature-freeze window.
+    The span-of-control bound sum <= N*M applies to the *supervised* roles only
+    (see SUPERVISED_ROLE_INDICES); the two background detection services
+    (a_5, a_6) are unbounded, since their only brake is their token cost
+    weighed against concave detection returns.
     F_freeze — number of sprints at the end of each release cycle in which the
             team uses A_qa instead of A_dev.  Sprints satisfying
             (t % R) >= (R - F_freeze) are "frozen".  Range: [0, R-1].
@@ -58,9 +76,10 @@ class TeamConfiguration:
             raise ValueError(f"A_dev must have length {AGENT_ROLE_COUNT}, got {len(self.A_dev)}")
         if any(a < 0 for a in self.A_dev):
             raise ValueError(f"A_dev entries must be >= 0, got {self.A_dev}")
-        if sum(self.A_dev) > self.N * self.M:
+        if supervised_agent_count(self.A_dev) > self.N * self.M:
             raise ValueError(
-                f"sum(A_dev) must be <= N*M = {self.N * self.M}, got {sum(self.A_dev)}"
+                f"supervised agents in A_dev must be <= N*M = {self.N * self.M}, "
+                f"got {supervised_agent_count(self.A_dev)}"
             )
         if self.A_dev[0] < 1:
             raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
@@ -78,9 +97,10 @@ class TeamConfiguration:
             )
         if any(a < 0 for a in self.A_qa):  # type: ignore[union-attr]
             raise ValueError(f"A_qa entries must be >= 0, got {self.A_qa}")
-        if sum(self.A_qa) > self.N * self.M:  # type: ignore[union-attr]
+        if supervised_agent_count(self.A_qa) > self.N * self.M:  # type: ignore[arg-type]
             raise ValueError(
-                f"sum(A_qa) must be <= N*M = {self.N * self.M}, got {sum(self.A_qa)}"  # type: ignore[union-attr]
+                f"supervised agents in A_qa must be <= N*M = {self.N * self.M}, "
+                f"got {supervised_agent_count(self.A_qa)}"  # type: ignore[arg-type]
             )
         if self.F_freeze > 0:
             if self.A_qa[0] != 0:  # type: ignore[index]
@@ -107,6 +127,10 @@ class TeamConfiguration:
     def active_A(self, is_frozen: bool) -> tuple[int, ...]:
         """Return A_qa during freeze sprints, A_dev otherwise."""
         return self.A_qa if is_frozen else self.A_dev  # type: ignore[return-value]
+
+    def n_supervised(self, is_frozen: bool) -> int:
+        """Supervised agent count n_sup of the composition active in this sprint."""
+        return supervised_agent_count(self.active_A(is_frozen))
 
 
 @dataclass(frozen=True, slots=True)

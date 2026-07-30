@@ -32,8 +32,7 @@
     "d_SA": 0.85,
     "d_test": 0.6,
     "c_test_ceil": 2.0,
-    "alpha_size": 0.1,
-    "baseline_size": 2.0
+    "alpha_size": 0.1
   },
   "debt_amplifier": {
     "delta_min": 0.5,

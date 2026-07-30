@@ -1,16 +1,20 @@
 """Feasibility gating: one mean-field check applied before Monte Carlo simulation.
 
-  Step 1 — Human capacity: monitoring must not exhaust H_net; compound
-            span-of-control bound (monitoring + escalation vs. available capacity).
-            Evaluated at doc_cov = 1 (perfect documentation), giving the
-            minimum possible monitoring overhead.
+  Step 1 — Human capacity: the monitoring of the supervised agents must not
+            exhaust H_net.  Evaluated at doc_cov = 1 (perfect documentation),
+            giving the minimum possible monitoring overhead, which makes the
+            check a necessary but not a sufficient condition.
+
+No analogous bound is imposed on architecture-review or escalation time: leaving
+those queues unserved only increases the debt penalties, so implementation
+remains possible (paper §3.6, Step 1).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import TeamConfiguration
+from .config import TeamConfiguration, supervised_agent_count
 from .parameters import ScenarioParameters
 
 
@@ -30,10 +34,12 @@ def check_feasibility(
     H_mon_eff_star = params.H_monitoring_overhead * (1.0 - params.Gamma_doc)
 
     # ------------------------------------------------------------------
-    # Step 1 — Human capacity (monitoring + escalation vs. available capacity)
+    # Step 1 — Human capacity (monitoring vs. available capacity).  The two
+    # background detection services are exempt from supervision and therefore
+    # do not enter this bound.
     # ------------------------------------------------------------------
     H_net = params.H_capacity - params.c_comm * (config.N - 1)
-    actual_agents_per_dev = sum(config.A_dev) / config.N
+    actual_agents_per_dev = supervised_agent_count(config.A_dev) / config.N
 
     # Monitoring alone must not exhaust developer capacity.
     if actual_agents_per_dev * H_mon_eff_star >= H_net:

@@ -34,7 +34,12 @@ from pathlib import Path
 import numpy as np
 
 from .analysis import final_distribution, mean_trajectory
-from .config import AGENT_ROLE_NAMES, TeamConfiguration
+from .config import (
+    AGENT_ROLE_NAMES,
+    BACKGROUND_ROLE_INDICES,
+    TeamConfiguration,
+    supervised_agent_count,
+)
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .pareto import aggregate_config_result, pareto_frontier
 from .results import load_result, load_traces, save_result, save_traces
@@ -46,16 +51,19 @@ from .visualization import visualize_multi, visualize_single
 def _print_config(config: TeamConfiguration) -> None:
     print(f"Team configuration:  N={config.N}, M={config.M}, R={config.R}, "
           f"F_freeze={config.F_freeze}")
-    print(f"  Dev phase  (total agents: {sum(config.A_dev)})")
-    for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
-        count = config.agent_count_dev(k)
-        if count:
-            print(f"    role {k:>2}  {name:<48}  x{count}")
-    print(f"  QA phase   (total agents: {sum(config.A_qa)})")
-    for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
-        count = config.agent_count_qa(k)
-        if count:
-            print(f"    role {k:>2}  {name:<48}  x{count}")
+    for phase, A, getter in (
+        ("Dev phase ", config.A_dev, config.agent_count_dev),
+        ("QA phase  ", config.A_qa, config.agent_count_qa),
+    ):
+        n_sup = supervised_agent_count(A)   # type: ignore[arg-type]
+        n_bg = sum(A) - n_sup              # type: ignore[arg-type]
+        print(f"  {phase} ({n_sup} supervised of N*M={config.N * config.M}, "
+              f"{n_bg} background)")
+        for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
+            count = getter(k)
+            if count:
+                tier = "bg " if (k - 1) in BACKGROUND_ROLE_INDICES else "   "
+                print(f"    role {k:>2} {tier} {name:<48}  x{count}")
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
