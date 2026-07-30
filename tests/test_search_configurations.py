@@ -16,15 +16,21 @@ from src.config import (
     AGENT_ROLE_COUNT,
     SCENARIO_GROUPS,
     SearchConfiguration,
+    SimulationHorizon,
     TeamConfiguration,
     supervised_agent_count,
 )
+from src.io import load_scenario_params
+from src.pareto import pareto_frontier
 from src.search_configurations import (
     _mutate,
     _random_configs,
+    _run_evolutionary_search,
+    _run_random_search,
     _sample_composition_with_impl,
     _sample_qa_composition,
     background_count_max,
+    write_samples,
 )
 
 BG_MAX = 12   # matches r_arrival of config/project_medium.json
@@ -157,3 +163,120 @@ class TestMutation:
         for _ in range(300):
             parent = _mutate(parent, rng, search_cfg)
             assert parent.A_dev[0] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Search drivers: budget accounting (paper §4.2) and sample retention
+# ---------------------------------------------------------------------------
+
+# A deliberately wasteful search range: a single developer may be given up to 30
+# supervised agents, while the debt-low tier has Gamma_doc = 0, so monitoring alone
+# exhausts the 40 h capacity from 16 agents on.  Roughly half of the candidates are
+# therefore rejected by the human-capacity condition, which is what makes the budget
+# accounting of §4.2 observable.
+_WASTEFUL_TIERS = {group: "medium" for group in SCENARIO_GROUPS} | {"debt": "low"}
+
+
+@pytest.fixture
+def wasteful_cfg():
+    return SearchConfiguration(
+        scenario_paths={group: f"config/{group}_{tier}.json"
+                        for group, tier in _WASTEFUL_TIERS.items()},
+        horizon_path="config/horizon_default.json",
+        strategy="random",
+        N_values=(1,),
+        M_max=30,
+        R_values=(2, 4),
+        F_freeze_values=(0, 1),
+        n_samples=40,
+        n_samples_initial=20,
+        n_generations=3,
+        n_offspring=10,
+        seed=11,
+    )
+
+
+@pytest.fixture
+def tiny_horizon():
+    return SimulationHorizon(T=4, K=3, master_seed=1)
+
+
+@pytest.fixture
+def wasteful_params(wasteful_cfg):
+    return load_scenario_params(wasteful_cfg.scenario_paths)
+
+
+class TestSearchBudget:
+    def test_random_search_charges_every_candidate(self, wasteful_cfg, tiny_horizon,
+                                                   wasteful_params):
+        outcome = _run_random_search(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
+            wasteful_cfg.n_samples, progress_every=0,
+        )
+        assert outcome.n_evaluated == wasteful_cfg.n_samples
+        assert outcome.n_simulated == len(outcome.aggs) <= outcome.n_evaluated
+        assert outcome.n_evaluated - outcome.n_simulated == sum(
+            1 for e in outcome.manifest.values() if not e["feasible"]
+        )
+
+    def test_evolutionary_search_stays_within_its_nominal_budget(
+        self, wasteful_cfg, tiny_horizon, wasteful_params
+    ):
+        """Infeasible offspring consume budget too, so §4.2's E is a hard ceiling."""
+        budget = (wasteful_cfg.n_samples_initial
+                  + wasteful_cfg.n_generations * wasteful_cfg.n_offspring)
+        outcome = _run_evolutionary_search(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
+            progress_every=0,
+        )
+        assert outcome.n_evaluated <= budget
+        # The wasteful span of control guarantees rejections, so this run must have
+        # charged some infeasible candidates against the budget.
+        assert outcome.n_simulated < outcome.n_evaluated
+
+    def test_evolutionary_search_never_evaluates_a_duplicate(
+        self, wasteful_cfg, tiny_horizon, wasteful_params
+    ):
+        outcome = _run_evolutionary_search(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(2),
+            progress_every=0,
+        )
+        keys = [(e["N"], e["M"], e["R"], e["F_freeze"],
+                 tuple(e["A_dev"]), tuple(e["A_qa"]))
+                for e in outcome.manifest.values()]
+        assert len(keys) == len(set(keys))
+
+
+class TestSampleRetention:
+    def _outcome(self, cfg, horizon, params, samples):
+        from dataclasses import replace
+        return _run_random_search(
+            replace(cfg, samples=samples), horizon, params, np.random.default_rng(1),
+            cfg.n_samples, progress_every=0,
+        )
+
+    def test_frontier_policy_writes_one_file_per_frontier_config(
+        self, wasteful_cfg, tiny_horizon, wasteful_params, tmp_path
+    ):
+        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "frontier")
+        frontier_keys = [outcome.aggs[i][0]
+                         for i in pareto_frontier([a for _, _, a in outcome.aggs])]
+        written = write_samples(outcome, tmp_path, frontier_keys)
+        assert written == len(frontier_keys) > 0
+        assert sorted(p.stem for p in (tmp_path / "samples").glob("*.json")) == \
+            sorted(frontier_keys)
+
+    def test_none_policy_keeps_no_results_in_memory(
+        self, wasteful_cfg, tiny_horizon, wasteful_params, tmp_path
+    ):
+        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "none")
+        assert outcome.results == {}
+        assert outcome.aggs, "objectives must still be aggregated"
+        assert write_samples(outcome, tmp_path, []) == 0
+        assert not (tmp_path / "samples").exists()
+
+    def test_all_policy_buffers_every_simulated_candidate(
+        self, wasteful_cfg, tiny_horizon, wasteful_params
+    ):
+        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "all")
+        assert set(outcome.results) == {key for key, _, _ in outcome.aggs}

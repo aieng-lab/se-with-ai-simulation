@@ -34,18 +34,24 @@ src/                    Python simulation package
     main.py             CLI: `python -m src.main run|analyze|optimize|visualize`
 
 config/
-    horizon_default.json      simulation horizon (T, K, master_seed) shared across scenarios
+    horizon_default.json      Monte Carlo protocol of §4.2: T=104, K=100, master_seed=42
     team_default.json         default team configuration (N, M, R, F_freeze, A_dev, A_qa)
     human_{low,medium,high}.json      scenario group: human developers (§4.1)
     project_{low,medium,high}.json    scenario group: project dynamics
     debt_{low,medium,high}.json       scenario group: debt dynamics
     agent_{low,medium,high}.json      scenario group: agent costs and throughput
     bugimpact_{low,medium,high}.json  scenario group: bug impact
-    search_default.json       search config: all five groups at medium tier
+    search_default.json       search config template: §4.2 range and budget, all groups medium
+    search/search_<id>.json   the 243 generated scenario searches (§4.2); id = h-l_p-m_d-h_a-l_b-m
     startstate_default.json   initial SystemState values (all-zero baseline)
 
-tests/                  pytest suite (170 tests, ~0.9 s)
-results/                persisted sweep results (not committed)
+scripts/
+    generate_search_configs.py  write the 243 config/search/*.json from search_default.json
+    collect_results.py          consolidate a campaign into frontiers.csv + scenarios.csv
+run_experiments.sh      campaign driver: 486 searches in parallel, resumable (§4.2)
+
+tests/                  pytest suite (188 tests, ~1.5 s)
+results/                persisted sweep and campaign results (not committed)
 ```
 
 ---
@@ -70,7 +76,7 @@ python -m src.main run --human config/human_low.json --agent config/agent_high.j
 python -m src.main analyze results/my_run/result.json
 ```
 
-**Run a configuration search (random, 500 samples):**
+**Run a configuration search** (random, 10,000 candidates — the §4.2 budget; ~36 min):
 ```bash
 python -m src.main optimize config/search_default.json --out results/search_default
 ```
@@ -80,6 +86,21 @@ python -m src.main optimize config/search_default.json --out results/search_defa
 python -m src.main optimize config/search_default.json \
     --out results/search_default_evo --strategy evolutionary
 ```
+Useful `optimize` flags: `--samples {all,frontier,none}` controls which candidates get a
+`samples/<key>.json` (default `frontier`; `all` is ~12 KB × 10,000 per search), and
+`--progress-every N` throttles the progress lines (`0` silences them).
+
+**Run the full §4.2 campaign** (243 scenarios × 2 strategies = 486 searches, ~300 core-hours):
+```bash
+python scripts/generate_search_configs.py     # once: writes the 243 config/search/*.json
+DRY_RUN=1 ./run_experiments.sh                # list the 486 jobs
+LIMIT=2 ./run_experiments.sh                  # smoke test
+JOBS=14 ./run_experiments.sh                  # full run; re-invoke to resume
+python scripts/collect_results.py             # → frontiers.csv, scenarios.csv
+```
+Results land in `results/experiments/<scenario_id>/<strategy>/`; `index.tsv` records one
+line per finished job. Other env knobs: `FILTER` (config glob), `STRATEGIES`, `SAMPLES`,
+`OUT_ROOT`, `CONFIG_DIR`, `FORCE=1` (ignore existing results).
 
 **Generate visualizations:**
 ```bash
@@ -100,10 +121,11 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 - **Two 8-element composition vectors**: `A_dev` for development sprints and `A_qa` for feature-freeze (QA) sprints. Both must satisfy `sum ≤ N×M`. `A_dev` requires `a_dev,1 ≥ 1` (at least one Feature Implementation Agent). `A_qa` requires `a_qa,1 = a_qa,2 = 0` (no Feature Implementation or Architecture agents during freeze).
 - **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`.
 - **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` uses uniform composition sampling (stars-and-bars) and/or evolutionary mutation across both vectors.
-- **Feasibility pre-filter** runs before any simulation. The human-capacity condition (§3.3, Eq. monitoring) is checked; infeasible configs are recorded and skipped.
+- **Feasibility pre-filter** runs before any simulation. The human-capacity condition (§3.3, Eq. monitoring) is checked; infeasible configs are recorded and skipped. They still **consume one evaluation of the search budget** (§4.2), in both strategies, so `n_evaluated` is the budget spend and `n_simulated` the realised simulation count — both are written to `manifest.json`.
 - **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
 - **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, giving 3^5 = 243 scenarios. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
+- **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `frontier` — the `ConfigResult`s are buffered in memory and only frontier members are written, *after* `pareto_frontier` has run. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`.
 - **21-dimensional state vector**: features (2), bugs by type×stage (12), technical debt and human capacity queues (5), test infrastructure and documentation (2).
 
 ---

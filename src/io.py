@@ -185,7 +185,9 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
         n_samples_initial=int(s.get("n_samples_initial", 100)),
         n_generations=int(s.get("n_generations", 15)),
         n_offspring=int(s.get("n_offspring", 20)),
+        samples=str(s.get("samples", "frontier")),
         seed=int(s.get("seed", 0)),
+        scenario_id=str(data.get("scenario_id", "")),
     )
 
 

@@ -1,5 +1,6 @@
 {
-  "description": "Random search over agent compositions with all five scenario parameter groups at their medium tier",
+  "description": "Template search configuration (paper Section 4.2): full search range and evaluation budget, with all five scenario parameter groups at their medium tier",
+  "scenario_id": "h-m_p-m_d-m_a-m_b-m",
   "scenario": {
     "human": "config/human_medium.json",
     "project": "config/project_medium.json",
@@ -10,14 +11,15 @@
   "horizon": "config/horizon_default.json",
   "search": {
     "strategy": "random",
-    "N_values": [1, 2, 3],
-    "M_max": 20,
-    "R_values": [2, 4],
-    "F_freeze_values": [1, 2],
-    "n_samples": 500,
-    "n_samples_initial": 100,
-    "n_generations": 15,
-    "n_offspring": 20,
+    "N_values": [1, 2, 3, 4, 5],
+    "M_max": 30,
+    "R_values": [1, 2, 4, 13],
+    "F_freeze_values": [0, 1, 2],
+    "n_samples": 10000,
+    "n_samples_initial": 1000,
+    "n_generations": 90,
+    "n_offspring": 100,
+    "samples": "frontier",
     "seed": 42
   }
 }

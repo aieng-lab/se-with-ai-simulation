@@ -18,6 +18,12 @@ Load and analyse persisted results:
 Search for optimal team compositions:
     python -m src.main optimize config/search_default.json --out results/search_default
     python -m src.main optimize config/search_default.json --out results/search_evo --strategy evolutionary
+    python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
+        --samples none --progress-every 500 --out results/one_scenario
+
+Run all 243 scenarios of paper Section 4.2 with both strategies:
+    ./run_experiments.sh          (see its --help; generate the configs first with
+                                   scripts/generate_search_configs.py)
 
 Generate visualizations from optimization results:
     python -m src.main visualize results/search_default [--out results/search_default/plots]
@@ -29,6 +35,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +45,7 @@ from .analysis import final_distribution, mean_trajectory
 from .config import (
     AGENT_ROLE_NAMES,
     BACKGROUND_ROLE_INDICES,
+    SAMPLE_POLICIES,
     SCENARIO_GROUPS,
     TeamConfiguration,
     supervised_agent_count,
@@ -44,7 +53,7 @@ from .config import (
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .pareto import aggregate_config_result, pareto_frontier
 from .results import load_result, load_traces, save_result, save_traces
-from .search_configurations import _run_evolutionary_search, _run_random_search
+from .search_configurations import _run_evolutionary_search, _run_random_search, write_samples
 from .simulation import ConfigResult, ConfigTrace, run_configuration
 from .visualization import visualize_multi, visualize_single
 
@@ -198,6 +207,8 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     cfg_path = Path(args.search_config)
     search_cfg = load_search_config(cfg_path)
     strategy = args.strategy or search_cfg.strategy
+    if args.samples is not None:
+        search_cfg = replace(search_cfg, samples=args.samples)
 
     horizon = load_simulation_horizon(search_cfg.horizon_path)
     scenario_values = {
@@ -208,6 +219,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     initial_state = load_initial_state(args.start_state)
 
     print(f"Search:      {cfg_path}")
+    print(f"Scenario id: {search_cfg.scenario_id or '(unnamed)'}")
     print("Scenario:")
     for group, path in search_cfg.scenario_paths.items():
         print(f"  {group:<10} {path}")
@@ -216,45 +228,87 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Horizon:     K={horizon.K} replications * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
     if strategy == "random":
-        print(f"Samples:     {search_cfg.n_samples}")
+        print(f"Budget:      {search_cfg.n_samples} candidates")
+    else:
+        print(f"Budget:      {search_cfg.n_samples_initial} initial + "
+              f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring "
+              f"= {search_cfg.n_samples_initial + search_cfg.n_generations * search_cfg.n_offspring}"
+              f" candidates")
+    print(f"Samples:     {search_cfg.samples}")
     print()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(search_cfg.seed)
 
+    t_start = time.perf_counter()
     if strategy == "random":
-        manifest, feasible, aggs = _run_random_search(
-            search_cfg, horizon, params, out_dir, rng, search_cfg.n_samples, initial_state
+        outcome = _run_random_search(
+            search_cfg, horizon, params, rng, search_cfg.n_samples, initial_state,
+            progress_every=args.progress_every,
         )
     else:
-        manifest, feasible, aggs = _run_evolutionary_search(
-            search_cfg, horizon, params, out_dir, rng, initial_state
+        outcome = _run_evolutionary_search(
+            search_cfg, horizon, params, rng, initial_state,
+            progress_every=args.progress_every,
         )
+    wall_clock_s = time.perf_counter() - t_start
 
+    aggs = outcome.aggs
     agg_objs = [a for _, _, a in aggs]
     frontier_indices = pareto_frontier(agg_objs) if agg_objs else []
     frontier_keys = [aggs[i][0] for i in frontier_indices]
 
+    # Sample files are written only now, so that the "frontier" policy can restrict
+    # them to the configurations that survived to the final frontier.
+    sample_keys = {
+        "none": [],
+        "frontier": frontier_keys,
+        "all": [key for key, _, _ in aggs],
+    }[search_cfg.samples]
+    n_samples_written = write_samples(outcome, out_dir, sample_keys)
+
     manifest_out = {
         "search_config": str(cfg_path),
+        "scenario_id": search_cfg.scenario_id,
         "scenario": {"paths": search_cfg.scenario_paths, "values": scenario_values},
         "strategy": strategy,
-        "horizon": {"path": search_cfg.horizon_path, "K": horizon.K, "T": horizon.T, "master_seed": horizon.master_seed},
-        "n_evaluated": len(manifest),
-        "n_feasible": len(aggs),
-        "configs": manifest,
+        "horizon": {"path": search_cfg.horizon_path, "K": horizon.K, "T": horizon.T,
+                    "master_seed": horizon.master_seed},
+        "search": {
+            "N_values": list(search_cfg.N_values),
+            "M_max": search_cfg.M_max,
+            "R_values": list(search_cfg.R_values),
+            "F_freeze_values": list(search_cfg.F_freeze_values),
+            "n_samples": search_cfg.n_samples,
+            "n_samples_initial": search_cfg.n_samples_initial,
+            "n_generations": search_cfg.n_generations,
+            "n_offspring": search_cfg.n_offspring,
+            "samples": search_cfg.samples,
+            "seed": search_cfg.seed,
+        },
+        # n_evaluated counts everything that consumed budget; n_simulated excludes the
+        # candidates rejected by the human-capacity condition (paper §4.2).
+        "n_evaluated": outcome.n_evaluated,
+        "n_simulated": outcome.n_simulated,
+        "n_infeasible": outcome.n_evaluated - outcome.n_simulated,
+        "n_feasible": outcome.n_simulated,
+        "n_frontier": len(frontier_keys),
+        "n_samples_written": n_samples_written,
+        "wall_clock_s": round(wall_clock_s, 1),
+        "configs": outcome.manifest,
     }
     (out_dir / "manifest.json").write_text(
-        json.dumps(manifest_out, indent=2), encoding="utf-8"
+        json.dumps(manifest_out), encoding="utf-8"
     )
 
     search_summary = {
         "pareto_frontier": frontier_keys,
         "objectives": {
             key: {
-                "N": cfg.N, "M": cfg.M, "R": cfg.R,
+                "N": cfg.N, "M": cfg.M, "R": cfg.R, "F_freeze": cfg.F_freeze,
                 "A_dev": list(cfg.A_dev),
+                "A_qa": list(cfg.A_qa),
                 "value_mean": agg.value_mean, "quality_mean": agg.quality_mean, "cost_mean": agg.cost_mean,
                 "value_ci": list(agg.value_ci), "quality_ci": list(agg.quality_ci), "cost_ci": list(agg.cost_ci),
             }
@@ -262,10 +316,14 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         },
     }
     (out_dir / "search_summary.json").write_text(
-        json.dumps(search_summary, indent=2), encoding="utf-8"
+        json.dumps(search_summary), encoding="utf-8"
     )
 
     print()
+    print(f"Evaluated {outcome.n_evaluated} candidates "
+          f"({outcome.n_simulated} simulated, "
+          f"{outcome.n_evaluated - outcome.n_simulated} infeasible) "
+          f"in {wall_clock_s:.1f} s")
     print(f"Pareto frontier ({len(frontier_keys)} config(s)):")
     for key in frontier_keys:
         obj = search_summary["objectives"][key]
@@ -343,6 +401,15 @@ def main(argv: list[str] | None = None) -> None:
                          help="Output directory for optimization results")
     p_optimize.add_argument("--strategy", choices=["random", "evolutionary"], default=None,
                          help="Override strategy from config")
+    p_optimize.add_argument(
+        "--samples", choices=list(SAMPLE_POLICIES), default=None,
+        help="Which candidates get a samples/<key>.json file: 'all', 'frontier' "
+             "(Pareto-optimal only), or 'none' (overrides the search config)",
+    )
+    p_optimize.add_argument(
+        "--progress-every", type=int, default=100, metavar="N",
+        help="Print a progress line every N candidates; 0 silences it (default: 100)",
+    )
     p_optimize.add_argument(
         "--start-state", default="config/startstate_default.json", metavar="PATH",
         help="JSON file with initial SystemState values "

@@ -82,8 +82,9 @@ class TestFlattenScenario:
 
 class TestLoadSimulationHorizon:
     def test_default_horizon_loads(self):
+        # The Monte Carlo protocol of paper §4.2, Table 6: two years of weekly sprints.
         s = load_simulation_horizon("config/horizon_default.json")
-        assert s.T == 52 and s.K == 100 and s.master_seed == 20260423
+        assert s.T == 104 and s.K == 100 and s.master_seed == 42
 
     def test_basic(self, tmp_path):
         p = tmp_path / "h.json"
@@ -191,6 +192,37 @@ class TestLoadSearchConfig:
         assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
         assert cfg.horizon_path == "config/horizon_default.json"
         assert cfg.strategy == "random"
+
+    def test_default_search_config_matches_paper_search_range(self):
+        # Paper §4.2, Table 6: search range and the E = 10,000 evaluation budget,
+        # split 10 % / 90 % between the initial pool and the generation loop.
+        cfg = load_search_config("config/search_default.json")
+        assert cfg.N_values == (1, 2, 3, 4, 5)
+        assert cfg.M_max == 30
+        assert cfg.R_values == (1, 2, 4, 13)
+        assert cfg.F_freeze_values == (0, 1, 2)
+        assert cfg.n_samples == 10_000
+        assert cfg.n_samples_initial == 1_000
+        assert cfg.n_generations * cfg.n_offspring == 9_000
+        assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.n_samples
+        assert cfg.samples == "frontier"
+        assert cfg.seed == 42
+
+    def test_samples_policy_defaults_and_is_validated(self, tmp_path):
+        data = json.loads(Path("config/search_default.json").read_text())
+        del data["search"]["samples"]
+        path = tmp_path / "search.json"
+        path.write_text(json.dumps(data))
+        assert load_search_config(path).samples == "frontier"
+
+        data["search"]["samples"] = "everything"
+        path.write_text(json.dumps(data))
+        with pytest.raises(ValueError, match="samples must be one of"):
+            load_search_config(path)
+
+    def test_scenario_id_is_read_from_the_top_level(self):
+        cfg = load_search_config("config/search_default.json")
+        assert cfg.scenario_id == "h-m_p-m_d-m_a-m_b-m"
 
     def test_scenario_paths_resolve_to_params(self):
         cfg = load_search_config("config/search_default.json")

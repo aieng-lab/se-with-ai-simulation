@@ -42,6 +42,14 @@ _PARETO_COLOR = cm.tab10(0)    # blue
 _OTHER_COLOR  = "#aaaaaa"      # grey
 _STYLE        = "seaborn-v0_8-whitegrid"
 
+# Scale guards.  A §4.2 search evaluates up to 10,000 candidates, which is far past
+# the point where per-point CI whiskers, per-point labels, or one bar per config stay
+# legible (and, for the bar chart, past the point where the figure can be rendered
+# at all: its width grows with the config count).
+_ERRORBAR_LIMIT = 200          # non-Pareto points drawn with CI whiskers
+_ANNOTATE_LIMIT = 25           # Pareto points labelled with their config key
+_BAR_LIMIT      = 60           # bars in plot_objectives_bar
+
 _OBJ_META = {
     # field_suffix → (axis label, better direction symbol, is_lower_better)
     "value":   ("value   (features / sprint)",  "↑", False),
@@ -59,6 +67,16 @@ def _sorted_keys(objectives: dict[str, dict]) -> list[str]:
 # 1. Pareto scatter
 # ---------------------------------------------------------------------------
 
+def _means_and_errors(
+    objectives: dict[str, dict], keys: list[str], okey: str
+) -> "tuple[np.ndarray, np.ndarray]":
+    """Return (means, 2×n asymmetric CI errors) for `keys` on objective `okey`."""
+    means = np.array([objectives[k][f"{okey}_mean"] for k in keys])
+    lo = np.array([objectives[k][f"{okey}_ci"][0] for k in keys])
+    hi = np.array([objectives[k][f"{okey}_ci"][1] for k in keys])
+    return means, np.vstack([means - lo, hi - means])
+
+
 def plot_pareto_scatter(
     objectives: dict[str, dict],
     pareto_keys: list[str],
@@ -67,10 +85,17 @@ def plot_pareto_scatter(
     """Three-panel 2-D scatter for every pair of objectives.
 
     Non-Pareto configs: grey circles.  Pareto configs: blue, larger.
-    Error bars show 95% bootstrap CIs.
+    Error bars show 95% bootstrap CIs.  A §4.2-scale search evaluates ~10,000
+    candidates, so the non-Pareto cloud is drawn as one vectorised scatter (and
+    without CI whiskers, which would be solid ink at that density) once it exceeds
+    _ERRORBAR_LIMIT points; annotations are dropped beyond _ANNOTATE_LIMIT.
     """
     pairs = [("value", "quality"), ("value", "cost"), ("quality", "cost")]
     pareto_set = set(pareto_keys)
+    front = [k for k in objectives if k in pareto_set]
+    rest = [k for k in objectives if k not in pareto_set]
+    rest_errorbars = len(rest) <= _ERRORBAR_LIMIT
+    annotate = len(front) <= _ANNOTATE_LIMIT
 
     with plt.style.context(_STYLE):
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -81,29 +106,24 @@ def plot_pareto_scatter(
             xlabel, xarrow, x_lower_better = _OBJ_META[xkey]
             ylabel, yarrow, y_lower_better = _OBJ_META[ykey]
 
-            for key, obj in objectives.items():
-                xm  = obj[f"{xkey}_mean"]
-                ym  = obj[f"{ykey}_mean"]
-                xci = obj[f"{xkey}_ci"]
-                yci = obj[f"{ykey}_ci"]
-                xe  = [[xm - xci[0]], [xci[1] - xm]]
-                ye  = [[ym - yci[0]], [yci[1] - ym]]
-                is_pareto = key in pareto_set
+            for keys, color, size, zorder in ((rest, _OTHER_COLOR, 5, 2),
+                                              (front, _PARETO_COLOR, 8, 3)):
+                if not keys:
+                    continue
+                xm, xe = _means_and_errors(objectives, keys, xkey)
+                ym, ye = _means_and_errors(objectives, keys, ykey)
+                if keys is rest and not rest_errorbars:
+                    ax.scatter(xm, ym, s=size ** 2 / 4, color=color, zorder=zorder,
+                               alpha=0.35, linewidths=0)
+                    continue
+                ax.errorbar(xm, ym, xerr=xe, yerr=ye, fmt="o", color=color,
+                            markersize=size, linewidth=0.8, capsize=2, zorder=zorder,
+                            label=None)
 
-                ax.errorbar(
-                    xm, ym,
-                    xerr=xe, yerr=ye,
-                    fmt="o",
-                    color=_PARETO_COLOR if is_pareto else _OTHER_COLOR,
-                    markersize=8 if is_pareto else 5,
-                    linewidth=0.8,
-                    capsize=2,
-                    zorder=3 if is_pareto else 2,
-                    label=None,
-                )
-                if is_pareto:
+            if annotate:
+                for key in front:
                     ax.annotate(
-                        key, (xm, ym),
+                        key, (objectives[key][f"{xkey}_mean"], objectives[key][f"{ykey}_mean"]),
                         textcoords="offset points", xytext=(4, 4),
                         fontsize=6.5, color="black",
                     )
@@ -150,15 +170,19 @@ def plot_pareto_3d_scatter(
         if title:
             ax.set_title(title, fontsize=11)
 
-        # Non-Pareto first (background layer)
-        for key, obj in objectives.items():
-            if key in pareto_set:
-                continue
-            color = cmap(norm(obj["cost_mean"]))
-            ax.scatter(obj["value_mean"], obj["quality_mean"],
-                       color=color, s=40, alpha=0.35, linewidths=0, zorder=2)
+        # Non-Pareto background layer, drawn in one vectorised call so that the
+        # ~10,000 candidates of a §4.2 search stay cheap to render
+        rest = [k for k in objectives if k not in pareto_set]
+        if rest:
+            ax.scatter(
+                [objectives[k]["value_mean"] for k in rest],
+                [objectives[k]["quality_mean"] for k in rest],
+                c=[objectives[k]["cost_mean"] for k in rest], cmap=cmap, norm=norm,
+                s=40, alpha=0.35, linewidths=0, zorder=2,
+            )
 
         # Pareto configs with error bars and labels (foreground layer)
+        annotate = len(pareto_keys) <= _ANNOTATE_LIMIT
         for key in pareto_keys:
             obj = objectives[key]
             xm, ym = obj["value_mean"], obj["quality_mean"]
@@ -173,8 +197,9 @@ def plot_pareto_3d_scatter(
             )
             ax.scatter(xm, ym, color=color, s=120, edgecolors="black",
                        linewidths=0.9, zorder=4)
-            ax.annotate(key, (xm, ym), textcoords="offset points",
-                        xytext=(5, 4), fontsize=7)
+            if annotate:
+                ax.annotate(key, (xm, ym), textcoords="offset points",
+                            xytext=(5, 4), fontsize=7)
 
         sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
@@ -205,10 +230,22 @@ def plot_objectives_bar(
     objectives: dict[str, dict],
     pareto_keys: list[str],
     title: str = "",
+    max_bars: int = _BAR_LIMIT,
 ) -> "Figure":
-    """Three-row bar chart, one per objective, configs sorted by descending V."""
-    keys = _sorted_keys(objectives)
+    """Three-row bar chart, one per objective, configs sorted by descending V.
+
+    Restricted to at most `max_bars` configs: all Pareto-optimal ones first, then the
+    highest-value remainder.  One bar per candidate is unreadable — and the figure
+    unrenderable — at the ~10,000 candidates a §4.2 search evaluates.
+    """
     pareto_set = set(pareto_keys)
+    keys = _sorted_keys(objectives)
+    if len(keys) > max_bars:
+        front = [k for k in keys if k in pareto_set][:max_bars]
+        rest = [k for k in keys if k not in pareto_set][:max_bars - len(front)]
+        keys = [k for k in keys if k in set(front) | set(rest)]
+        if title:
+            title = f"{title}  (top {len(keys)} of {len(objectives)})"
     x = np.arange(len(keys))
     cols = [_PARETO_COLOR if k in pareto_set else _OTHER_COLOR for k in keys]
 
@@ -510,6 +547,11 @@ def _recompute_mean_pareto(objectives: dict) -> list[str]:
 
 
 def _scenario_label(result_dir: Path, manifest: dict) -> str:
+    """Human-readable scenario name: the §4.2 scenario id if present, else a path stem."""
+    scenario_id = manifest.get("scenario_id", "")
+    if scenario_id:
+        strategy = manifest.get("strategy", "")
+        return f"{scenario_id} / {strategy}" if strategy else scenario_id
     scenario = manifest.get("scenario", "")
     if isinstance(scenario, dict):
         scenario = scenario.get("path", "")

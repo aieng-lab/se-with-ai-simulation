@@ -1358,7 +1358,7 @@ The span of control is bounded by $M_\mathrm{max} = 30$. This bound is deliberat
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. 
 
-Both search strategies receive the same budget of $E = 10\,000$ candidate evaluations per scenario, so that the comparison between them measures search efficiency and not effort. For random search this means $n_\mathrm{rand} = 1\,000$ candidates. For evolutionary search we spend 10\% of the budget on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation.
+Both search strategies receive the same budget of $E = 10\,000$ candidate evaluations per scenario, so that the comparison between them measures search efficiency and not effort. For random search this means $n_\mathrm{rand} = 10\,000$ candidates. For evolutionary search we spend 10\% of the budget on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation.
 
 Candidates that violate the human-capacity condition are recorded and counted against the budget, but not simulated, and the same accounting applies to both strategies. In addition, the mutation operator may fail to produce a new, distinct, feasible child within its attempt limit, and duplicate children are not re-evaluated, so the number of configurations that an evolutionary run actually simulates can fall slightly below the nominal budget. We therefore report the realised number of simulated configurations.
 
@@ -1385,7 +1385,7 @@ $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two
 \midrule
 \multicolumn{3}{l}{\emph{Search budget per scenario and strategy}} \\[2pt]
 $E$                             & 10{,}000             & Identical budget for both strategies \\[2pt]
-$n_\mathrm{rand}$               & 1{,}000             & Random search: all of $E$ spent on independent draws \\[2pt]
+$n_\mathrm{rand}$               & 10{,}000            & Random search: all of $E$ spent on independent draws \\[2pt]
 $n_\mathrm{init}$               & 1{,}000             & Evolutionary search: 10\% of $E$ on the initial pool \\[2pt]
 $G$ / $n_\mathrm{off}$          & 90 / 100            & Evolutionary search: 90\% of $E$ on the generation loop \\
 \bottomrule

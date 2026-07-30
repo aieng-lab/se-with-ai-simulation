@@ -12,6 +12,16 @@ AGENT_ROLE_COUNT = 8
 # field exactly once.
 SCENARIO_GROUPS: tuple[str, ...] = ("human", "project", "debt", "agent", "bugimpact")
 
+# The three tiers each scenario group is defined at (paper §4.1).  Combining them
+# freely across the five groups yields the 3^5 = 243 scenarios of paper §4.2.
+SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high")
+
+# Retention policy for the per-candidate result.json files a search writes:
+#   "all"      — one file per feasible candidate (10,000 per search at §4.2 scale)
+#   "frontier" — only the configurations on the final Pareto frontier
+#   "none"     — no per-candidate files; aggregates live in search_summary.json
+SAMPLE_POLICIES: tuple[str, ...] = ("all", "frontier", "none")
+
 AGENT_ROLE_NAMES: tuple[str, ...] = (
     "Feature Implementation Agent",           # k=1
     "Architecture & Design Proposal Agent",   # k=2
@@ -153,7 +163,9 @@ class SearchConfiguration:
     n_samples_initial: int = 100            # evolutionary: initial population
     n_generations: int = 15                 # evolutionary: generation count
     n_offspring: int = 20                   # evolutionary: offspring per generation
+    samples: str = "frontier"               # per-candidate result.json retention policy
     seed: int = 0                           # RNG seed for search
+    scenario_id: str = ""                   # label of the tier combination, e.g. "h-l_p-m_d-h_a-l_b-m"
 
     def __post_init__(self) -> None:
         if set(self.scenario_paths) != set(SCENARIO_GROUPS):
@@ -181,6 +193,10 @@ class SearchConfiguration:
             raise ValueError(f"n_generations must be >= 1, got {self.n_generations}")
         if self.n_offspring < 1:
             raise ValueError(f"n_offspring must be >= 1, got {self.n_offspring}")
+        if self.samples not in SAMPLE_POLICIES:
+            raise ValueError(
+                f"samples must be one of {list(SAMPLE_POLICIES)}, got {self.samples!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)

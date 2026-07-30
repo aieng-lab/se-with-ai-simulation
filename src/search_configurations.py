@@ -7,13 +7,16 @@ Output layout
 -------------
     RESULTS_DIR/
         manifest.json          metadata, per-config feasibility, A composition
-        sweep_summary.json     Pareto frontier + all objectives including A
+        search_summary.json    Pareto frontier + all objectives including A
         samples/
-            N2_M3_R4_00042.json
+            N2_M3_R4_00042.json    per-replication objectives; which candidates get a
+                                   file is governed by SearchConfiguration.samples
+                                   ("all" / "frontier" / "none")
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +31,9 @@ from .config import (
     supervised_agent_count,
 )
 from .feasibility import check_feasibility
-from .pareto import aggregate_config_result, pareto_frontier
+from .pareto import AggregatedObjectives, aggregate_config_result, pareto_frontier
 from .results import save_result
-from .simulation import run_configuration
+from .simulation import ConfigResult, run_configuration
 from .state import SystemState
 
 
@@ -261,18 +264,16 @@ def _config_key(config: TeamConfiguration, idx: int) -> str:
 
 def _evaluate(
     config: TeamConfiguration,
-    key: str,
     settings: SimulationHorizon,
     params,
-    out_dir: Path,
     initial_state: SystemState | None = None,
 ):
     """Run feasibility check + simulation.
 
-    Returns (manifest_entry, agg_or_None).
-    agg is None when the config is infeasible.
+    Returns (manifest_entry, agg_or_None, config_result_or_None); the latter two are
+    None when the configuration is infeasible and therefore never simulated.
+    Persistence is left to the caller, which knows the sample retention policy.
     """
-    from .pareto import AggregatedObjectives
     report = check_feasibility(config, params)
     entry: dict = {
         "feasible": report.feasible,
@@ -283,95 +284,144 @@ def _evaluate(
     if not report.feasible:
         entry["failed_step"] = report.failed_step
         entry["reason"] = report.reason
-        return entry, None
+        return entry, None, None
 
     cr = run_configuration(config, settings, params, initial_state=initial_state)
     agg = aggregate_config_result(cr, master_seed=settings.master_seed)
+    return entry, agg, cr
+
+
+@dataclass(slots=True)
+class SearchOutcome:
+    """Everything a search strategy produces, independent of how it is persisted.
+
+    `results` holds the per-candidate ConfigResults kept for possible sample export;
+    it is empty when the retention policy is "none" and holds every simulated
+    candidate otherwise (~2.5 KB per candidate, so ~25 MB at the §4.2 budget).
+    """
+
+    manifest: dict[str, dict]
+    aggs: list[tuple[str, TeamConfiguration, "AggregatedObjectives"]]
+    results: dict[str, ConfigResult]
+
+    @property
+    def n_evaluated(self) -> int:
+        """Candidates that consumed budget, including infeasible ones (paper §4.2)."""
+        return len(self.manifest)
+
+    @property
+    def n_simulated(self) -> int:
+        """Candidates actually simulated, i.e. those that passed the feasibility check."""
+        return len(self.aggs)
+
+
+def write_samples(outcome: SearchOutcome, out_dir: Path, keys: list[str]) -> int:
+    """Persist `samples/<key>.json` for the requested keys; returns the file count."""
+    if not keys:
+        return 0
     samples_dir = out_dir / "samples"
     samples_dir.mkdir(exist_ok=True, parents=True)
-    save_result(cr, agg, samples_dir / f"{key}.json")
-    return entry, agg
+    aggs_by_key = {key: agg for key, _, agg in outcome.aggs}
+    written = 0
+    for key in keys:
+        cr = outcome.results.get(key)
+        if cr is None:
+            continue
+        save_result(cr, aggs_by_key[key], samples_dir / f"{key}.json")
+        written += 1
+    return written
 
 
 # ---------------------------------------------------------------------------
 # Search strategies
 # ---------------------------------------------------------------------------
 
+def _progress(i: int, total: int, outcome: SearchOutcome, every: int) -> None:
+    """Print a compact heartbeat every `every` candidates (`every == 0` silences it)."""
+    if every and (i % every == 0 or i == total):
+        n_infeasible = outcome.n_evaluated - outcome.n_simulated
+        print(f"  [{i}/{total}] simulated={outcome.n_simulated}  infeasible={n_infeasible}",
+              flush=True)
+
+
 def _run_random_search(
     search_cfg: SearchConfiguration,
     settings: SimulationHorizon,
     params,
-    out_dir: Path,
     rng: np.random.Generator,
     n_samples: int,
     initial_state: SystemState | None = None,
-) -> tuple[dict, list, list]:
-    """Random search. Returns (manifest_configs, feasible_configs, all_aggs)."""
+    progress_every: int = 100,
+) -> SearchOutcome:
+    """Uniform random search over the configuration space (paper §3.13.2)."""
     configs = _random_configs(search_cfg, rng, n_samples, background_count_max(params))
-    manifest: dict[str, dict] = {}
-    feasible: list[TeamConfiguration] = []
-    aggs = []
+    outcome = SearchOutcome(manifest={}, aggs=[], results={})
+    keep_samples = search_cfg.samples != "none"
 
     for i, cfg in enumerate(configs):
         key = _config_key(cfg, i)
-        entry, agg = _evaluate(cfg, key, settings, params, out_dir, initial_state)
+        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
         entry["generation"] = 0
-        manifest[key] = entry
+        outcome.manifest[key] = entry
         if agg is not None:
-            feasible.append(cfg)
-            aggs.append((key, cfg, agg))
-            print(f"  [{i+1}/{len(configs)}] {key}:  "
-                  f"V={agg.value_mean:.3f}  Q={agg.quality_mean:.4f}  CF={agg.cost_mean:.0f}")
-        else:
-            print(f"  [{i+1}/{len(configs)}] {key}:  infeasible (step {entry.get('failed_step')})")
+            outcome.aggs.append((key, cfg, agg))
+            if keep_samples:
+                outcome.results[key] = cr    # type: ignore[assignment]
+        _progress(i + 1, len(configs), outcome, progress_every)
 
-    return manifest, feasible, aggs
+    return outcome
 
 
 def _run_evolutionary_search(
     search_cfg: SearchConfiguration,
     settings: SimulationHorizon,
     params,
-    out_dir: Path,
     rng: np.random.Generator,
     initial_state: SystemState | None = None,
-) -> tuple[dict, list, list]:
-    """Evolutionary search: random init + guided mutation toward Pareto front."""
+    progress_every: int = 100,
+) -> SearchOutcome:
+    """Evolutionary search: random init + guided mutation toward the Pareto front.
+
+    Budget accounting follows paper §4.2: every candidate that reaches the
+    feasibility check consumes one evaluation, whether or not it is simulated.
+    A generation can therefore fall short of `n_offspring` only when the mutation
+    operator keeps producing duplicates until its attempt limit is exhausted.
+    """
     n_initial   = search_cfg.n_samples_initial
     n_gen       = search_cfg.n_generations
     n_offspring = search_cfg.n_offspring
+    keep_samples = search_cfg.samples != "none"
 
-    manifest: dict[str, dict] = {}
-    all_aggs: list[tuple[str, TeamConfiguration, object]] = []
-    eval_counter = [0]
+    outcome = SearchOutcome(manifest={}, aggs=[], results={})
+    # Every candidate that has consumed budget, feasible or not, so a duplicate is
+    # never charged twice.
+    seen: set[TeamConfiguration] = set()
 
-    def evaluate_new(cfg: TeamConfiguration, generation: int) -> bool:
-        idx = eval_counter[0]
-        eval_counter[0] += 1
-        key = _config_key(cfg, idx)
-        entry, agg = _evaluate(cfg, key, settings, params, out_dir, initial_state)
+    def evaluate_new(cfg: TeamConfiguration, generation: int) -> None:
+        key = _config_key(cfg, outcome.n_evaluated)
+        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
         entry["generation"] = generation
-        manifest[key] = entry
+        outcome.manifest[key] = entry
+        seen.add(cfg)
         if agg is not None:
-            all_aggs.append((key, cfg, agg))
-            return True
-        return False
+            outcome.aggs.append((key, cfg, agg))
+            if keep_samples:
+                outcome.results[key] = cr    # type: ignore[assignment]
 
-    print(f"Random initialisation ({n_initial} samples) …")
+    print(f"Random initialisation ({n_initial} samples) …", flush=True)
     init_configs = _random_configs(search_cfg, rng, n_initial, background_count_max(params))
-    for cfg in init_configs:
+    for i, cfg in enumerate(init_configs):
         evaluate_new(cfg, generation=0)
-
-    # Evolutionary generations
-    seen: set[TeamConfiguration] = {cfg for _, cfg, _ in all_aggs}
+        _progress(i + 1, len(init_configs), outcome, progress_every)
 
     for gen in range(1, n_gen + 1):
         # Build Pareto and non-Pareto parent pools (80% / 20% sampling)
-        agg_objs = [a for _, _, a in all_aggs]
+        agg_objs = [a for _, _, a in outcome.aggs]
         front_idx = pareto_frontier(agg_objs) if agg_objs else []
         front_set = set(front_idx)
-        pareto_parents = [all_aggs[i][1] for i in front_idx]
-        non_pareto_parents = [all_aggs[i][1] for i in range(len(all_aggs)) if i not in front_set]
+        pareto_parents = [outcome.aggs[i][1] for i in front_idx]
+        non_pareto_parents = [outcome.aggs[i][1]
+                              for i in range(len(outcome.aggs)) if i not in front_set]
         # Fallback: if one pool is empty, use the other exclusively
         if not pareto_parents:
             pareto_parents = non_pareto_parents
@@ -392,14 +442,14 @@ def _run_evolutionary_search(
                 child = _mutate(parent, rng, search_cfg)
                 if child in seen:
                     continue
-                seen.add(child)
-                if evaluate_new(child, generation=gen):
-                    count += 1
+                evaluate_new(child, generation=gen)
+                count += 1        # infeasible children consume budget too (§4.2)
             n_new += count
 
-        frontier_size = len(front_idx)
-        print(f"  Gen {gen:2d}: Pareto frontier = {frontier_size}, "
-              f"new offspring evaluated = {n_new}, total evaluated = {eval_counter[0]}")
+        if progress_every:
+            print(f"  Gen {gen:3d}: Pareto frontier = {len(front_idx)}, "
+                  f"offspring evaluated = {n_new}, total evaluated = {outcome.n_evaluated}, "
+                  f"simulated = {outcome.n_simulated}", flush=True)
 
-    return manifest, [cfg for _, cfg, _ in all_aggs], all_aggs
+    return outcome
 
