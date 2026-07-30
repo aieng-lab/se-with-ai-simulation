@@ -187,7 +187,7 @@ From a conceptual perspective, the \textit{Architecture Agent} is responsible fo
 
 The detection roles (k = 5,\ldots,7) inspect
 every code change synchronously in the same sprint as injection. The \textit{Code Review
-Agent} detects all kinds of defects but gets less effective if there is more code to review. The \textit{Security Audit Agent} can only detect security defects and allows the modeling of more expensive agents for this high-stakes role; it degrades with the review volume in the same way as the Code Review Agent, but is not sensitive to technical debt. These two agents run autonously, i.e., the human developers do not need to supervise them and detected issues are automatically added to the bug queues. 
+Agent} detects all kinds of defects but gets less effective if there is more code to review. The \textit{Security Audit Agent} can only detect security defects and allows the modeling of more expensive agents for this high-stakes role; it degrades with the review volume and with technical debt in the same way as the Code Review Agent. These two agents run autonously, i.e., the human developers do not need to supervise them and detected issues are automatically added to the bug queues. 
 The \textit{Test Development Agent} builds up a continuously growing test suite, which helps detect bugs.
 
 Finally, there is one \emph{support role} (k = 8): the \textit{Developer Documentation Agent} creates documentation to aid human developers, which in turn reduces the
@@ -726,7 +726,7 @@ The code review then detects bugs that survive testing at effective rate
 \end{equation}
 and the Security Audit Agent detects the security bugs that survive both earlier stages at rate
 \begin{equation}
-  d_\mathrm{SA,eff}(t) = d_\mathrm{SA}\,\Phi\bigl(\mathrm{impl}(t),\, a_{\cdot,6}\bigr).
+  d_\mathrm{SA,eff}(t) = d_\mathrm{SA}\,\delta_D\,\Phi\bigl(\mathrm{impl}(t),\, a_{\cdot,6}\bigr).
   \label{eq:dsa_eff}
 \end{equation}
 

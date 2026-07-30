@@ -1,4 +1,4 @@
-"""System state vector per FRAMEWORK.md §2.2."""
+"""System state vector per paper/main.tex (§3)."""
 
 from __future__ import annotations
 

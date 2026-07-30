@@ -1,8 +1,8 @@
-"""Scenario-level parameters per FRAMEWORK.md §9.2 Step 1.
+"""Scenario-level parameters per paper/main.tex (§3).
 
 Holds the concrete numeric values drawn once per replication and held fixed across
-all T sprints. Distribution families and hyperparameters live in VARIABLES.md and
-Values are loaded from scenario JSON files via `src.io.load_scenario_config`.
+all T sprints. Values are loaded from scenario JSON files via
+`src.io.load_scenario_config`.
 """
 
 from __future__ import annotations

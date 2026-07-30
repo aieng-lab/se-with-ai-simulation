@@ -1,4 +1,4 @@
-"""Reproducible random-number generation per FRAMEWORK.md §9.0.
+"""Reproducible random-number generation per paper/main.tex (§3).
 
 Every stream is derived deterministically from an integer master seed via
 numpy's SeedSequence + PCG-64. Independent configurations/replications get

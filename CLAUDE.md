@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Research project simulating and optimizing **AI Agent and Human Developer Team Dynamics**. Mixed teams of AI agents and human developers are modelled as a discrete-time stochastic system; Monte Carlo simulation finds Pareto-optimal team configurations optimizing for development speed (value), software quality (quality), and cost per feature (cost).
 
-The simulation is fully operational. The formal model specification is in **`paper/main.tex`** (Section 3), which supersedes the older docs/ files.
+The simulation is fully operational. The formal model specification is in **`paper/main.tex`** (Section 3).
 
 ---
 
@@ -14,13 +14,7 @@ The simulation is fully operational. The formal model specification is in **`pap
 
 ```
 paper/
-    main.tex            formal model specification (AUTHORITATIVE — supersedes docs/)
-
-docs/                   DEPRECATED — superseded by paper/main.tex
-    CONCEPT.md          original concept
-    ROLES.md            15 agent/human roles (old model)
-    VARIABLES.md        all modelling variables (old model)
-    FRAMEWORK.md        formal mathematical framework (old model)
+    main.tex            formal model specification (AUTHORITATIVE)
 
 src/                    Python simulation package
     config.py           TeamConfiguration, SimulationHorizon
@@ -120,7 +114,7 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 | 3 | Bug Fixing Agent | Production |
 | 4 | Refactoring Agent (reduces technical debt D_tech) | Production |
 | 5 | Code Review Agent (detection degrades with change volume and debt) | Detection |
-| 6 | Security Audit Agent (detects security-class bugs at fixed rate d_SA) | Detection |
+| 6 | Security Audit Agent (detects security-class bugs; degrades with change volume and debt) | Detection |
 | 7 | Test Development Agent (grows test suite; CI detection) | Detection |
 | 8 | Developer Documentation Agent (reduces human monitoring overhead) | Support |
 | — | Human Developer (count = N; supervises agents, reviews arch proposals, codes) | Human |

@@ -169,10 +169,9 @@ def step_sprint(
     surv_sec_cr = surv_sec_t - CR_det_sec
 
     # Stage 3 — Security Audit (acts only on security bugs that survived test + CR).
-    # Same volume split as code review, but deliberately no delta_D factor: the
-    # audit is not sensitive to technical debt.
+    # Same volume split and debt sensitivity as code review.
     a_SA = A_active[5]   # Security Audit Agent (k=6, index 5) — background service
-    d_SA_eff = params.d_SA * _volume_factor(impl, a_SA, params.alpha_size)
+    d_SA_eff = params.d_SA * delta_D * _volume_factor(impl, a_SA, params.alpha_size)
     SA_det_sec = int(rng.binomial(surv_sec_cr, d_SA_eff)) if surv_sec_cr > 0 else 0
 
     state.B_kno_min += test_det_min + CR_det_min
