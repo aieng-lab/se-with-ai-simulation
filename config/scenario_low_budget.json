@@ -4,9 +4,7 @@
     "f_arch_chg": 0.3,
     "r_arch_chg": 2.0,
     "r_F": 3.0,
-    "r_fix_minor": 5.0,
-    "r_fix_major": 2.0,
-    "r_fix_sec": 1.5,
+    "r_fix": 5.0,
     "r_refactor": 0.2,
     "r_test": 3.0,
     "r_doc": 2.0

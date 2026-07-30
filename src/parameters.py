@@ -22,9 +22,7 @@ class ScenarioParameters:
     f_arch_chg: float                # Fraction of implemented features generating architecture change requests
     r_arch_chg: float                # Architecture change request resolution rate (per agent per sprint)
     r_F: float                       # Feature implementation rate (per agent)
-    r_fix_minor: float               # Minor bug fix rate
-    r_fix_major: float               # Major bug fix rate
-    r_fix_sec: float                 # Security bug fix rate
+    r_fix: float                     # Bug fix rate (per Bug Fixing Agent per sprint at zero debt)
     r_refactor: float                # Debt reduction per Refactoring Agent per sprint
     r_test: float                    # Test development rate (per agent)
     r_doc: float                     # Developer documentation rate
@@ -65,7 +63,7 @@ class ScenarioParameters:
     rho_esc: float                   # Per-agent escalation rate
 
     # --- Costs ---
-    # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix_major/
+    # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix/
     # r_refactor/1/1/r_test/r_doc for roles 1-8), not per sprint.
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Human developer annual cost

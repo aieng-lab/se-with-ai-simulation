@@ -114,9 +114,8 @@ class TestCostAccounting:
         rep = trace.replications[0]
         F_completed = trace.traces[0].snapshots[-1].F_completed
 
-        r_fix = params.r_fix_minor + params.r_fix_major + params.r_fix_sec
         agent_rates = (
-            params.r_F, params.r_arch_chg, r_fix, params.r_refactor,
+            params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
             1.0, 1.0, params.r_test, params.r_doc,
         )
         qa_sprint_count = sum(

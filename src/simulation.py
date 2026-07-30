@@ -173,9 +173,8 @@ def _run_replication(
     # c_token is a cost per unit of role-specific throughput; Code Review and
     # Security Audit (indices 4, 5) are background services with no discrete unit
     # of output, so they keep rate 1 — a flat per-sprint subscription cost.
-    r_fix = params.r_fix_minor + params.r_fix_major + params.r_fix_sec
     agent_rates = (
-        params.r_F, params.r_arch_chg, r_fix, params.r_refactor,
+        params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
         1.0, 1.0, params.r_test, params.r_doc,
     )
     C_agents = (

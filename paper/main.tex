@@ -405,9 +405,7 @@ $r_\mathrm{arch,chg}$  & Architecture change requests resolved per Architecture 
 $r_\mathrm{refactor}$  & Debt reduction per Refactoring Agent per sprint        & $\mathbb{R}_{>0}$  & 9 \\[2pt]
 $r_\mathrm{test}$      & Tests written per agent per sprint                    & $\mathbb{R}_{>0}$  & 4 \\[2pt]
 $r_\mathrm{doc}$       & Documentation items written per agent per sprint    & $\mathbb{R}_{>0}$  & 9 \\[2pt]
-$r_\mathrm{fix,min}$   & Minor bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$  & 8 \\[2pt]
-$r_\mathrm{fix,maj}$   & Major bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$  & 8 \\[2pt]
-$r_\mathrm{fix,sec}$   & Security bugs fixed per agent-sprint unit of work budget & $\mathbb{R}_{>0}$ & 8 \\
+$r_\mathrm{fix}$       & Bugs fixed per Bug Fixing Agent per sprint            & $\mathbb{R}_{>0}$  & 8 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -813,24 +811,24 @@ consumes one unit of the integer budget, so:
 \end{equation}
 where $B^H_1(t) = \mathrm{fix\_human}(t)$.
 
-\emph{Phase 2 — Agent fixes (debt-slowed):} Bug Fixing Agents drain the
-remaining queues with a shared work budget
+\emph{Phase 2 — Agent fixes (debt-slowed):} The Bug Fixing Agents then drain the
+remaining queues, traversing the same tiers in the same order with a shared budget
 \begin{equation}
-  W(t) = a_3\,\delta_D,
+  B^A_1(t) = \bigl\lfloor a_3\,\delta_D\,r_\mathrm{fix}\bigr\rfloor,
   \label{eq:fix_budget}
 \end{equation}
-measured in agent-sprint units and scaled by the debt amplifier $\delta_D$. Fixing one bug of type $x$ consumes $1/r_\mathrm{fix,x}$
-work units:
+i.e., the per-agent fix rate $r_\mathrm{fix}$ scaled by the number of deployed Bug Fixing
+Agents and by the debt amplifier $\delta_D$. As for the humans, each bug fixed consumes one
+unit of this budget, irrespective of its severity:
 \begin{align}
-  n^A_i(t) &= \min\!\Bigl(\text{queue}_i(t) - n^H_i(t),\;
-    \bigl\lfloor W_i(t)\,r_\mathrm{fix,x_i}\bigr\rfloor\Bigr),
+  n^A_i(t) &= \min\!\Bigl(\text{queue}_i(t) - n^H_i(t),\; B^A_i(t)\Bigr),
   \label{eq:fixes} \\
-  W_{i+1}(t) &= W_i(t) - n^A_i(t)\,/\,r_\mathrm{fix,x_i}, \nonumber
+  B^A_{i+1}(t) &= B^A_i(t) - n^A_i(t). \nonumber
 \end{align}
-where $W_1 = W(t)$ and $x_i$ is the bug type of tier $i$.
-Separate rates $r_\mathrm{fix,min} \geq r_\mathrm{fix,maj} \geq r_\mathrm{fix,sec}$
-reflect the increasing effort required for major and security defects.
-Human fixes are debt-independent and take priority, so a well-staffed team can
+The two phases therefore differ only in how their budget is derived: the human budget follows
+from the available human capacity and is debt-independent, whereas the agent budget scales with
+the number of deployed agents and shrinks as technical debt accumulates.
+Since human fixes take priority, a well-staffed team can
 shield the known-bug queue from debt effects even when $\delta_D$ is low.
 
 Letting $n_i(t) = n^H_i(t) + n^A_i(t)$ denote the total bugs fixed from tier $i$
@@ -959,12 +957,8 @@ need to model these costs as a function of the throughput. By modeling the costs
 two aspects and allow independent settings of throughout and costs. 
 We reusing the rates already introduced for the sprint
 transition function where feasible (Table~\ref{tab:params:pipeline}), i.e., $r_1 = r_F$,
-$r_2 = r_\mathrm{arch,chg}$, $r_4 = r_\mathrm{refactor}$, $r_7 = r_\mathrm{test}$,
-and $r_8 = r_\mathrm{doc}$. The Bug Fixing Agent (role $k=3$) has three
-severity-specific fix rates which we sum up, i.e., 
-$r_3 = r_\mathrm{fix,min} + r_\mathrm{fix,maj} + r_\mathrm{fix,sec}$, the
-agent's total bug-fixing throughput across all severities, as the rate for
-costing purposes. The Code Review and Security Audit Agents ($k=5,6$) have no
+$r_2 = r_\mathrm{arch,chg}$, $r_3 = r_\mathrm{fix}$, $r_4 = r_\mathrm{refactor}$,
+$r_7 = r_\mathrm{test}$, and $r_8 = r_\mathrm{doc}$. The Code Review and Security Audit Agents ($k=5,6$) have no
 throughput rate in the sprint transition function, because they run as background services with no discrete unit of output: each deployed instance inspects whatever change volume the sprint produces. We therefore set
 $r_5 = r_6 = 1$, which charges the investment into these roles as a flat subscription fee per deployed instance per sprint. Note that this makes the cost of these roles linear in their headcount, while their detection benefit is concave in the headcount by Eq.~\eqref{eq:volume_factor}. This trade-off is what bounds the number of these agents in an optimal configuration, even though the model imposes no explicit cap on them.
 
@@ -1290,11 +1284,9 @@ Role & Parameter & Low & Medium & High & Source \\
   & $c_\mathrm{token}$     & 11.14 & 19.00 & 38.00 & 5 times the cost of feature implementation \\
   & $r_\mathrm{arch,chg}$  & 38    & 38    & 38    & Five times slower than feature implementation \\
 \midrule
-\multirow{4}{2.4cm}{3 -- Bug Fixing}
+\multirow{2}{2.4cm}{3 -- Bug Fixing}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & \cite{morph2026aicodingcosts} \\
-  & $r_\mathrm{fix,min}$   & 798  & 798  & 798  & 4.2 times faster than feature implementation, based on cost estimate \\
-  & $r_\mathrm{fix,maj}$   & 798  & 798  & 798  & Same as $r_\mathrm{fix,min}$ \\
-  & $r_\mathrm{fix,sec}$   & 798  & 798  & 798  & Same as $r_\mathrm{fix,min}$ \\
+  & $r_\mathrm{fix}$       & 798  & 798  & 798  & 4.2 times faster than feature implementation, based on cost estimate \\
 \midrule
 \multirow{2}{2.4cm}{4 -- Refactoring}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\

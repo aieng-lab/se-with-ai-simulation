@@ -261,7 +261,7 @@ class TestDetectionGating:
         """High injection rate, nothing ever gets fixed, so B_kno reflects detection only."""
         return dataclasses.replace(
             base_params, r_bugs=2.0,
-            r_fix_minor=0.0, r_fix_major=0.0, r_fix_sec=0.0, f_fix=0.0,
+            r_fix=0.0, f_fix=0.0,
             **overrides,
         )
 

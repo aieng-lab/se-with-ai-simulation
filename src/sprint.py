@@ -206,17 +206,14 @@ def step_sprint(
 
     # ------------------------------------------------------------------
     # Bug fixing — strict priority: sec > maj > min; rel > kno
-    # Humans fix first (debt-independent count budget), then agents (work budget).
+    # Both phases spend a count budget of bugs, one unit per fix regardless of
+    # severity. Humans fix first (debt-independent budget), then agents (budget
+    # scaled by headcount and slowed by debt).
     # ------------------------------------------------------------------
     a_4 = A_active[2]   # Bug Fixing Agent (k=3, index 2)
 
-    def _drain(queue: int, rate: float, budget: float) -> tuple[int, float]:
-        """Fix as many bugs as agent work budget allows; return (fixes, budget_used)."""
-        n = min(queue, int(budget * rate))
-        return n, (n / rate if rate > 0 else 0.0)
-
     def _drain_count(queue: int, budget: int) -> int:
-        """Fix as many bugs as human count budget allows; return fixes."""
+        """Fix as many bugs as the count budget allows; return fixes."""
         return min(queue, budget)
 
     # Human fixes (debt-independent, same priority order)
@@ -228,14 +225,14 @@ def step_sprint(
     h_rel_fixes_min = _drain_count(state.B_rel_min, hb); hb -= h_rel_fixes_min; state.B_rel_min -= h_rel_fixes_min
     h_fixes_min     = _drain_count(state.B_kno_min, hb); hb -= h_fixes_min;     state.B_kno_min -= h_fixes_min
 
-    # Agent fixes (debt-slowed work budget, drain remaining queues)
-    W = float(a_4) * delta_D
-    rel_fixes_sec, w = _drain(state.B_rel_sec, params.r_fix_sec,   W); W -= w; state.B_rel_sec -= rel_fixes_sec
-    fixes_sec,     w = _drain(state.B_kno_sec, params.r_fix_sec,   W); W -= w; state.B_kno_sec -= fixes_sec
-    rel_fixes_maj, w = _drain(state.B_rel_maj, params.r_fix_major, W); W -= w; state.B_rel_maj -= rel_fixes_maj
-    fixes_maj,     w = _drain(state.B_kno_maj, params.r_fix_major, W); W -= w; state.B_kno_maj -= fixes_maj
-    rel_fixes_min, w = _drain(state.B_rel_min, params.r_fix_minor, W); W -= w; state.B_rel_min -= rel_fixes_min
-    fixes_min,     w = _drain(state.B_kno_min, params.r_fix_minor, W); W -= w; state.B_kno_min -= fixes_min
+    # Agent fixes (debt-slowed count budget, drain remaining queues)
+    ab = int(a_4 * delta_D * params.r_fix)
+    rel_fixes_sec = _drain_count(state.B_rel_sec, ab); ab -= rel_fixes_sec; state.B_rel_sec -= rel_fixes_sec
+    fixes_sec     = _drain_count(state.B_kno_sec, ab); ab -= fixes_sec;     state.B_kno_sec -= fixes_sec
+    rel_fixes_maj = _drain_count(state.B_rel_maj, ab); ab -= rel_fixes_maj; state.B_rel_maj -= rel_fixes_maj
+    fixes_maj     = _drain_count(state.B_kno_maj, ab); ab -= fixes_maj;     state.B_kno_maj -= fixes_maj
+    rel_fixes_min = _drain_count(state.B_rel_min, ab); ab -= rel_fixes_min; state.B_rel_min -= rel_fixes_min
+    fixes_min     = _drain_count(state.B_kno_min, ab); ab -= fixes_min;     state.B_kno_min -= fixes_min
 
     total_fixes = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
                  + h_fixes_min    + h_fixes_maj    + h_fixes_sec
