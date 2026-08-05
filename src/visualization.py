@@ -12,10 +12,20 @@ Public API — plot functions
     plot_trajectories(traces_per_config, pareto_keys, fields, title)    -> Figure
     plot_comparison_pareto(scenarios, title)                     -> Figure
 
+Public API — campaign-level plots (paper §5)
+--------------------------------------------
+These take the derived frontier DataFrame of `src.results_analysis`, not the
+per-search `objectives` dicts.
+
+    plot_quality_cost_panels(df, colour_by, title)               -> Figure
+    plot_quality_cost_facets(df, group, title)                   -> Figure
+    plot_value_saturation(df, threshold, title)                  -> Figure
+
 Public API — result-directory helpers
 --------------------------------------
     visualize_single(result_dir, out_dir, fmt, mean_pareto)      -> None
     visualize_multi(result_dirs, out_dir, fmt, mean_pareto)      -> None
+    save_figure(fig, out_dir, name, fmt)                         -> None
 """
 
 from __future__ import annotations
@@ -482,6 +492,182 @@ def plot_comparison_pareto(
 
 
 # ---------------------------------------------------------------------------
+# Campaign-level plots (paper §5)
+# ---------------------------------------------------------------------------
+
+# The three cost views §5 asks for: total, human developers only, agents only.
+_COST_PANELS: tuple[tuple[str, str], ...] = (
+    ("cost_mean",       "total cost / feature ($)"),
+    ("cost_human_mean", "human developer cost / feature ($)"),
+    ("cost_agent_mean", "agent cost / feature ($)"),
+)
+
+# Ordered so the legend reads low → medium → high rather than alphabetically.
+_TIER_ORDER = ("low", "medium", "high")
+_TIER_COLORS = {"low": cm.tab10(0), "medium": cm.tab10(1), "high": cm.tab10(3)}
+
+
+def _tier_groups(df: "pd.DataFrame", column: str) -> "list[tuple[str, pd.DataFrame]]":
+    """(tier, subframe) pairs in low→medium→high order, skipping empty tiers.
+
+    The campaign may be partial, so a tier can be absent entirely; callers must
+    not assume all three are present.
+    """
+    return [
+        (tier, df[df[column] == tier])
+        for tier in _TIER_ORDER
+        if (df[column] == tier).any()
+    ]
+
+
+def _scatter_quality_cost(
+    ax,
+    df: "pd.DataFrame",
+    cost_field: str,
+    color,
+    label: str | None = None,
+) -> None:
+    """One quality-vs-cost point cloud on `ax`, log–log."""
+    x = df[cost_field].to_numpy(dtype=float)
+    y = df["quality_mean"].to_numpy(dtype=float)
+    # A frontier point can have zero escaped bugs; log scale drops those, so
+    # clip them to just under the smallest positive value to keep them visible.
+    positive = y[y > 0]
+    if positive.size and (y <= 0).any():
+        y = np.where(y > 0, y, positive.min() * 0.5)
+    # Marker size tracks the point count: the throughput-filtered fronts of §5 are
+    # an order of magnitude smaller than the full recorded frontiers, and markers
+    # tuned for a 36,000-point cloud vanish on a 10,000-point one.
+    n = len(x)
+    size, alpha = (18, 0.55) if n <= 2_000 else (10, 0.45) if n <= 15_000 else (6, 0.35)
+    ax.scatter(x, y, s=size, alpha=alpha, color=color, label=label, linewidths=0)
+
+
+def plot_quality_cost_panels(
+    df: "pd.DataFrame",
+    colour_by: str | None = None,
+    title: str = "",
+) -> "Figure":
+    """Quality against total / human / agent cost per feature — the three §5 plots.
+
+    `df` is the derived frontier table of `src.results_analysis`.  Axes are
+    log–log because both objectives span several orders of magnitude across the
+    bugimpact and project tiers.  `colour_by` names a tier column (e.g.
+    ``"tier_debt"``); when omitted all points share one colour.
+    """
+    with plt.style.context(_STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        if title:
+            fig.suptitle(title, fontsize=12, y=1.02)
+
+        for ax, (field, xlabel) in zip(axes, _COST_PANELS):
+            if colour_by and colour_by in df.columns:
+                for tier, sub in _tier_groups(df, colour_by):
+                    _scatter_quality_cost(ax, sub, field, _TIER_COLORS[tier], tier)
+            else:
+                _scatter_quality_cost(ax, df, field, _PARETO_COLOR)
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_xlabel(f"↓  {xlabel}", fontsize=9)
+
+        axes[0].set_ylabel("↓  quality (weighted escaped bugs / feature)", fontsize=9)
+        if colour_by and colour_by in df.columns:
+            handles, labels = axes[0].get_legend_handles_labels()
+            if handles:
+                fig.legend(handles, labels, loc="upper right", fontsize=8,
+                           title=colour_by.replace("tier_", "") + " tier",
+                           markerscale=3)
+        fig.tight_layout()
+    return fig
+
+
+def plot_quality_cost_facets(
+    df: "pd.DataFrame",
+    group: str,
+    title: str = "",
+) -> "Figure":
+    """The three quality-vs-cost panels, faceted by the tier of one scenario group.
+
+    Rows are the tiers of `group` (low/medium/high, only those present in `df`),
+    columns are the total / human / agent cost views.  All panels share axes so
+    the tiers can be compared directly.
+    """
+    column = f"tier_{group}"
+    if column not in df.columns:
+        raise KeyError(f"{column!r} is not a column of the frontier table")
+    tiers = _tier_groups(df, column)
+    if not tiers:
+        raise ValueError(f"no rows for any tier of {group!r}")
+
+    with plt.style.context(_STYLE):
+        fig, axes = plt.subplots(
+            len(tiers), 3,
+            figsize=(15, 4.2 * len(tiers)),
+            sharex="col", sharey=True,
+            squeeze=False,
+        )
+        fig.suptitle(title or f"Quality vs. cost by {group} tier", fontsize=12, y=1.0)
+
+        for row, (tier, sub) in enumerate(tiers):
+            for col, (field, xlabel) in enumerate(_COST_PANELS):
+                ax = axes[row][col]
+                _scatter_quality_cost(ax, sub, field, _TIER_COLORS[tier])
+                ax.set_xscale("log")
+                ax.set_yscale("log")
+                if row == len(tiers) - 1:
+                    ax.set_xlabel(f"↓  {xlabel}", fontsize=9)
+                if col == 0:
+                    ax.set_ylabel(f"{group} = {tier}\n↓  quality (bugs / feature)", fontsize=9)
+                ax.set_title(f"n = {len(sub)}", fontsize=8, loc="right")
+        fig.tight_layout()
+    return fig
+
+
+def plot_value_saturation(
+    df: "pd.DataFrame",
+    threshold: float = 0.99,
+    title: str = "",
+) -> "Figure":
+    """Distribution of `value / r_arrival` over the frontiers, per scenario group.
+
+    Supports the §5 claim that value sits at the feature arrival rate: one box
+    per tier per group, with reference lines at 1.0 and at `threshold`.
+    """
+    groups = [c for c in df.columns if c.startswith("tier_")]
+    if not groups:
+        raise KeyError("frontier table has no tier_* columns")
+
+    with plt.style.context(_STYLE):
+        fig, axes = plt.subplots(1, len(groups), figsize=(3.2 * len(groups), 4.5),
+                                 sharey=True, squeeze=False)
+        fig.suptitle(title or "value / r_arrival across the Pareto frontiers",
+                     fontsize=12, y=1.02)
+
+        for ax, column in zip(axes[0], groups):
+            tiers = _tier_groups(df, column)
+            data = [sub["value_ratio"].to_numpy(dtype=float) for _, sub in tiers]
+            labels = [t for t, _ in tiers]
+            bp = ax.boxplot(data, showfliers=True, patch_artist=True,
+                            widths=0.55, flierprops={"markersize": 1.5, "alpha": 0.3})
+            # Set tick labels separately: boxplot's own keyword was renamed from
+            # `labels` to `tick_labels` in matplotlib 3.9.
+            ax.set_xticks(range(1, len(labels) + 1))
+            ax.set_xticklabels(labels)
+            for patch, tier in zip(bp["boxes"], labels):
+                patch.set_facecolor(_TIER_COLORS[tier])
+                patch.set_alpha(0.45)
+            for median in bp["medians"]:
+                median.set_color("black")
+            ax.axhline(1.0, color="black", linewidth=0.8, zorder=0)
+            ax.axhline(threshold, color="crimson", linewidth=0.8, linestyle="--", zorder=0)
+            ax.set_xlabel(column.replace("tier_", ""), fontsize=9)
+
+        axes[0][0].set_ylabel("value / r_arrival", fontsize=9)
+        fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Result-directory helpers
 # ---------------------------------------------------------------------------
 
@@ -558,12 +744,16 @@ def _scenario_label(result_dir: Path, manifest: dict) -> str:
     return Path(scenario).stem if scenario else result_dir.name
 
 
-def _save(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
+def save_figure(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
+    """Write `fig` to ``<out_dir>/<name>.<fmt>``, close it, and report the path."""
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{name}.{fmt}"
     fig.savefig(dest, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {dest}")
+
+
+_save = save_figure   # internal alias, kept for the existing call sites below
 
 
 def visualize_single(result_dir: Path, out_dir: Path, fmt: str, mean_pareto: bool = False) -> None:

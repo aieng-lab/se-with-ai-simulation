@@ -29,6 +29,8 @@ src/                    Python simulation package
     pareto.py           aggregate_config_result (bootstrap CI), pareto_frontier (CI-aware)
     results.py          to_dataframe, save_result/load_result, save_traces/load_traces
     analysis.py         mean_trajectory, quantile_band, final_distribution, convergence_check
+    results_analysis.py campaign-level §5 analysis: flat-table schema, cost split,
+                        value saturation, throughput-filtered quality/cost front
     search_configurations.py random + evolutionary search over agent compositions
     visualization.py    matplotlib plot functions + visualize_single/visualize_multi helpers
     main.py             CLI: `python -m src.main run|analyze|optimize|visualize`
@@ -48,9 +50,10 @@ config/
 scripts/
     generate_search_configs.py  write the 243 config/search/*.json from search_default.json
     collect_results.py          consolidate a campaign into frontiers.csv + scenarios.csv
+    analyze_results.py          the §5 results analysis: derived tables + figures
 run_experiments.sh      campaign driver: 486 searches in parallel, resumable (§4.2)
 
-tests/                  pytest suite (188 tests, ~1.5 s)
+tests/                  pytest suite (239 tests, ~12 s)
 results/                persisted sweep and campaign results (not committed)
 ```
 
@@ -102,6 +105,27 @@ Results land in `results/experiments/<scenario_id>/<strategy>/`; `index.tsv` rec
 line per finished job. Other env knobs: `FILTER` (config glob), `STRATEGIES`, `SAMPLES`,
 `OUT_ROOT`, `CONFIG_DIR`, `FORCE=1` (ignore existing results).
 
+**Run the §5 results analysis** (needs a finished or partial campaign):
+```bash
+python scripts/analyze_results.py                                  # reads results/experiments
+python scripts/analyze_results.py --frontiers results/experiments/frontiers.csv  # fast path
+python scripts/analyze_results.py --out-dir /tmp/analysis --format png --per-scenario
+```
+Writes into `results/analysis/`. §5 splits into two objects, and the outputs follow:
+
+- *Bullet 1 — the recorded three-objective frontier*: `frontiers_derived.csv` (frontier
+  rows plus `value_ratio`, the human/agent cost split, `quality_cost_ratio`),
+  `value_saturation.csv`, `value_deviation_patterns.csv`, `plots/value_saturation.*`.
+- *Bullets 2–3 — the throughput-filtered quality/cost front*: `filtered_front.csv`,
+  `filtered_front_summary.csv`, `quality_cost_ranking.csv`, `frontier_extremes.csv`,
+  `plots/quality_vs_cost.*` and one `quality_vs_cost_by_<group>.*` facet per scenario
+  group. `--per-scenario` additionally dumps one figure per search.
+
+Plus `headline_summary.json` with the numbers §5 quotes in prose.
+
+Frontiers are analysed **per (scenario, strategy)**. `--value-threshold` (default 0.99)
+classifies bullet-1 deviations; `--throughput-threshold` (default 0.98) is the §5 filter.
+
 **Generate visualizations:**
 ```bash
 python -m src.main visualize results/search_default [--out results/search_default/plots]
@@ -127,6 +151,8 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
 - **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `frontier` — the `ConfigResult`s are buffered in memory and only frontier members are written, *after* `pareto_frontier` has run. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`.
 - **21-dimensional state vector**: features (2), bugs by type×stage (12), technical debt and human capacity queues (5), test infrastructure and documentation (2).
+- **The §5 filtered front is computed over all candidates, not the recorded frontier**: `search_summary.json` stores objectives *and* config fields for every simulated candidate, not just the frontier ones. `results_analysis.build_campaign` filters that full pool to `value >= 0.98·r_arrival` and runs a fresh two-objective pass. Restricting to the recorded three-objective frontier would be correct under *strict* dominance (a 2-D non-dominated point cannot be 3-D dominated) but loses points under the CI-aware rule of §3.10, because a candidate can be eliminated in 3-D on a *value* significance that no longer applies once value is dropped. The 2-D pass reuses `pareto.pareto_frontier` with the value dimension flattened to a constant — do not write a second dominance implementation. Note the resulting front is only monotone in (quality, cost) after dropping the CI-co-retained points; that is expected.
+- **The human/agent cost split is reconstructed, not stored**: `cost` is a single scalar all the way from `ReplicationResult` to `frontiers.csv`. But `C_human` and `C_agents` (`simulation.cost_components`) are deterministic given `(config, params, T)` — only the `max(1, F_completed(T))` denominator is stochastic — so `cost_human = cost · C_human/C_total` is *exact*, for a single replication and for the mean alike. `results_analysis.add_derived_columns` uses this to split any persisted `cost_mean` with no re-simulation. Keep the formula in `cost_components` only; both the simulator and the analysis call it.
 
 ---
 

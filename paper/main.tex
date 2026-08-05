@@ -1392,16 +1392,23 @@ $G$ / $n_\mathrm{off}$          & 90 / 100            & Evolutionary search: 90\
 \end{tabularx}
 \end{table}
 
-% ---- 4.3 ----
-\subsection{Evaluation Metrics and Comparisons}
-\label{sec:setup:metrics}
-
-
 
 % ============================================================
 \section{Results}
 \label{sec:results}
 % ============================================================
+
+
+We analyze separately by the three Pareto objectives
+\begin{itemize}
+  \item first determine that value is close to $r_\mathrm{arrival}$ times the number of sprints for all scenarios for the whole Pareto front. Analyze cases where this is not the case and see if there is a pattern. 
+  \item Since this holds, we can then filter the results such that they only contain values within 98\% of $T \cdot r_\mathrm{arrival}$, i.e., filtering restricting the results to the cases were throughput is maximized. 
+  \item We can then compute a Pareto front for the remaining two objectives, i.e., quality and cost. We can then analyze this new throughput-filtered quality/cost Pareto front
+  \item For the quality/cost pareto front, do the following:
+  \begin{itemize}
+    \item Visualize this through three plots: quality vs. costs (total), quality vs. costs (human devs), quality vs. costs (agent costs).
+  \end{itemize}
+\end{itemize}
 
 
 % ============================================================

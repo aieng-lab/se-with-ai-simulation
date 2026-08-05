@@ -75,6 +75,48 @@ class ConfigTrace:
     traces: tuple[ReplicationTrace, ...]
 
 
+def phase_sprint_counts(config: TeamConfiguration, T: int) -> tuple[int, int]:
+    """(dev_sprint_count, qa_sprint_count) over a T-sprint horizon.
+
+    A sprint belongs to the feature freeze when it falls in the last `F_freeze`
+    sprints of its release cycle of length `R`.
+    """
+    qa_sprint_count = sum(
+        1 for t in range(T)
+        if (t % config.R) >= (config.R - config.F_freeze)
+    )
+    return T - qa_sprint_count, qa_sprint_count
+
+
+def cost_components(
+    config: TeamConfiguration,
+    params: ScenarioParameters,
+    T: int,
+) -> tuple[float, float]:
+    """(C_human, C_agents) over a T-sprint horizon — Eqs. (cost_human), (cost_agents).
+
+    Both are deterministic given `(config, params, T)`; only the per-feature
+    denominator of the cost objective is stochastic. `src.results_analysis` relies
+    on this to split a persisted `cost_mean` into its human and agent shares
+    without re-simulating.
+    """
+    C_human = config.N * params.c_salary * T / 52
+    # Agent costs are split by phase: dev sprints use A_dev, freeze sprints use A_qa.
+    dev_sprint_count, qa_sprint_count = phase_sprint_counts(config, T)
+    # c_token is a cost per unit of role-specific throughput; Code Review and
+    # Security Audit (indices 4, 5) are background services with no discrete unit
+    # of output, so they keep rate 1 — a flat per-sprint subscription cost.
+    agent_rates = (
+        params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
+        1.0, 1.0, params.r_test, params.r_doc,
+    )
+    C_agents = (
+        sum(config.A_dev[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
+        + sum(config.A_qa[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
+    )
+    return C_human, C_agents
+
+
 def run_configuration(
     config: TeamConfiguration,
     settings: SimulationHorizon,
@@ -163,24 +205,7 @@ def _run_replication(
     # ------------------------------------------------------------------
     # Compute Costs
     # ------------------------------------------------------------------
-    C_human = config.N * params.c_salary * settings.T / 52
-    # Agent costs are split by phase: dev sprints use A_dev, freeze sprints use A_qa.
-    qa_sprint_count = sum(
-        1 for t in range(settings.T)
-        if (t % config.R) >= (config.R - config.F_freeze)
-    )
-    dev_sprint_count = settings.T - qa_sprint_count
-    # c_token is a cost per unit of role-specific throughput; Code Review and
-    # Security Audit (indices 4, 5) are background services with no discrete unit
-    # of output, so they keep rate 1 — a flat per-sprint subscription cost.
-    agent_rates = (
-        params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
-        1.0, 1.0, params.r_test, params.r_doc,
-    )
-    C_agents = (
-        sum(config.A_dev[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
-        + sum(config.A_qa[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
-    )
+    C_human, C_agents = cost_components(config, params, settings.T)
     C_total = C_human + C_agents
 
     # ------------------------------------------------------------------
