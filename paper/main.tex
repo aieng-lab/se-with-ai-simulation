@@ -55,6 +55,22 @@ TODO: write abstract.
 % ============================================================
 \section{Introduction}
 \label{sec:introduction}
+
+\begin{quote}
+  \textit{If that \$500000 engineer did not consume at least \$250000 worth of tokens, I am going to be deeply alarmed} --- Jensen Huang, CEO of Nvidia (March, 2026).
+\end{quote}
+
+Agentic AI systems based on Large Language Models (LLMs) -- hereafter refered to as agents -- have been shown to have strong capabilties in software engineering tasks, including code generation~\citep{TODO}, code review~\citep{TODO}, bug fixing~\citep{TODO}, and test generation~\citep{TODO}. This led to a rapid adoption of these agents in software development teams~\cite{TODO}. Recently, the uncritical adoption and unrestricted use of these agents is being roled back, not least due to the spiraling costs~\citep{TODO}. Such problems are not unexpected with new technology, where we are still trying to understand all implications. Nevertheless, this raises the question is Jensen Huang's general estimate that developers should consume at least half of their salary in agent tokens is reasonable, or whether there are better ways to compose human and agent workforces. This is the central research question of this work:
+
+\begin{description}
+  \item[RQ] How should software development teams compose their human and agent workforce to achieve the best trade-off between value, quality, and cost?
+\end{description}
+
+To answer this question, we develop a simulation model of mixed AI-human software development teams. The core assumption of our process is that the human is still owning the code, takes responsibility for the quality, and guides the key design decisions. Agents support the human by implementing features, fixing bugs, and providing quality assurance, while also draining resources from the human developers because they require supervision. We simulate the development as a stochastic process that evolves over multiple sprints, where each sprint represents a fixed-duration development iteration. Within each sprint, human developers and agents implement features and fix bugs. Agents may fail at this task which escalates the responsibility for addressing an issue to the human developers. The new bugs, that are introduced through the development, can be detected by agents that review code, audit for security issues, and generate tests.
+Through these activities, new bugs are introduced, which agents can detect by providing tests or reviewing code. Large changes to the architecture require the sign-of by the human developers. 
+
+The model is based on a discrete-time stochastic dynamical system that simulates the evolution of a software project over multiple sprints. The state of the project is represented by a 21-dimensional vector that tracks features, bugs, technical debt, and human capacity. The model incorporates eight specialist AI agent roles and one human developer role, each with specific functions and interactions. The simulation allows for different team compositions and process parameters, enabling the exploration of trade-offs between value, quality, and cost.
+
 % ============================================================
 %
 % CONTENT OUTLINE
@@ -163,11 +179,18 @@ We can derive metrics that describe the utility of a team configuration using th
 
 
 There is only a single human role included in the model: the \textit{Human
-Developer}. Each of the $N$ developers communicates with the other developers, supervises at most $M$ agents,
-reviews and approves architecture proposals, resolves
-escalations that agents cannot handle autonomously, and contributes new
-features and bug fixes with the remaining time. Their total available time is constrained at
-$H_\mathrm{capacity}$ hours per sprint. 
+Developer}. Developers communicate with each other, supervise at most $M$ agents each,
+review and approve architecture proposals, resolve
+escalations that agents cannot handle autonomously, and contribute new
+features and bug fixes with the remaining time.
+
+We do not assume that developers dedicate all of their time to the project. $N$ is therefore
+not a headcount but a \emph{staffing level} measured in full-time equivalents (FTE), and it
+need not be an integer: $N = 0.25$ describes one developer who devotes a quarter of their
+working time to the project, and $N = 2.5$ describes two full-time developers plus one
+half-time developer. Accordingly, $H_\mathrm{capacity}$ is the gross time budget of one FTE
+per sprint, so that the gross budget available to the whole team is $N \cdot
+H_\mathrm{capacity}$ hours per sprint, and the supervision capacity of one FTE is $M$ agents.
 
 We have eight specialist AI agent roles, indexed $k = 1,\ldots,8$. All agents of the
 same type are assumed to be statistically identical. We further distinguish between agents that
@@ -245,8 +268,8 @@ i.e., focus on feature addition versus focus on quality assurance and bug fixing
 \subsection{Project and team structure}
 \label{sec:model:team}
 
-Given the above description of the roles and release cycle, we can now specify the project and team structure using six control variables: the human developer count
-$N \geq 1$, the number of agents each developer can control at most $M \geq 1$, the number of sprints per release $R \geq 1$, the length of the feature freeze period $F_\mathrm{freeze} \in
+Given the above description of the roles and release cycle, we can now specify the project and team structure using six control variables: the human staffing level in FTE
+$N \in \mathbb{R}_{>0}$, the number of agents each developer can control at most $M \geq 1$, the number of sprints per release $R \geq 1$, the length of the feature freeze period $F_\mathrm{freeze} \in
 [0, R-1]$, and two 8-element agent composition vectors $\mathbf{A}_\mathrm{dev}$ and
 $\mathbf{A}_\mathrm{qa}$ described below.
 
@@ -258,8 +281,7 @@ $\mathcal{K}_\mathrm{bg} = \{5,6\}$. Both vectors satisfy the same \emph{budget 
   n_\mathrm{sup}(t) = \sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\cdot,k} \leq N \cdot M,
   \label{eq:budget}
 \end{equation}
-i.e., the number of active supervised agents is bounded by the supervision capacity of the human developers.
-The inequality allows for the possibility of leaving some agent slots unfilled, which may be optimal in some cases to reduce coordination overhead and free up human capacity for review, escalation, and implementation work.
+i.e., the number of active supervised agents is bounded by the supervision capacity of the human developers. Note that if $N \cdot M < 1$, then no supervised agents can be deployed at all, which would mean agents can only be used to aid with review tasks. Since this would not be agentic development, we assume that $N \cdot M \geq 1$ in all configurations. The inequality allows for the possibility of leaving some agent slots unfilled, which may be optimal in some cases to reduce coordination overhead and free up human capacity for review, escalation, and implementation work.
 The counts $a_{\cdot,5}$ and $a_{\cdot,6}$ of the background services are unbounded, since these agents require no supervision and therefore do not compete for the span of control. The only brake on them is their token cost, since at some point investing more in detecting possible bugs yields diminishing returns. The dev-phase and QA-phase counts are independent of each other, so a service can be staffed differently during a feature freeze than during development.
 $\mathbf{A}_\mathrm{dev}$ must satisfy $a_{dev,1} \geq 1$, i.e., there must be at least one Feature
 Implementation Agent in the development phase. This also ensures that there is $value$, i.e., that at least some features are implemented and the simulation does not trivially collapse to zero throughput.
@@ -379,7 +401,7 @@ The parameters codify the assumptions about the underlying software development 
 \toprule
 Symbol & Description & Domain & Step \\
 \midrule
-$H_\mathrm{capacity}$           & Gross time budget per developer per sprint                                          & $\mathbb{R}_{>0}$     & 1 \\[2pt]
+$H_\mathrm{capacity}$           & Gross time budget per FTE per sprint                                          & $\mathbb{R}_{>0}$     & 1 \\[2pt]
 $H_\mathrm{mon.overhead}$       & Monitoring hours consumed per supervised agent                       & $\mathbb{R}_{>0}$     & 1 \\[2pt]
 $H_\mathrm{review\_time}$       & Hours consumed per architecture proposal reviewed                 & $\mathbb{R}_{>0}$     & 1 \\[2pt]
 $H_\mathrm{esc\_time}$          & Hours consumed per escalation handled                             & $\mathbb{R}_{>0}$     & 1 \\[2pt]
@@ -471,8 +493,8 @@ $\Gamma_\mathrm{doc}$           & Maximum fractional reduction of monitoring ove
 \toprule
 Symbol & Description & Domain & Section \\
 \midrule
-$c_\mathrm{token}$              & API token cost per deployed agent, indexed by role, per unit of the role's throughput rate $r_k$ (per sprint for Code Review/Security Audit, whose $r_k=1$); linear factor & $\mathbb{R}_{\geq 0}^8$ & \ref{sec:model:objectives} \\[2pt]
-$c_\mathrm{salary}$             & Annual fully-loaded developer salary; pro-rated linear factor                & $\mathbb{R}_{\geq 0}$   & \ref{sec:model:objectives} \\[2pt]
+$c_\mathrm{token}$              & API token cost per deployed agent, indexed by role, per unit of the role's throughput rate $r_k$ (per sprint for Code Review/Security Audit, whose $r_k=1$) & $\mathbb{R}_{\geq 0}^8$ & \ref{sec:model:objectives} \\[2pt]
+$c_\mathrm{salary}$             & Annual fully-loaded salary of one FTE                & $\mathbb{R}_{\geq 0}$   & \ref{sec:model:objectives} \\[2pt]
 $\omega_\mathrm{min}$           & Quality weight for minor escaped bugs                                        & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
 $\omega_\mathrm{maj}$           & Quality weight for major escaped bugs                                        & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
 $\omega_\mathrm{sec}$           & Quality weight for security escaped bugs                                     & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\
@@ -493,10 +515,15 @@ fixed dependency order.
 \label{sec:transition:prelim}
 
 The priority-ordered time budget of the developers is
-resolved as a five-stage cascade, each stage consuming time that is remaining from the previous stage.
-First, communication overhead between the developers reduces capacity to
-$H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1)$
-per developer. Since $n_\mathrm{sup}(t)$ is the number of active supervised agents, each developer supervises
+resolved as a five-stage cascade, each stage consuming time that is remaining from the previous stage. First, communication overhead between the developers reduces capacity to
+\begin{equation}
+  H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}\lceil N-1 \rceil
+  \label{eq:hnet}
+\end{equation}
+per FTE. Communication is a per-person cost that does not shrink when a person invests only
+part of their time in the project, so the overhead is driven by the headcount rather than by
+the staffing level. $\lceil N \rceil$ is the smallest
+headcount that can supply $N$ FTE. Since $n_\mathrm{sup}(t)$ is the number of active supervised agents, each FTE supervises
 $\frac{n_\mathrm{sup}(t)}{N}$ agents, consuming $\frac{n_\mathrm{sup}(t)}{N} \cdot H_\mathrm{mon,eff}(t)$ hours of monitoring effort. The per-agent monitoring effort is reduced by the documentation coverage $\mathrm{doc\_cov}(t-1)$ (from the previous sprint) and the reduction is calibrated by $\Gamma_\mathrm{doc}$
 \begin{equation}
   H_\mathrm{mon,eff}(t) = H_\mathrm{mon.overhead}\,
@@ -561,7 +588,7 @@ costs regardless of the current debt level $D_\mathrm{tech}(t-1)$. While not ful
 $H_\mathrm{after\_mon}(t)$ can be negative if monitoring overhead exceeds $H_\mathrm{net}$.
 Configurations for which this is unavoidable cannot perform any productive human work regardless of the scenario-parameter draws. We therefore define a feasibility criterion that is checked for the development composition $\mathbf{A}_\mathrm{dev}$ before running the simulation:
 \begin{align}
-  H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}(N-1) &\geq 0 \\
+  H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}\lceil N-1 \rceil &\geq 0 \\
   \frac{\sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\mathrm{dev},k}}{N}\,H_\mathrm{mon.overhead}\,
     (1 - \Gamma_\mathrm{doc}) &< H_\mathrm{net}.
   \label{eq:feas_monitoring}
@@ -1046,7 +1073,7 @@ Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \em
 \label{sec:model:search}
 
 Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible. For a fixed
-$(N, M)$ pair with supervision budget $B = N \cdot M$, the number of non-negative
+$(N, M)$ pair with supervision budget $B = \lfloor N \cdot M \rfloor$, the number of non-negative
 integer compositions of $B$ into the six supervised roles, $\binom{B+5}{5}$, is already
 $\approx\!53\,000$ for $B = 20$ and $\approx\!1.2$ million for $B = 40$.
 Across all choices of $N$, $M$, $R$, $F_\mathrm{freeze}$, and separate development
@@ -1056,16 +1083,52 @@ We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configuratio
 
 \subsubsection{Search range}
 
-The search range constrains four discrete parameters: the human developer count
+The search range constrains four discrete parameters: the human staffing level
 $N \in \mathcal{N}$, the span of control $M \in \mathcal{M}$, the
 release cadence $R \in \mathcal{R}$, and the feature-freeze length $F_\mathrm{freeze} \in \mathcal{F}_\mathrm{freeze}$.
 The sets $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{freeze}$ are
-explicit finite sets. This allows both the definition of ranges and of non-contiguous values, e.g., $\mathcal{N} = \{5, 10, 15\}$. The number of agents that each developer supervises is specified as a range $\mathcal{M} = \{1, \ldots, M_\mathrm{max}\}$.
+explicit finite sets. This allows both the definition of ranges and of non-contiguous values, e.g., $\mathcal{N} = \{0.5, 1, 2\}$. The number of agents that each developer supervises is specified as a range $\mathcal{M} = \{1, \ldots, M_\mathrm{max}\}$.
 
-While the agent compositions are also part of the search space,
-there is no need to explicitly define their search range. Instead, the allowed values are implicitly
-defined by the constraints of the simulation model. Once $N \in \mathcal{N}$ and $M \in \{1, \ldots, M_\mathrm{max}\}$ are fixed, there can be at most $N \cdot M$ supervised agents in total. Additionally, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. These constraints implicitly define the allowed compositions for each $(N, M)$ pair, and therefore the search range for the supervised part of $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$. The two background detection services are not constrained at all, so instead of a search range we specify a sampling distribution for them below.
-The feature-freeze duration is additionally constrained by the release cadence: once $R$ is sampled, only values from $\mathcal{F}_\mathrm{freeze}$ with $0 \leq F_\mathrm{freeze} \leq R-1$ are admissible.
+Once $N \in \mathcal{N}$ and $M \in \{1, \ldots, M_\mathrm{max}\}$ are fixed, there can be at most $\lfloor N \cdot M \rfloor$ supervised agents in total. Additionally, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricture by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations \eqref{eq:impl_agents} and \eqref{eq:impl}. The architecture work, bug fixing, refactoring, test development, and documentation are also bounded by the inflow of work that reaches them (see EQs.~\eqref{eq:arch_chg_done}, \eqref{eq:bugs}, \eqref{eq:debt_update}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). This gives us the following fixed-point upper bounds on the work that can reach each supervised role in one development sprint, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
+\begin{align}
+  W_1 &= (1 + f_\mathrm{arch,chg})\,r_\mathrm{arrival}, &
+  W_2 &= f_\mathrm{arch,chg}\,r_\mathrm{arrival}, \nonumber\\
+  W_3 &= r_\mathrm{bugs}\,(2-\delta_\mathrm{min})\,r_\mathrm{arrival}, &
+  W_4 &= \delta_\mathrm{impl}\,r_\mathrm{arrival} + \delta_\mathrm{fix}\,W_3, \nonumber\\
+  W_7 &= c_\mathrm{test,ceil}\,r_\mathrm{arrival}, &
+  W_8 &= r_\mathrm{arrival}.
+  \label{eq:workload}
+\end{align}
+The workload is matched against the throughput that an agent can have, accounting for the debt amplifier, we use its floor $\delta_\mathrm{min}$, i.e., the least favourable and therefore most permissive case:
+\begin{equation}
+  \begin{aligned}
+    \rho_1 &= r_F\,\delta_\mathrm{min}, &
+    \rho_2 &= r_\mathrm{arch,chg}, &
+    \rho_3 &= r_\mathrm{fix}\,\delta_\mathrm{min}, \\
+    \rho_4 &= r_\mathrm{refactor}, &
+    \rho_7 &= r_\mathrm{test}, &
+    \rho_8 &= r_\mathrm{doc}.
+  \end{aligned}
+  \label{eq:sat_rates}
+\end{equation}
+
+The two background detection services are not constrained at all, so instead of a search range we specify a sampling distribution for them below. The feature-freeze duration is additionally constrained by the release cadence: once $R$ is sampled, only values from $\mathcal{F}_\mathrm{freeze}$ with $0 \leq F_\mathrm{freeze} \leq R-1$ are admissible.
+
+This gives us constraints
+\begin{equation}
+  a_{\mathrm{dev},k},\, a_{\mathrm{qa},k} \;\leq\; u_k
+    = \Bigl\lceil \sigma\,\frac{W_k}{\rho_k} \Bigr\rceil,
+  \qquad k \in \mathcal{K}_\mathrm{sup}.
+  \label{eq:sat_bound}
+\end{equation}
+where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinuish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:mosp}, this defines the region that the search strategies explore:
+\begin{equation}
+  \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{F} \;:\;
+    a_{\mathrm{dev},k} \leq u_k \;\wedge\;
+    a_{\mathrm{qa},k} \leq u_k
+    \;\;\forall k \in \mathcal{K}_\mathrm{sup} \bigr\} \subseteq \mathcal{F}.
+  \label{eq:searched_region}
+\end{equation}
 
 
 \subsubsection{Uniform Random Search}
@@ -1076,16 +1139,23 @@ In random search, each candidate configuration is drawn independently. A single 
   \item Draw $N, M, R$ uniformly from $\mathcal{N}$, $\mathcal{M}$, and $\mathcal{R}$ respectively.
   \item Draw $F_\mathrm{freeze}$ uniformly from the admissible values
         $\{f \in \mathcal{F}_\mathrm{freeze} : 0 \leq f \leq R-1\}$.
-  \item Draw the supervised development agent count $B_\mathrm{dev}$ uniformly from $\{1, \ldots, N \cdot M\}$
-        and sample the supervised part of $\mathbf{A}_\mathrm{dev}$ as a composition such that $\sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\mathrm{dev},k} = B_\mathrm{dev}$, with $a_{\mathrm{dev},1} \geq 1$.
-  \item Draw the supervised QA agent count $B_\mathrm{qa}$ uniformly from $\{0, \ldots, N \cdot M\}$
-        and sample the supervised part of $\mathbf{A}_\mathrm{qa}$ as a QA-phase composition such that $\sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\mathrm{qa},k} = B_\mathrm{qa}$, with $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$.
+  \item Draw the supervised part of $\mathbf{A}_\mathrm{dev}$ role by role, independently and
+        uniformly within the throughput saturation bound of Eq.~\eqref{eq:sat_bound}, i.e.,
+        $a_{\mathrm{dev},1}$ from $\{1, \ldots, u_1\}$ so that
+        $a_{\mathrm{dev},1} \geq 1$, and $a_{\mathrm{dev},k}$ from
+        $\{0, \ldots, u_k\}$ for the remaining $k \in \mathcal{K}_\mathrm{sup}$.
+  \item Draw the supervised part of $\mathbf{A}_\mathrm{qa}$ in the same way, i.e.,
+        $a_{\mathrm{qa},k}$ uniformly from $\{0, \ldots, u_k\}$ for
+        $k \in \{3,4,7,8\}$, and $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$.
   \item Draw the four background service counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$,
         $a_{\mathrm{qa},5}$, $a_{\mathrm{qa},6}$ independently and uniformly from
         $\{0, 1, \ldots, \lfloor r_\mathrm{arrival} \rfloor\}$, i.e., we allow up to one instance
         of each service per feature that arrives in a sprint.
-  \item Discard the candidate if it violates the human-capacity feasibility condition of
-        Eq.~\eqref{eq:feas_monitoring}.
+  \item Discard the candidate if it violates the budget constraint of Eq.~\eqref{eq:budget}
+        or the human-capacity feasibility condition of Eq.~\eqref{eq:feas_monitoring}.
+        The budget is checked against $\lfloor N \cdot M \rfloor$, so a draw that combines a
+        part-time staffing level with a narrow span of control such that $N \cdot M < 1$
+        cannot satisfy $a_{\mathrm{dev},1} \geq 1$ and is always discarded.
 \end{enumerate}
 
 Using this approach, we draw $n_\mathrm{rand}$ random candidate configurations and evaluate each feasible candidate with $K$ Monte Carlo replications. The CI-aware Pareto frontier is then computed over the set of all evaluated configurations.
@@ -1108,19 +1178,22 @@ $R$ is never mutated, i.e., the release cadence is only sampled when generating 
 The parameter to perturb is selected uniformly at random from five choices:
 \begin{itemize}
   \item \emph{Mutate $N$:} replace the current value with an adjacent value in the
-        discrete set $\mathcal{N}$ (the next smaller or larger element;
-        a boundary value shifts inward).
-  \item \emph{Mutate $M$:} increment $M$ by 1 if $M < M_\mathrm{max}$ and
-        simultaneously add one agent to a randomly chosen \emph{supervised} role in $\mathbf{A}_\mathrm{dev}$,
-        so that the expanded capacity $N \cdot M$ is immediately used during development sprints.
+        discrete set $\mathcal{N}$ (the next smaller or larger element).
+  \item \emph{Mutate $M$:} increase $M$ by $\Delta_M = \lceil \max(1, 1/N) \rceil$ if
+        $M + \Delta_M \leq M_\mathrm{max}$ and
+        simultaneously add one agent to a randomly chosen \emph{supervised} role in $\mathbf{A}_\mathrm{dev}$
+        that is still below its saturation bound $u_k$,
+        so that the expanded capacity $\lfloor N \cdot M \rfloor$ is immediately used during development sprints.
+        Using $\max(1, 1/N)$ ensures that at one agent can always be added, even if $N<1$.
         Decreasing $M$ is excluded, because reducing the capacity bound without changing the compositions cannot alter simulation behaviour.
   \item \emph{Mutate $F_\mathrm{freeze}$:} apply $\pm 1$ while ensuring that $F_\mathrm{freeze}$ stays in $[0, R-1]$.
   \item \emph{Mutate $\mathbf{A}_\mathrm{dev}$:} apply one elementary operation drawn uniformly from:
         \begin{itemize}
-          \item \emph{Add}: increment one randomly chosen supervised role by~1.
+          \item \emph{Add}: increment one randomly chosen supervised role by~1, provided it
+                stays at or below its saturation bound $u_k$.
           \item \emph{Remove}: decrement one randomly chosen non-empty supervised role by~1.
           \item \emph{Move}: select a random non-empty supervised donor role and transfer one agent to a randomly chosen
-                supervised recipient role.
+                supervised recipient role that is still below its saturation bound $u_k$.
           \item \emph{Adjust service}: apply $\pm 1$ to one of the two background detection
                 services, floored at zero. This operation is separate from the three above because
                 these roles are not part of the supervision budget that the others redistribute,
@@ -1129,7 +1202,8 @@ The parameter to perturb is selected uniformly at random from five choices:
   \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero.
 \end{itemize}
 If a mutation attempt produces an invalid configuration or leaves the parent unchanged
-(e.g.\ because $M$ is already at $M_\mathrm{max}$, or a randomly chosen operation
+(e.g.\ because $M + \Delta_M$ would exceed $M_\mathrm{max}$, because the chosen role is already at its
+saturation bound, or because a randomly chosen operation
 is a structural no-op), the attempt is discarded and a new mutation type is drawn.
 Up to ten attempts are made; if none yields a distinct valid child, the parent is
 returned unchanged.
@@ -1164,7 +1238,7 @@ Since the groups are orthogonal, we can freely combine all five groups into a di
 \subsubsection{Human developer parameters}
 
 The scenario parameters for human developers are summarized in Table~\ref{tab:scenario:human}.
-We assume that human developers work a 40-hour week and assume that the communication overhead is one hour per team member. We further assume that humans spend equal time bug fixing and implementing features within the time not required for other tasks. The salaries are estimated based on average salaries reported by Indeed~\citep{indeed2026salaries}. We round low, average and high salaries to the next \$50k, to account for the employer overhead costs.
+We assume that a full-time developer works a 40-hour week, i.e., $H_\mathrm{capacity}$ is stated per FTE and a staffing level of $N=0.25$ corresponds to a ten-hour week. We assume that the communication overhead is one hour per team member. We further assume that humans spend equal time bug fixing and implementing features within the time not required for other tasks. The salaries are estimated based on average salaries reported by Indeed~\citep{indeed2026salaries}. We round low, average and high salaries to the next \$50k, to account for the employer overhead costs.
 
 While there is no data yet on how much time developers require to monitor agents, early results indicate that there is a fairly low interruption frequency~\citep{baumann2026swechat}, so we set the monitoring overhead at a modest 2.5 hours per week, i.e., 30 minutes per day. The work capacity $H_\mathrm{capacity}$, the communication overhead $c_\mathrm{comm}$, the monitoring overhead $H_\mathrm{mon.overhead}$, and the bug-fixing share $f_\mathrm{fix}$ are independent of developer skill and are therefore the same across all three tiers. There are also no estimates yet how much time developers require to resolve an agent escalation. It is reasonable to assume that these are non-trivial problems that require developers to get involved with the code base, so we assume that the time required is similar to that required to implement a feature (estimate see below).
 
@@ -1182,7 +1256,7 @@ As per our modeling assumptions, the rate that humans introduce bugs is based on
 \toprule
 Symbol & Low & Medium & High & Source \\
 \midrule
-$H_\mathrm{capacity}$         & 40.0 & 40.0 & 40.0 & One 40h work-week. \\[2pt]
+$H_\mathrm{capacity}$         & 40.0 & 40.0 & 40.0 & One 40h work-week per FTE. \\[2pt]
 $c_\mathrm{comm}$             & 1.0  & 1.0  & 1.0  & Assumed. \\[2pt]
 $H_\mathrm{mon.overhead}$     & 2.5  & 2.5  & 2.5  & Assumed based on \cite{baumann2026swechat}. \\[2pt]
 $H_\mathrm{esc\_time}$        & 4.0  & 2.0  & 1.0  & Assumed to be similar to feature implementation time. \\[2pt]
@@ -1353,8 +1427,9 @@ $\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost e
 Since we have five orthogonal aspects, each with three levels, we have a total of $3^5 = 243$ scenarios. We solve each of these problems twice, once with uniform random search and once with evolutionary search (Section~\ref{sec:model:search}), which yields 486 searches in total.
 All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two frontiers is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ an empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is choosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
 
-The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The developer counts range from a single developer supervising a small five-person team. Larger teams do not make sense, since this is not supported by the feature arrival speed. 
-The span of control is bounded by $M_\mathrm{max} = 30$. This bound is deliberately chosen to be inert, i.e., it lies above the point at which the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} becomes binding in every scenario: with $H_\mathrm{mon.overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a developer's net capacity at roughly 16, 24, and 27 supervised agents per developer, respectively. 
+The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range in quarter-FTE steps from a single developer investing one day per week up to a small five-person team. Larger teams do not make sense, since this is not supported by the feature arrival speed. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones.
+
+The span of control is bounded by $M_\mathrm{max} = 30$. This bound is deliberately chosen to be inert, i.e., it lies above the point at which the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} becomes binding in every scenario: with $H_\mathrm{mon.overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a full-time developer's net capacity at roughly 16, 24, and 27 supervised agents \emph{per FTE}, respectively.
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. 
 
@@ -1378,10 +1453,11 @@ $B$                             & 1{,}000             & Bootstrap resamples for 
 $s_0$                           & 42            & Master seed \\[2pt]
 \midrule
 \multicolumn{3}{l}{\emph{Search range}} \\[2pt]
-$\mathcal{N}$                   & $\{1,2,3,4,5\}$     & Single developer to small team \\[2pt]
+$\mathcal{N}$                   & $\{0.25, 0.50, \ldots, 5.00\}$     & Quarter-FTE steps, from a one-day-per-week part-time developer to a small team \\[2pt]
 $M_\mathrm{max}$                & 30                  & More supervised agents exceed supervisor capacity \\[2pt]
 $\mathcal{R}$                   & $\{1,2,4,13\}$      & Continuous, biweekly, monthly, quarterly releases \\[2pt]
 $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two-week freeze; capped at $R-1$ \\[2pt]
+$\sigma$                        & 2                   & Headroom factor: allows up to twice the agents required for their steady-state workload \\[2pt]
 \midrule
 \multicolumn{3}{l}{\emph{Search budget per scenario and strategy}} \\[2pt]
 $E$                             & 10{,}000             & Identical budget for both strategies \\[2pt]
