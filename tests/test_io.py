@@ -197,16 +197,31 @@ class TestLoadSearchConfig:
         # Paper §4.2, Table 6: search range and the E = 10,000 evaluation budget,
         # split 10 % / 90 % between the initial pool and the generation loop.
         cfg = load_search_config("config/search_default.json")
-        assert cfg.N_values == (1, 2, 3, 4, 5)
+        # Staffing levels in quarter-FTE steps from a one-day-per-week part-timer to a
+        # five-FTE team; N is a staffing level, so the values are floats.
+        assert cfg.N_values == tuple(0.25 * i for i in range(1, 21))
         assert cfg.M_max == 30
         assert cfg.R_values == (1, 2, 4, 13)
         assert cfg.F_freeze_values == (0, 1, 2)
+        assert cfg.sigma == 2.0
         assert cfg.n_samples == 10_000
         assert cfg.n_samples_initial == 1_000
         assert cfg.n_generations * cfg.n_offspring == 9_000
         assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.n_samples
         assert cfg.samples == "frontier"
         assert cfg.seed == 42
+
+    def test_sigma_defaults_and_is_validated(self, tmp_path):
+        data = json.loads(Path("config/search_default.json").read_text())
+        del data["search"]["sigma"]
+        path = tmp_path / "search.json"
+        path.write_text(json.dumps(data))
+        assert load_search_config(path).sigma == 2.0
+
+        data["search"]["sigma"] = 0.5
+        path.write_text(json.dumps(data))
+        with pytest.raises(ValueError, match="sigma must be >= 1"):
+            load_search_config(path)
 
     def test_samples_policy_defaults_and_is_validated(self, tmp_path):
         data = json.loads(Path("config/search_default.json").read_text())

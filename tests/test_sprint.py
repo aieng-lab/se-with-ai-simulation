@@ -5,7 +5,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-from src.config import TeamConfiguration
+from src.config import TeamConfiguration, net_capacity
 from src.sprint import _volume_factor, step_sprint
 from src.state import SystemState
 
@@ -223,6 +223,37 @@ def _A(**by_role) -> tuple[int, ...]:
     for key, count in by_role.items():
         A[int(key[1:]) - 1] = count
     return tuple(A)
+
+
+class TestFractionalStaffingLevel:
+    """N is an FTE staffing level, so a sprint must run for a part-time team too."""
+
+    def test_a_quarter_fte_team_runs_and_produces_less_than_a_full_one(self, base_params):
+        # No agents beyond the mandatory implementer, so the difference between the two
+        # runs is human capacity: it scales with N everywhere except H_net itself.
+        params = dataclasses.replace(base_params, c_comm=0.0)
+        part = TeamConfiguration(N=0.25, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
+        full = TeamConfiguration(N=1.0, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
+        a = _run_sprints(6, part, params, np.random.default_rng(31), initial_backlog=200)
+        b = _run_sprints(6, full, params, np.random.default_rng(31), initial_backlog=200)
+        assert 0 < a.F_completed < b.F_completed
+
+    def test_a_second_person_costs_communication_even_at_a_quarter_fte(self, base_params):
+        """Going 1.0 -> 1.25 FTE adds a whole person, and with it a whole peer cost.
+
+        With c_comm this large the added quarter-FTE cannot pay for the communication
+        it triggers, so the bigger team gets *less* human work done — which only holds
+        because the peer count is ceil(N-1).  A linear (N-1) would charge a quarter of
+        the overhead and the larger team would come out ahead.
+        """
+        params = dataclasses.replace(base_params, c_comm=30.0, H_capacity=40.0)
+        assert net_capacity(40.0, 30.0, 1.0) * 1.0 == 40.0
+        assert net_capacity(40.0, 30.0, 1.25) * 1.25 == 12.5
+        solo = TeamConfiguration(N=1.0, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
+        pair = TeamConfiguration(N=1.25, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
+        a = _run_sprints(6, solo, params, np.random.default_rng(32), initial_backlog=200)
+        b = _run_sprints(6, pair, params, np.random.default_rng(32), initial_backlog=200)
+        assert b.F_completed < a.F_completed
 
 
 class TestVolumeFactor:

@@ -41,7 +41,10 @@ Public API:
     value_saturation_summary(df, threshold)        -> pd.DataFrame
     value_deviation_patterns(df, threshold)        -> pd.DataFrame
     rank_frontier(df)                              -> pd.DataFrame
+    add_quality_cost_index(df, cost_field)         -> pd.DataFrame
+    add_front_position(df, cost_field)             -> pd.DataFrame
     frontier_extremes(df, k)                       -> pd.DataFrame
+    index_optimum(df, cost_field, by)              -> pd.DataFrame
     headline_summary(df, threshold)                -> dict
 """
 
@@ -77,6 +80,10 @@ DEFAULT_VALUE_THRESHOLD = 0.99
 #: pool (§5, bullet 2 — "within 98 % of T * r_arrival").  Deliberately distinct
 #: from DEFAULT_VALUE_THRESHOLD: one classifies, the other selects.
 DEFAULT_THROUGHPUT_THRESHOLD = 0.98
+
+#: Cost terms the quality/cost ratio of :func:`ratio_percentiles` can be taken
+#: against — total, human developers only, agents only.
+RATIO_COST_FIELDS: tuple[str, ...] = ("cost_mean", "cost_human_mean", "cost_agent_mean")
 
 _TIER_INITIALS = {"low": "l", "medium": "m", "high": "h"}
 _INITIAL_TO_TIER = {v: k for k, v in _TIER_INITIALS.items()}
@@ -484,7 +491,7 @@ def filtered_front_from_table(
 
 def _team_config(row: pd.Series) -> TeamConfiguration:
     return TeamConfiguration(
-        N=int(row["N"]),
+        N=float(row["N"]),
         M=int(row["M"]),
         A_dev=tuple(int(row[f"a_dev_{k + 1}"]) for k in range(AGENT_ROLE_COUNT)),
         R=int(row["R"]),
@@ -500,7 +507,7 @@ def add_derived_columns(df: pd.DataFrame, config_dir: str = "config") -> pd.Data
         r_arrival, value_ratio (+ CI bounds), value_deficit
         T_dev, T_qa, C_human, C_agents, C_total, agent_cost_share
         cost_human_mean / cost_agent_mean (+ CI bounds)
-        quality_cost_ratio, n_sup_dev, n_sup_qa
+        quality_cost_ratio, quality_cost_index, n_sup_dev, n_sup_qa
     """
     if df.empty:
         return df.copy()
@@ -547,7 +554,11 @@ def add_derived_columns(df: pd.DataFrame, config_dir: str = "config") -> pd.Data
     out["value_ratio_ci_hi"] = out["value_ci_hi"] / out["r_arrival"]
     out["value_deficit"] = 1.0 - out["value_ratio"]
 
+    # Two scalar views of the quality/cost pair: the ratio fixes the position along
+    # the front, the product ranks points by goodness.  See rank_frontier and
+    # add_quality_cost_index.
     out["quality_cost_ratio"] = out["quality_mean"] / out["cost_mean"].replace(0.0, np.nan)
+    out["quality_cost_index"] = out["quality_mean"] * out["cost_mean"]
     return out
 
 
@@ -666,9 +677,17 @@ def _spearman(x: pd.Series, y: pd.Series) -> float:
 def rank_frontier(df: pd.DataFrame) -> pd.DataFrame:
     """Rank each frontier by `quality_cost_ratio`, ascending.
 
-    A low ratio means few weighted escaped bugs are bought per dollar spent, i.e.
-    the quality-dominant end of the front; a high ratio is the cost-dominant end.
-    Adds `ratio_rank` (1 = lowest ratio), `ratio_pct` in [0, 1], and the
+    `quality_cost_ratio` is an *exchange rate* between the two objectives, not a
+    score: both are minimised, so the ratio falls when quality improves but rises
+    when cost improves.  What it does fix is the **position along the front** — on
+    the §4.2 campaign it correlates +1.00 with `quality_mean` and −0.97 with
+    `cost_mean` — which is what this ranking and :func:`frontier_extremes` need.
+    The scalar that ranks points by *goodness* is `quality_cost_index`
+    (:func:`add_quality_cost_index`), and it is deliberately not used here: it is
+    U-shaped along the front and would fold the two ends onto each other.
+
+    A low ratio is the quality-dominant end of the front, a high ratio the
+    cost-dominant end.  Adds `ratio_rank` (1 = lowest ratio), `ratio_pct` in [0, 1], and the
     per-objective ranks `quality_rank` / `cost_rank` (both ascending, 1 = best)
     and `value_rank` (descending, 1 = best).  Rows are returned sorted by
     (scenario_id, strategy, ratio_rank).
@@ -683,6 +702,72 @@ def rank_frontier(df: pd.DataFrame) -> pd.DataFrame:
     out["cost_rank"] = grouped["cost_mean"].rank(method="min").astype("Int64")
     out["value_rank"] = grouped["value_mean"].rank(method="min", ascending=False).astype("Int64")
     return out.sort_values(["scenario_id", "strategy", "ratio_rank"]).reset_index(drop=True)
+
+
+def _check_cost_field(df: pd.DataFrame, cost_field: str) -> None:
+    """Guard the `cost_field` argument shared by the two scalar helpers."""
+    if cost_field not in RATIO_COST_FIELDS:
+        raise KeyError(f"{cost_field!r} is not one of {list(RATIO_COST_FIELDS)}")
+    if not df.empty and cost_field not in df.columns:
+        raise KeyError(f"{cost_field!r} is not a column of the frontier table")
+
+
+def add_quality_cost_index(
+    df: pd.DataFrame,
+    cost_field: str = "cost_mean",
+    column: str = "quality_cost_index",
+) -> pd.DataFrame:
+    """Add the combined quality/cost scalar ``quality_mean * cost_field``.
+
+    Both objectives are minimised, so their *product* — not their ratio — is the
+    number that falls whenever either improves.  On the throughput-filtered front,
+    where every point delivers the same features, it is the whole trade-off in one
+    figure: ``(quality / feature) · (cost / feature)``, weighted escaped bugs times
+    dollars per feature².  On the log–log quality/cost plane its iso-lines are the
+    −45° diagonals, so it weighs a relative gain in one objective against an equal
+    relative loss in the other.
+
+    It is *not* monotone along a Pareto front — on the §4.2 campaign the minimum is
+    interior for 484 of the 486 fronts — which is exactly what makes it worth
+    plotting, and why :func:`rank_frontier` keeps using `quality_cost_ratio` to fix
+    front position instead.
+
+    `cost_field` selects the cost term (`RATIO_COST_FIELDS`: total, human-only or
+    agent-only).  The column is recomputed rather than reused, so a frontier table
+    persisted before this column existed is handled the same as a fresh one.
+    """
+    _check_cost_field(df, cost_field)
+    if df.empty:
+        return df.copy()
+    out = df.copy()
+    out[column] = out["quality_mean"] * out[cost_field]
+    return out
+
+
+def add_front_position(
+    df: pd.DataFrame,
+    cost_field: str = "cost_mean",
+    ratio_col: str = "quality_cost_ratio",
+    pct_col: str = "front_pct",
+) -> pd.DataFrame:
+    """Add the quality/cost exchange rate and the point's position along its front.
+
+    `ratio_col` is ``quality_mean / cost_field`` — see :func:`rank_frontier` for why
+    that is a position coordinate rather than a score — and `pct_col` its percentile
+    *within its own (scenario, strategy) front*, running from the quality-dominant
+    end (0) to the cost-dominant end (1).  Front sizes span two orders of magnitude,
+    so the per-front percentile is the only basis on which a 13-point and a
+    1,190-point front are comparable.
+    """
+    _check_cost_field(df, cost_field)
+    if df.empty:
+        return df.copy()
+    out = df.copy()
+    out[ratio_col] = out["quality_mean"] / out[cost_field].replace(0.0, np.nan)
+    out[pct_col] = out.groupby(["scenario_id", "strategy"], sort=False)[ratio_col].rank(
+        pct=True
+    )
+    return out
 
 
 def frontier_extremes(df: pd.DataFrame, k: int = 5) -> pd.DataFrame:
@@ -706,6 +791,41 @@ def frontier_extremes(df: pd.DataFrame, k: int = 5) -> pd.DataFrame:
     return pd.concat(pieces).reset_index(drop=True)
 
 
+#: Grouping of :func:`index_optimum` that yields one row per *front*.
+FRONT_KEYS: tuple[str, ...] = ("scenario_id", "strategy")
+
+
+def index_optimum(
+    df: pd.DataFrame,
+    cost_field: str = "cost_mean",
+    by: "tuple[str, ...] | list[str]" = FRONT_KEYS,
+) -> pd.DataFrame:
+    """The lowest-`quality_cost_index` row of each group.
+
+    The index is U-shaped along a filtered front — on the §4.2 campaign its minimum
+    is interior for 484 of the 486 fronts — so this names the configuration sitting
+    at that knee: the best combined quality/cost point the search found.
+
+    `by` defaults to `FRONT_KEYS`, one row per front (486 on the campaign).  Pass
+    ``("scenario_id",)`` to pool the search strategies and get one row per scenario
+    (243), which is what the §5 table reports.  All columns of the winning row are
+    kept, so the caller still has the strategy, the config key and the full
+    configuration.
+
+    The index is recomputed via :func:`add_quality_cost_index`, so a frontier table
+    persisted before that column existed works unchanged.
+    """
+    if df.empty:
+        return df.copy()
+    keys = list(by)
+    work = add_quality_cost_index(df, cost_field=cost_field)
+    # idxmin takes the first occurrence of a tie, so sort first to make the choice
+    # depend on the data rather than on row order.
+    work = work.sort_values([*keys, "quality_cost_index", "cost_mean"])
+    winners = work.loc[work.groupby(keys, sort=True)["quality_cost_index"].idxmin()]
+    return winners.reset_index(drop=True)
+
+
 # ----------------------------------------------------------------------------
 # Headline numbers for the §5 prose
 # ----------------------------------------------------------------------------
@@ -724,7 +844,8 @@ def headline_summary(
 
     Passing `filtered_front` / `filter_summary` adds the bullet-2 figures: how much
     of the candidate pool survives the throughput filter, how large the resulting
-    quality/cost fronts are, and the `quality_cost_ratio` spread over them.
+    quality/cost fronts are, and the spread of the two quality/cost scalars —
+    `quality_cost_ratio` (front position) and `quality_cost_index` (goodness).
     """
     if df.empty:
         return {"n_frontier_points": 0}
@@ -763,6 +884,9 @@ def headline_summary(
     # The quality/cost figures describe the throughput-filtered front when one is
     # supplied, and fall back to the recorded frontier otherwise.
     qc = filtered_front if filtered_front is not None and not filtered_front.empty else df
+    # Derived here rather than read off `qc`, so a table persisted before the column
+    # existed still summarises.
+    index = add_quality_cost_index(qc)
     out.update({
         "quality_cost_source": (
             "filtered_front" if qc is not df else "recorded_3d_frontier"
@@ -770,6 +894,9 @@ def headline_summary(
         "quality_cost_ratio_median": float(qc["quality_cost_ratio"].median()),
         "quality_cost_ratio_min": float(qc["quality_cost_ratio"].min()),
         "quality_cost_ratio_max": float(qc["quality_cost_ratio"].max()),
+        "quality_cost_index_median": float(index["quality_cost_index"].median()),
+        "quality_cost_index_min": float(index["quality_cost_index"].min()),
+        "quality_cost_index_max": float(index["quality_cost_index"].max()),
         "agent_cost_share_median": float(qc["agent_cost_share"].median()),
     })
 

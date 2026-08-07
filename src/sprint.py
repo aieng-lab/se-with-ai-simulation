@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from .config import TeamConfiguration, supervised_agent_count
+from .config import TeamConfiguration, net_capacity, supervised_agent_count
 from .parameters import ScenarioParameters
 from .state import SystemState
 
@@ -63,7 +63,7 @@ def step_sprint(
     A_active = config.active_A(is_frozen)
     # Only the supervised roles consume human oversight; the background detection
     # services (k=5,6) are exempt (see config.SUPERVISED_ROLE_INDICES).
-    n_supervised = supervised_agent_count(A_active)   # may be < N*M
+    n_supervised = supervised_agent_count(A_active)   # may be < floor(N*M)
 
     # ------------------------------------------------------------------
     # Degradation functions at current debt D(t)
@@ -83,14 +83,15 @@ def step_sprint(
     # ------------------------------------------------------------------
     # Human capacity allocation
     # ------------------------------------------------------------------
-    H_net = params.H_capacity - params.c_comm * (config.N - 1)
+    # H_net is the net budget of *one FTE*; every downstream term scales it by config.N.
+    H_net = net_capacity(params.H_capacity, params.c_comm, config.N)
     doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
     H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
-    # Monitoring overhead is proportional to actual supervised agents per developer.
+    # Monitoring overhead is proportional to actual supervised agents per FTE.
     # The feasibility gate only guarantees this at doc_cov = 1, so H_after_mon can
     # still be negative early in a run.
-    agents_per_dev = n_supervised / config.N
-    H_after_mon = H_net - agents_per_dev * H_mon_eff
+    agents_per_fte = n_supervised / config.N
+    H_after_mon = H_net - agents_per_fte * H_mon_eff
 
     # Architecture reviews served this sprint (eq. rev_done, H_after_rev)
     rev_done = min(int(H_after_mon * config.N / params.H_review_time), state.Q_rev)

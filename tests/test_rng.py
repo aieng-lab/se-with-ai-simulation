@@ -14,6 +14,17 @@ class TestConfigHash:
         cfg2 = TeamConfiguration(N=3, M=2, A_dev=base_config.A_dev, A_qa=base_config.A_qa, R=base_config.R)
         assert _config_hash(base_config) != _config_hash(cfg2)
 
+    def test_differs_on_a_fractional_N(self, base_config):
+        """N is a staffing level in FTE, so quarter steps must give distinct streams."""
+        from src.config import TeamConfiguration
+        cfgs = [
+            TeamConfiguration(N=N, M=24, A_dev=base_config.A_dev, A_qa=base_config.A_qa,
+                              R=base_config.R)
+            for N in (0.25, 0.5, 0.75, 1.0)
+        ]
+        hashes = [_config_hash(c) for c in cfgs]
+        assert len(set(hashes)) == len(hashes)
+
     def test_differs_on_M(self, base_config):
         from src.config import AGENT_ROLE_COUNT, TeamConfiguration
         A = [0] * AGENT_ROLE_COUNT

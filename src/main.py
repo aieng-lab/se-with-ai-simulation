@@ -49,6 +49,7 @@ from .config import (
     SCENARIO_GROUPS,
     TeamConfiguration,
     supervised_agent_count,
+    supervision_budget,
 )
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .pareto import aggregate_config_result, pareto_frontier
@@ -79,7 +80,7 @@ def _scenario_paths_from_args(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _print_config(config: TeamConfiguration) -> None:
-    print(f"Team configuration:  N={config.N}, M={config.M}, R={config.R}, "
+    print(f"Team configuration:  N={config.N:g} FTE, M={config.M}, R={config.R}, "
           f"F_freeze={config.F_freeze}")
     for phase, A, getter in (
         ("Dev phase ", config.A_dev, config.agent_count_dev),
@@ -87,7 +88,8 @@ def _print_config(config: TeamConfiguration) -> None:
     ):
         n_sup = supervised_agent_count(A)   # type: ignore[arg-type]
         n_bg = sum(A) - n_sup              # type: ignore[arg-type]
-        print(f"  {phase} ({n_sup} supervised of N*M={config.N * config.M}, "
+        budget = supervision_budget(config.N, config.M)
+        print(f"  {phase} ({n_sup} supervised of floor(N*M)={budget}, "
               f"{n_bg} background)")
         for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
             count = getter(k)
@@ -280,6 +282,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             "M_max": search_cfg.M_max,
             "R_values": list(search_cfg.R_values),
             "F_freeze_values": list(search_cfg.F_freeze_values),
+            "sigma": search_cfg.sigma,
             "n_samples": search_cfg.n_samples,
             "n_samples_initial": search_cfg.n_samples_initial,
             "n_generations": search_cfg.n_generations,
@@ -327,7 +330,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Pareto frontier ({len(frontier_keys)} config(s)):")
     for key in frontier_keys:
         obj = search_summary["objectives"][key]
-        print(f"  {key}  N={obj['N']} M={obj['M']} R={obj['R']}  "
+        print(f"  {key}  N={obj['N']:g} M={obj['M']} R={obj['R']}  "
               f"value={obj['value_mean']:.3f}  quality={obj['quality_mean']:.4f}  CF={obj['cost_mean']:.0f}")
         print(f"         A_dev={obj['A_dev']}")
     print()

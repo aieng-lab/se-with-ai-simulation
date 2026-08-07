@@ -12,10 +12,15 @@ Output layout
             N2_M3_R4_00042.json    per-replication objectives; which candidates get a
                                    file is governed by SearchConfiguration.samples
                                    ("all" / "frontier" / "none")
+
+Supervised role counts are bounded twice: by the span of control floor(N*M)
+(Eq. budget) and, per role, by the throughput saturation bound u_k of
+`saturation_bounds` (Eq. sat_bound) — beyond u_k an agent has no work to do.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +34,7 @@ from .config import (
     SimulationHorizon,
     TeamConfiguration,
     supervised_agent_count,
+    supervision_budget,
 )
 from .feasibility import check_feasibility
 from .pareto import AggregatedObjectives, aggregate_config_result, pareto_frontier
@@ -52,16 +58,49 @@ _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
 )   # QA phase pins roles 1-2 (indices 0-1) to zero
 
 
-def _sample_composition(total: int, n_roles: int, rng: np.random.Generator) -> tuple[int, ...]:
-    """Uniformly sample a non-negative integer composition of `total` into `n_roles` parts.
+def saturation_bounds(params, sigma: float) -> dict[int, int]:
+    """Per-role upper bounds u_k of paper §3.13.1, Eq. (sat_bound), by 0-based index.
 
-    Uses the stars-and-bars cut-point method.
+    Every supervised role is fed by work that ultimately derives from the feature
+    arrival rate, so deploying more agents than the inflow can keep busy buys
+    nothing.  `W_k` is that steady-state inflow (Eq. workload) and `rho_k` the
+    throughput one agent of the role sustains (Eq. sat_rates); the debt amplifier
+    enters at its floor `delta_min`, the least favourable and therefore most
+    permissive case.  `sigma >= 1` is the headroom factor that still lets the search
+    over-allocate against the Poisson peaks of the arrival process.
+
+    The bound is at least 1 for every role, so a_dev,1 >= 1 always stays reachable.
     """
-    if total == 0:
-        return (0,) * n_roles
-    cuts = np.sort(rng.integers(0, total + 1, size=n_roles - 1))
-    boundaries = np.concatenate([[0], cuts, [total]])
-    return tuple(int(x) for x in np.diff(boundaries))
+    if sigma < 1:
+        raise ValueError(f"sigma must be >= 1, got {sigma}")
+
+    r = params.r_arrival
+    W_3 = params.r_bugs * (2.0 - params.delta_min) * r
+    workload = {
+        0: (1.0 + params.f_arch_chg) * r,                       # k=1 Feature Implementation
+        1: params.f_arch_chg * r,                               # k=2 Architecture & Design
+        2: W_3,                                                 # k=3 Bug Fixing
+        3: params.delta_impl * r + params.delta_fix * W_3,       # k=4 Refactoring
+        6: params.c_test_ceil * r,                              # k=7 Test Development
+        7: r,                                                   # k=8 Documentation
+    }
+    rates = {
+        0: params.r_F * params.delta_min,
+        1: params.r_arch_chg,
+        2: params.r_fix * params.delta_min,
+        3: params.r_refactor,
+        6: params.r_test,
+        7: params.r_doc,
+    }
+    bounds: dict[int, int] = {}
+    for idx in SUPERVISED_ROLE_INDICES:
+        rate = rates[idx]
+        if rate <= 0:
+            raise ValueError(
+                f"saturation rate rho for role index {idx} must be > 0, got {rate}"
+            )
+        bounds[idx] = max(1, math.ceil(sigma * workload[idx] / rate))
+    return bounds
 
 
 def background_count_max(params) -> int:
@@ -86,31 +125,42 @@ def _assemble_composition(
     return tuple(A)
 
 
-def _sample_composition_with_impl(
-    total: int, rng: np.random.Generator, bg_max: int
-) -> tuple[int, ...]:
-    """Sample a dev composition spending `total` on supervised roles, with a_1 >= 1.
+def _sample_supervised(
+    rng: np.random.Generator,
+    bounds: dict[int, int],
+    indices: tuple[int, ...],
+    min_impl: bool,
+) -> dict[int, int]:
+    """Draw each supervised role independently and uniformly within its bound u_k.
 
-    `total` is the supervised budget (bounded by N*M); the two background services
-    are drawn separately from {0, ..., bg_max} and are not part of it.
+    Paper §3.13.2, steps 3-4: a_k ~ U{0, ..., u_k}, except that the dev-phase
+    Feature Implementation role (index 0) is drawn from U{1, ..., u_1} so that
+    a_dev,1 >= 1 holds by construction.  The span-of-control budget is *not*
+    enforced here — a draw that overruns it is discarded by the caller.
     """
-    if total < 1:
-        raise ValueError(f"total must be >= 1, got {total}")
-    # Reserve 1 for impl, distribute the rest freely across the supervised roles
-    base = _sample_composition(total - 1, len(SUPERVISED_ROLE_INDICES), rng)
-    supervised = dict(zip(SUPERVISED_ROLE_INDICES, base))
-    supervised[0] += 1   # role 1 = index 0 (Feature Implementation Agent)
+    supervised: dict[int, int] = {}
+    for idx in indices:
+        lo = 1 if (min_impl and idx == 0) else 0
+        supervised[idx] = int(rng.integers(lo, bounds[idx] + 1))
+    return supervised
+
+
+def _sample_dev_composition(
+    rng: np.random.Generator, bounds: dict[int, int], bg_max: int
+) -> tuple[int, ...]:
+    """Sample a dev-phase composition: every supervised role within u_k, a_1 >= 1."""
+    supervised = _sample_supervised(rng, bounds, SUPERVISED_ROLE_INDICES, min_impl=True)
     return _assemble_composition(supervised, rng, bg_max)
 
 
 def _sample_qa_composition(
-    total: int, rng: np.random.Generator, bg_max: int
+    rng: np.random.Generator, bounds: dict[int, int], bg_max: int
 ) -> tuple[int, ...]:
-    """Sample a QA-phase composition: a_1=a_2=0; `total` spread over supervised QA roles."""
+    """Sample a QA-phase composition: a_1=a_2=0, the rest within their bound u_k."""
     # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture
     # proposals during feature freeze).
-    base = _sample_composition(total, len(_QA_SUPERVISED_INDICES), rng)
-    return _assemble_composition(dict(zip(_QA_SUPERVISED_INDICES, base)), rng, bg_max)
+    supervised = _sample_supervised(rng, bounds, _QA_SUPERVISED_INDICES, min_impl=False)
+    return _assemble_composition(supervised, rng, bg_max)
 
 
 # ---------------------------------------------------------------------------
@@ -126,15 +176,18 @@ def _mutate_composition(
     A: list[int],
     mutable: tuple[int, ...],
     budget: int,
+    bounds: dict[int, int],
     rng: np.random.Generator,
     min_impl: bool,
 ) -> None:
     """Apply one elementary mutation to `A` in place.
 
     `mutable` are the supervised role indices that may be changed; they share the
-    span-of-control `budget`.  The background services are mutated by a separate
-    +/-1 operation and are not subject to the budget.  With `min_impl`, index 0
-    (Feature Implementation) is protected from being drained to zero.
+    span-of-control `budget` and each is additionally capped by its throughput
+    saturation bound `bounds[i]` (paper §3.13.1).  The background services are
+    mutated by a separate +/-1 operation and are subject to neither.  With
+    `min_impl`, index 0 (Feature Implementation) is protected from being drained
+    to zero.
     """
     op = int(rng.integers(4))   # 0=move, 1=add, 2=remove, 3=background +/-1
     if op == 3:
@@ -145,21 +198,26 @@ def _mutate_composition(
 
     floor = 1 if min_impl else 0
     donors = [i for i in mutable if A[i] > 0 and (i != 0 or A[i] > floor)]
+    # Only roles still below their saturation bound can receive an agent.
+    recipients = tuple(i for i in mutable if A[i] < bounds[i])
     current_sum = supervised_agent_count(tuple(A))
-    if op == 1 and current_sum < budget:
-        A[_pick(mutable, rng)] += 1
+    if op == 1 and current_sum < budget and recipients:
+        A[_pick(recipients, rng)] += 1
     elif op == 2 and donors:
         A[int(rng.choice(donors))] -= 1
-    elif donors:
+    elif op == 0 and donors and recipients:
         src = int(rng.choice(donors))
         A[src] -= 1
-        A[_pick(mutable, rng)] += 1
+        # Re-check the bound: the donor may have been the only role below it.
+        recipients = tuple(i for i in mutable if A[i] < bounds[i])
+        A[_pick(recipients, rng)] += 1
 
 
 def _mutate(
     config: TeamConfiguration,
     rng: np.random.Generator,
     search_cfg: SearchConfiguration,
+    bounds: dict[int, int],
 ) -> TeamConfiguration:
     """Perturb exactly one randomly chosen parameter from {N, M, F_freeze, A_dev, A_qa}.
     R is never mutated. Retries up to 10 times if the result is unchanged or invalid;
@@ -172,7 +230,7 @@ def _mutate(
         A_dev = list(config.A_dev)
         A_qa = list(config.A_qa)
         F_freeze = config.F_freeze
-        budget = N * M
+        budget = supervision_budget(N, M)
 
         if mutation_type == 0:
             # Mutate N: pick an adjacent value in the sorted N_values list
@@ -184,16 +242,21 @@ def _mutate(
             if idx < len(n_vals) - 1:
                 candidates.append(n_vals[idx + 1])
             if candidates:
-                N = int(rng.choice(candidates))
+                N = float(rng.choice(candidates))
 
         elif mutation_type == 1:
-            # Mutate M: increase by 1 and add one agent to A so the extra capacity is used.
-            # Decreasing M is skipped — it cannot change behavior, only tighten the budget.
-            if M < search_cfg.M_max:
-                M += 1
+            # Mutate M: increase it by just enough to buy one more supervision slot
+            # and spend that slot immediately, so the step changes behaviour.  With a
+            # part-time staffing level a single +1 need not raise floor(N*M) at all,
+            # hence the 1/N step.  Decreasing M is skipped — it cannot change
+            # behavior, only tighten the budget.
+            dM = math.ceil(max(1.0, 1.0 / N))
+            recipients = tuple(i for i in SUPERVISED_ROLE_INDICES if A_dev[i] < bounds[i])
+            if M + dM <= search_cfg.M_max and recipients:
+                M += dM
                 # The extra capacity is a supervision slot, so it must go to a
                 # supervised role — the background services do not use it.
-                A_dev[_pick(SUPERVISED_ROLE_INDICES, rng)] += 1
+                A_dev[_pick(recipients, rng)] += 1
 
         elif mutation_type == 2:
             # Mutate F_freeze: ±1 clamped to [0, R-1]
@@ -201,13 +264,15 @@ def _mutate(
 
         elif mutation_type == 3:
             # Mutate A_dev: exactly one elementary op, maintaining
-            # supervised_agent_count(A_dev) <= N*M and A_dev[0] >= 1
-            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, budget, rng, min_impl=True)
+            # supervised_agent_count(A_dev) <= floor(N*M), a_k <= u_k and A_dev[0] >= 1
+            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, budget, bounds,
+                                rng, min_impl=True)
 
         else:
             # Mutate A_qa: exactly one elementary op restricted to the supervised QA
             # roles (indices 0-1 stay at 0) plus the background services
-            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, budget, rng, min_impl=False)
+            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, budget, bounds,
+                                rng, min_impl=False)
 
         try:
             child = TeamConfiguration(N=N, M=M, A_dev=tuple(A_dev), R=config.R,
@@ -224,34 +289,49 @@ def _mutate(
 # Config generation
 # ---------------------------------------------------------------------------
 
-def _random_configs(
+#: A single random draw: the manifest fields of the candidate, plus the assembled
+#: TeamConfiguration — or None when the draw overruns the span-of-control budget of
+#: Eq. (budget) and is therefore discarded (paper §3.13.2, step 6).  A discarded draw
+#: still consumes one evaluation of the §4.2 budget, so it is reported, not silently
+#: redrawn.
+Draw = tuple[dict, "TeamConfiguration | None"]
+
+_BUDGET_REJECTED = "supervised agents exceed the span of control floor(N*M)"
+
+
+def _random_draws(
     search_cfg: SearchConfiguration,
     rng: np.random.Generator,
     n_samples: int,
-    bg_max: int,
-) -> list[TeamConfiguration]:
-    """Draw `n_samples` random (N, M, A_dev, R, F_freeze, A_qa) configurations."""
-    configs: list[TeamConfiguration] = []
+    params,
+) -> list[Draw]:
+    """Draw `n_samples` random (N, M, A_dev, R, F_freeze, A_qa) candidates."""
+    bg_max = background_count_max(params)
+    bounds = saturation_bounds(params, search_cfg.sigma)
+    draws: list[Draw] = []
     for _ in range(n_samples):
-        N = int(rng.choice(search_cfg.N_values))
+        N = float(rng.choice(search_cfg.N_values))
         M = int(rng.integers(1, search_cfg.M_max + 1))
         R = int(rng.choice(search_cfg.R_values))
-        budget = N * M
-        # Sample supervised agent totals uniformly in [1, budget] (dev) and
-        # [0, budget] (QA); the background services are drawn separately inside
-        # the samplers and are not bounded by the budget.
-        B_dev = int(rng.integers(1, budget + 1))
-        B_qa  = int(rng.integers(0, budget + 1))
-        A_dev = _sample_composition_with_impl(B_dev, rng, bg_max)
+        # Each supervised role is drawn independently within its saturation bound;
+        # the background services are drawn separately inside the samplers and are
+        # bounded by neither u_k nor the span of control.
+        A_dev = _sample_dev_composition(rng, bounds, bg_max)
+        A_qa = _sample_qa_composition(rng, bounds, bg_max)
         # Sample F_freeze, clamped so it respects [0, R-1]
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1] or [1]))
-        A_qa = _sample_qa_composition(B_qa, rng, bg_max)
+        raw = {"N": N, "M": M, "R": R, "F_freeze": F_freeze,
+               "A_dev": list(A_dev), "A_qa": list(A_qa)}
         try:
-            cfg = TeamConfiguration(N=N, M=M, A_dev=A_dev, R=R, F_freeze=F_freeze, A_qa=A_qa)
-            configs.append(cfg)
+            cfg = TeamConfiguration(N=N, M=M, A_dev=A_dev, R=R,
+                                    F_freeze=F_freeze, A_qa=A_qa)
         except ValueError:
-            pass   # should not happen with correct sampling
-    return configs
+            # The only constraint the sampler does not enforce is Eq. (budget); this
+            # also catches N*M < 1, where a_dev,1 >= 1 is unreachable by construction.
+            draws.append((raw, None))
+            continue
+        draws.append((raw, cfg))
+    return draws
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +339,27 @@ def _random_configs(
 # ---------------------------------------------------------------------------
 
 def _config_key(config: TeamConfiguration, idx: int) -> str:
-    return f"N{config.N}_M{config.M}_R{config.R}_{idx:05d}"
+    return _draw_key({"N": config.N, "M": config.M, "R": config.R}, idx)
+
+
+def _draw_key(raw: dict, idx: int) -> str:
+    """Key of a candidate, usable for a discarded draw that has no TeamConfiguration.
+
+    `:g` keeps a whole-FTE staffing level as ``N2`` and a fractional one as ``N0.25``.
+    """
+    return f"N{raw['N']:g}_M{raw['M']}_R{raw['R']}_{idx:05d}"
+
+
+def _rejected_entry(raw: dict, generation: int) -> dict:
+    """Manifest entry for a draw discarded by Eq. (budget) before any simulation.
+
+    Rejected draws are reported rather than redrawn: they consume one evaluation of
+    the search budget, exactly like the candidates the feasibility gate rejects
+    (paper §4.2).  `failed_step` is 0 to separate them from the numbered feasibility
+    steps of `src.feasibility`.
+    """
+    return {"feasible": False, **raw, "failed_step": 0, "reason": _BUDGET_REJECTED,
+            "generation": generation}
 
 
 def _evaluate(
@@ -354,20 +454,23 @@ def _run_random_search(
     progress_every: int = 100,
 ) -> SearchOutcome:
     """Uniform random search over the configuration space (paper §3.13.2)."""
-    configs = _random_configs(search_cfg, rng, n_samples, background_count_max(params))
+    draws = _random_draws(search_cfg, rng, n_samples, params)
     outcome = SearchOutcome(manifest={}, aggs=[], results={})
     keep_samples = search_cfg.samples != "none"
 
-    for i, cfg in enumerate(configs):
-        key = _config_key(cfg, i)
-        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
-        entry["generation"] = 0
-        outcome.manifest[key] = entry
-        if agg is not None:
-            outcome.aggs.append((key, cfg, agg))
-            if keep_samples:
-                outcome.results[key] = cr    # type: ignore[assignment]
-        _progress(i + 1, len(configs), outcome, progress_every)
+    for i, (raw, cfg) in enumerate(draws):
+        key = _draw_key(raw, i)
+        if cfg is None:
+            outcome.manifest[key] = _rejected_entry(raw, generation=0)
+        else:
+            entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
+            entry["generation"] = 0
+            outcome.manifest[key] = entry
+            if agg is not None:
+                outcome.aggs.append((key, cfg, agg))
+                if keep_samples:
+                    outcome.results[key] = cr    # type: ignore[assignment]
+        _progress(i + 1, len(draws), outcome, progress_every)
 
     return outcome
 
@@ -383,14 +486,16 @@ def _run_evolutionary_search(
     """Evolutionary search: random init + guided mutation toward the Pareto front.
 
     Budget accounting follows paper §4.2: every candidate that reaches the
-    feasibility check consumes one evaluation, whether or not it is simulated.
-    A generation can therefore fall short of `n_offspring` only when the mutation
-    operator keeps producing duplicates until its attempt limit is exhausted.
+    feasibility check consumes one evaluation, whether or not it is simulated, as
+    does an initial draw discarded by Eq. (budget).  A generation can therefore fall
+    short of `n_offspring` only when the mutation operator keeps producing
+    duplicates until its attempt limit is exhausted.
     """
     n_initial   = search_cfg.n_samples_initial
     n_gen       = search_cfg.n_generations
     n_offspring = search_cfg.n_offspring
     keep_samples = search_cfg.samples != "none"
+    bounds = saturation_bounds(params, search_cfg.sigma)
 
     outcome = SearchOutcome(manifest={}, aggs=[], results={})
     # Every candidate that has consumed budget, feasible or not, so a duplicate is
@@ -409,10 +514,14 @@ def _run_evolutionary_search(
                 outcome.results[key] = cr    # type: ignore[assignment]
 
     print(f"Random initialisation ({n_initial} samples) …", flush=True)
-    init_configs = _random_configs(search_cfg, rng, n_initial, background_count_max(params))
-    for i, cfg in enumerate(init_configs):
-        evaluate_new(cfg, generation=0)
-        _progress(i + 1, len(init_configs), outcome, progress_every)
+    init_draws = _random_draws(search_cfg, rng, n_initial, params)
+    for i, (raw, cfg) in enumerate(init_draws):
+        if cfg is None:
+            outcome.manifest[_draw_key(raw, outcome.n_evaluated)] = \
+                _rejected_entry(raw, generation=0)
+        else:
+            evaluate_new(cfg, generation=0)
+        _progress(i + 1, len(init_draws), outcome, progress_every)
 
     for gen in range(1, n_gen + 1):
         # Build Pareto and non-Pareto parent pools (80% / 20% sampling)
@@ -439,7 +548,7 @@ def _run_evolutionary_search(
             while count < slots and attempts < slots * 10:
                 attempts += 1
                 parent = pool[int(rng.integers(len(pool)))]
-                child = _mutate(parent, rng, search_cfg)
+                child = _mutate(parent, rng, search_cfg, bounds)
                 if child in seen:
                     continue
                 evaluate_new(child, generation=gen)

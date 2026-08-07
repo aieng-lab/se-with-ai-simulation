@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import TeamConfiguration, supervised_agent_count
+from .config import TeamConfiguration, net_capacity, supervised_agent_count
 from .parameters import ScenarioParameters
 
 
@@ -38,11 +38,11 @@ def check_feasibility(
     # background detection services are exempt from supervision and therefore
     # do not enter this bound.
     # ------------------------------------------------------------------
-    H_net = params.H_capacity - params.c_comm * (config.N - 1)
-    actual_agents_per_dev = supervised_agent_count(config.A_dev) / config.N
+    H_net = net_capacity(params.H_capacity, params.c_comm, config.N)
+    actual_agents_per_fte = supervised_agent_count(config.A_dev) / config.N
 
-    # Monitoring alone must not exhaust developer capacity.
-    if actual_agents_per_dev * H_mon_eff_star >= H_net:
+    # Monitoring alone must not exhaust the capacity of one FTE.
+    if actual_agents_per_fte * H_mon_eff_star >= H_net:
         return FeasibilityReport(
             feasible=False, failed_step=1,
             reason="Monitoring overhead exhausts H_net even at perfect documentation",

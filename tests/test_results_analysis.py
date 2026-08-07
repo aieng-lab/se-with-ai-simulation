@@ -13,6 +13,8 @@ from src.pareto import AggregatedObjectives, pareto_frontier
 from src.results_analysis import (
     DEFAULT_THROUGHPUT_THRESHOLD,
     add_derived_columns,
+    add_front_position,
+    add_quality_cost_index,
     build_campaign,
     build_tables,
     candidate_rows,
@@ -20,6 +22,7 @@ from src.results_analysis import (
     frontier_extremes,
     frontier_rows,
     headline_summary,
+    index_optimum,
     load_frontier_table,
     quality_cost_frontier,
     rank_frontier,
@@ -180,6 +183,7 @@ def test_add_derived_columns(synthetic_frontier):
     assert df.loc[df.config_key == "low_1", ["T_dev", "T_qa"]].iloc[0].tolist() == [52, 52]
 
     assert df.loc[df.config_key == "hi_1", "quality_cost_ratio"].item() == pytest.approx(0.1)
+    assert df.loc[df.config_key == "hi_1", "quality_cost_index"].item() == pytest.approx(1e5)
     assert (df["n_sup_dev"] == 1).all()   # only a_dev_1
     assert (df["n_sup_qa"] == 1).all()    # only a_qa_3
 
@@ -309,6 +313,119 @@ def test_rank_frontier_handles_ties():
     ranked = rank_frontier(add_derived_columns(df, config_dir=str(_REPO_ROOT / "config")))
     assert ranked["quality_cost_ratio"].nunique() == 1
     assert ranked["ratio_rank"].tolist() == [1, 1]   # method="min"
+
+
+def test_quality_cost_index_is_the_product(synthetic_frontier):
+    """Both objectives are minimised, so the combined scalar is their product."""
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    out = add_quality_cost_index(df)
+    expected = df["quality_mean"] * df["cost_mean"]
+    assert out["quality_cost_index"].tolist() == pytest.approx(expected.tolist())
+
+
+def test_quality_cost_index_alternative_cost_field(synthetic_frontier):
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    out = add_quality_cost_index(df, cost_field="cost_agent_mean")
+    expected = df["quality_mean"] * df["cost_agent_mean"]
+    assert out["quality_cost_index"].tolist() == pytest.approx(expected.tolist())
+
+
+def test_quality_cost_index_is_not_monotone_along_a_front():
+    """The point of the index: it has an interior optimum where the ratio has none."""
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    # A textbook trade-off front: quality falls as cost rises, with a knee in between.
+    df = pd.DataFrame([
+        _row(sid, "random", "a", value=12.0, quality=1000.0, cost=100.0),   # index 1e5
+        _row(sid, "random", "b", value=12.0, quality=100.0, cost=200.0),    # index 2e4
+        _row(sid, "random", "c", value=12.0, quality=50.0, cost=2000.0),    # index 1e5
+    ])
+    out = add_quality_cost_index(
+        add_derived_columns(df, config_dir=str(_REPO_ROOT / "config"))
+    ).set_index("config_key")
+    assert out.loc["b", "quality_cost_index"] < out.loc["a", "quality_cost_index"]
+    assert out.loc["b", "quality_cost_index"] < out.loc["c", "quality_cost_index"]
+    # The ratio, by contrast, falls monotonically from the quality to the cost end.
+    assert out["quality_cost_ratio"].tolist() == sorted(
+        out["quality_cost_ratio"].tolist(), reverse=True
+    )
+
+
+def test_front_position_is_per_front(synthetic_frontier):
+    """Percentiles are ranked within each (scenario, strategy), not across the table."""
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    out = add_front_position(df).set_index("config_key")
+
+    # random front: ratios 0.1 (hi_1), 0.4 (hi_2), 0.025 (low_1) → 3 points
+    assert out.loc["low_1", "front_pct"] == pytest.approx(1 / 3)
+    assert out.loc["hi_1", "front_pct"] == pytest.approx(2 / 3)
+    assert out.loc["hi_2", "front_pct"] == pytest.approx(1.0)
+    # evolutionary front: 2 points, so its own top point is at 1.0 as well
+    assert out.loc["hi_3", "front_pct"] == pytest.approx(1.0)
+    assert out.loc["low_2", "front_pct"] == pytest.approx(0.5)
+
+
+def test_front_position_ratio_matches_derived_column(synthetic_frontier):
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    out = add_front_position(df)
+    assert out["quality_cost_ratio"].tolist() == pytest.approx(
+        df["quality_cost_ratio"].tolist()
+    )
+
+
+@pytest.mark.parametrize("fn", [add_quality_cost_index, add_front_position])
+def test_scalar_helpers_reject_unknown_cost_field(synthetic_frontier, fn):
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    with pytest.raises(KeyError, match="value_mean"):
+        fn(df, cost_field="value_mean")
+
+
+@pytest.mark.parametrize("fn", [add_quality_cost_index, add_front_position])
+def test_scalar_helpers_on_empty_frame(fn):
+    empty = pd.DataFrame(columns=["scenario_id", "strategy", "quality_mean", "cost_mean"])
+    assert fn(empty).empty
+
+
+def test_index_optimum_per_front(synthetic_frontier):
+    """One row per (scenario, strategy), each the lowest-index point of its front."""
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    best = index_optimum(df)
+
+    assert len(best) == 2                       # two fronts in the fixture
+    by_strategy = best.set_index("strategy")
+    # random: 1e5 (hi_1), 1e5 (hi_2), 1e5 (low_1) … indices are 100*1000, 200*500,
+    # 50*2000 — all 1e5, so the tie is broken by the lower cost.
+    assert by_strategy.loc["random", "config_key"] == "hi_2"
+    # evolutionary: 400*250 = 1e5 vs 80*1500 = 1.2e5
+    assert by_strategy.loc["evolutionary", "config_key"] == "hi_3"
+
+
+def test_index_optimum_per_scenario_pools_strategies(synthetic_frontier):
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    best = index_optimum(df, by=("scenario_id",))
+
+    assert len(best) == 1
+    row = best.iloc[0]
+    assert row["quality_cost_index"] == df["quality_mean"].mul(df["cost_mean"]).min()
+    # The full configuration of the winning point comes along.
+    for column in ("strategy", "config_key", "N", "M", "R", "F_freeze", "a_dev_1"):
+        assert column in best.columns
+
+
+def test_index_optimum_picks_the_interior_minimum():
+    """The optimum is not an end of the front — the whole reason the index exists."""
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    df = pd.DataFrame([
+        _row(sid, "random", "quality_end", value=12.0, quality=1000.0, cost=100.0),
+        _row(sid, "random", "knee", value=12.0, quality=100.0, cost=200.0),
+        _row(sid, "random", "cost_end", value=12.0, quality=50.0, cost=2000.0),
+    ])
+    best = index_optimum(add_derived_columns(df, config_dir=str(_REPO_ROOT / "config")))
+    assert best["config_key"].tolist() == ["knee"]
+
+
+def test_index_optimum_on_empty_frame():
+    empty = pd.DataFrame(columns=["scenario_id", "strategy", "quality_mean", "cost_mean"])
+    assert index_optimum(empty).empty
 
 
 def test_frontier_extremes(synthetic_frontier):

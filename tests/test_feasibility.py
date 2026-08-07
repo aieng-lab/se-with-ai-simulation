@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.config import AGENT_ROLE_COUNT, TeamConfiguration
+from src.config import AGENT_ROLE_COUNT, TeamConfiguration, net_capacity
 from src.feasibility import check_feasibility
 
 
@@ -41,3 +41,32 @@ class TestStep1SpanControl:
         # Same supervised load, but 40 background services on top
         loaded = _cfg({1: 2, 3: 1, 7: 1, 5: 20, 6: 20}, N=2, M=6)
         assert check_feasibility(loaded, p).feasible
+
+
+class TestCommunicationOverheadUsesHeadcount:
+    """H_net = H_capacity - c_comm * ceil(N-1) (paper §3.6, Eq. hnet).
+
+    Communication is a per-person cost that does not shrink when someone invests only
+    part of their time, so the peer count follows the headcount ceil(N), not N itself.
+    A half-time developer is still one person and still talks to nobody.
+    """
+
+    @pytest.mark.parametrize("N, peers", [
+        (0.25, 0), (0.75, 0), (1.0, 0), (1.25, 1), (2.0, 1), (2.25, 2), (2.5, 2), (3.0, 2),
+    ])
+    def test_peer_count_is_the_ceiling(self, N, peers):
+        assert net_capacity(40.0, 1.0, N) == 40.0 - peers
+
+    def test_the_feasibility_gate_uses_the_same_formula(self, base_params):
+        """N = 2.5 pays for 3 people, so it must be tighter than the linear N-1 = 1.5."""
+        from dataclasses import replace
+        p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=1.0,
+                    Gamma_doc=0.0, c_comm=1.0)
+        # H_net = 10 - 2 = 8 under the ceiling, 8.5 under a linear (N-1).  With 20
+        # supervised agents over 2.5 FTE, monitoring costs exactly 8 h per FTE, which
+        # the ">=" of the gate rejects — but a linear rule would still accept.
+        cfg = _cfg({1: 10, 3: 10}, N=2.5, M=8)
+        report = check_feasibility(cfg, p)
+        assert not report.feasible and report.failed_step == 1
+        # One agent fewer leaves 7.6 h < 8 h and passes.
+        assert check_feasibility(_cfg({1: 10, 3: 9}, N=2.5, M=8), p).feasible
