@@ -1004,16 +1004,34 @@ $r_7 = r_\mathrm{test}$, and $r_8 = r_\mathrm{doc}$. The Code Review and Securit
 throughput rate in the sprint transition function, because they run as background services with no discrete unit of output: each deployed instance inspects whatever change volume the sprint produces. We therefore set
 $r_5 = r_6 = 1$, which charges the investment into these roles as a flat subscription fee per deployed instance per sprint. Note that this makes the cost of these roles linear in their headcount, while their detection benefit is concave in the headcount by Eq.~\eqref{eq:volume_factor}. This trade-off is what bounds the number of these agents in an optimal configuration, even though the model imposes no explicit cap on them.
 
-Because the development composition $\mathbf{A}_\mathrm{dev}$ and QA composition
-$\mathbf{A}_\mathrm{qa}$ during a feature freeze differ, agent costs are split by phase: let $T_\mathrm{dev}$
-and $T_\mathrm{qa} = T - T_\mathrm{dev}$ denote the number of development and
-freeze sprints respectively. This gives us the agent costs
+Agents are therefore charged for the work they actually performed, so that an agent that
+no work reaches incurs no cost. Let $u_k(t)$ denote the work role $k$ completed in sprint
+$t$, measured in the unit of that role's rate $r_k$ and read off the sprint transition as
+summarised in Table~\ref{tab:work_units}. This gives us the agent costs
 \begin{equation}
-  C_\mathrm{agents} =
-    \sum_{k=1}^{8} a_{\mathrm{dev},k}\,c_{\mathrm{token},k}\,r_k\,T_\mathrm{dev}
-    + \sum_{k=1}^{8} a_{\mathrm{qa},k}\,c_{\mathrm{token},k}\,r_k\,T_\mathrm{qa}.
+  C_\mathrm{agents} = \sum_{k=1}^{8} c_{\mathrm{token},k} \sum_{t=1}^{T} u_k(t).
   \label{eq:cost_agents}
 \end{equation}
+
+\begin{table}[t]
+\caption{Work unit $u_k(t)$ billed per role and sprint.}
+\label{tab:work_units}
+\footnotesize
+\begin{tabularx}{\linewidth}{cp{2.6cm}X}
+\toprule
+$k$ & Role & $u_k(t)$ \\
+\midrule
+1 & Feature Impl.\ & $\mathrm{impl\_agents}(t) + \mathrm{arch\_impl}(t)$ \\[2pt]
+2 & Architecture & $\mathrm{arch\_chg\_done}(t)$ \\[2pt]
+3 & Bug Fixing & $\mathrm{fixes\_agent}(t)$ \\[2pt]
+4 & Refactoring & technical debt actually removed by Eq.~\eqref{eq:debt_update}, bounded by $r_\mathrm{refactor}\,a_{\cdot,4}$ \\[2pt]
+5 & Code Review & $a_{\cdot,5}$ \\[2pt]
+6 & Security Audit & $a_{\cdot,6}$ \\[2pt]
+7 & Test Development & $r_\mathrm{test}\,a_{\cdot,7}$ \\[2pt]
+8 & Dev.\ Documentation & $r_\mathrm{doc}\,a_{\cdot,8}$ \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 % ---- 3.8 ----
 \subsection{Monte Carlo Protocol}

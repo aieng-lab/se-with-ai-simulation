@@ -57,7 +57,9 @@ def save_result(
             "A_qa": list(result.config.A_qa),  # type: ignore[arg-type]
         },
         "replications": [
-            {"value": r.value, "quality": r.quality, "cost": r.cost}
+            {"value": r.value, "quality": r.quality, "cost": r.cost,
+             "cost_human": r.cost_human, "cost_agent": r.cost_agent,
+             "actions": list(r.actions)}
             for r in result.replications
         ],
         "aggregated": {
@@ -67,6 +69,9 @@ def save_result(
             "value_ci": list(agg.value_ci),
             "quality_ci": list(agg.quality_ci),
             "cost_ci": list(agg.cost_ci),
+            "cost_human_mean": agg.cost_human_mean,
+            "cost_agent_mean": agg.cost_agent_mean,
+            "actions_mean": list(agg.actions_mean),
         },
     }
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -86,8 +91,13 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     config = TeamConfiguration(N=cfg["N"], A_dev=A_dev, R=cfg["R"],
                                F_freeze=F_freeze, A_qa=A_qa)
 
+    # The cost split and the action counts postdate the usage-based cost model; files
+    # written before it carry neither, so both default to empty rather than failing.
     replications = tuple(
-        ReplicationResult(value=r["value"], quality=r["quality"], cost=r["cost"])
+        ReplicationResult(value=r["value"], quality=r["quality"], cost=r["cost"],
+                          cost_human=r.get("cost_human", 0.0),
+                          cost_agent=r.get("cost_agent", 0.0),
+                          actions=tuple(r.get("actions", ())))
         for r in data["replications"]
     )
     result = ConfigResult(config=config, replications=replications)
@@ -100,6 +110,9 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
         value_ci=tuple(ag["value_ci"]),
         quality_ci=tuple(ag["quality_ci"]),
         cost_ci=tuple(ag["cost_ci"]),
+        cost_human_mean=ag.get("cost_human_mean", 0.0),
+        cost_agent_mean=ag.get("cost_agent_mean", 0.0),
+        actions_mean=tuple(ag.get("actions_mean", ())),
     )
     return result, agg
 

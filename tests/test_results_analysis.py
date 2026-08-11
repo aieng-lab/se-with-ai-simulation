@@ -11,6 +11,7 @@ import pytest
 from src.config import AGENT_ROLE_COUNT, SCENARIO_GROUPS, SimulationHorizon, TeamConfiguration
 from src.pareto import AggregatedObjectives, pareto_frontier
 from src.results_analysis import (
+    _legacy_cost_components,
     DEFAULT_THROUGHPUT_THRESHOLD,
     add_derived_columns,
     add_front_position,
@@ -55,25 +56,26 @@ def test_phase_sprint_counts(base_config, R, F_freeze, T, expected):
     assert sum(phase_sprint_counts(config, T)) == T
 
 
-def test_cost_components_matches_paper_formula(base_config, base_params):
+def test_cost_components_is_the_inner_product_of_work_and_unit_cost(base_config, base_params):
+    """Eq. (cost_agents): agents are billed for the work they performed."""
     T = 26
     params = dataclasses.replace(
         base_params,
         c_salary=150_000.0,
         c_token=(3.8, 19.0, 0.9, 0.9, 0.9, 9.0, 0.9, 0.9),
     )
-    C_human, C_agents = cost_components(base_config, params, T)
+    actions = (10.0, 2.0, 7.0, 0.5, 26.0, 26.0, 300.0, 120.0)
+    C_human, C_agents = cost_components(base_config, params, T, actions)
 
     assert C_human == pytest.approx(base_config.N * params.c_salary * T / 52)
-
-    T_dev, T_qa = phase_sprint_counts(base_config, T)
-    rates = (params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
-             1.0, 1.0, params.r_test, params.r_doc)
-    expected = (
-        sum(base_config.A_dev[k] * params.c_token[k] * rates[k] for k in range(AGENT_ROLE_COUNT)) * T_dev
-        + sum(base_config.A_qa[k] * params.c_token[k] * rates[k] for k in range(AGENT_ROLE_COUNT)) * T_qa
+    assert C_agents == pytest.approx(
+        sum(actions[k] * params.c_token[k] for k in range(AGENT_ROLE_COUNT))
     )
-    assert C_agents == pytest.approx(expected)
+
+
+def test_cost_components_rejects_a_wrong_length_action_vector(base_config, base_params):
+    with pytest.raises(ValueError, match="actions must have length"):
+        cost_components(base_config, base_params, 10, (1.0, 2.0))
 
 
 @pytest.mark.parametrize("R, F_freeze", [(1, 0), (4, 0), (4, 1), (4, 2), (13, 2)])
@@ -88,13 +90,13 @@ def test_cost_components_reproduces_simulated_cost(base_config, base_params, R, 
     settings = SimulationHorizon(T=12, K=4, master_seed=7)
 
     result = run_configuration(config, settings, params)
-    C_human, C_agents = cost_components(config, params, settings.T)
-    C_total = C_human + C_agents
-
     for rep in result.replications:
-        # cost = C_total / max(1, F_completed) and value = F_completed / T
+        # Each replication carries the work it actually did, so the helper must
+        # reproduce that replication's own bill.
+        C_human, C_agents = cost_components(config, params, settings.T, rep.actions)
         F_completed = round(rep.value * settings.T)
-        assert rep.cost == pytest.approx(C_total / max(1, F_completed))
+        assert rep.cost == pytest.approx((C_human + C_agents) / max(1, F_completed))
+        assert rep.cost_human + rep.cost_agent == pytest.approx(rep.cost)
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +140,14 @@ def test_scenario_params_for_id_is_cached():
 # ---------------------------------------------------------------------------
 
 def _row(scenario_id, strategy, key, *, N=1, R=4, F_freeze=0,
-         value, quality, cost, T=104, a_dev_1=1, ci_width=0.0):
+         value, quality, cost, T=104, a_dev_1=1, ci_width=0.0,
+         agent_share=0.25, legacy=False):
+    """One flat-table row.
+
+    `agent_share` sets the recorded human/agent cost split that the simulator now
+    persists; `legacy=True` omits those columns, reproducing a campaign written before
+    the usage-based cost model so the fallback path can be tested.
+    """
     tiers = tiers_from_scenario_id(scenario_id)
     row = {"scenario_id": scenario_id, "strategy": strategy, "config_key": key,
            "N": N, "R": R, "F_freeze": F_freeze, "T": T}
@@ -150,6 +159,9 @@ def _row(scenario_id, strategy, key, *, N=1, R=4, F_freeze=0,
         row[f"{name}_mean"] = mean
         row[f"{name}_ci_lo"] = mean - ci_width
         row[f"{name}_ci_hi"] = mean + ci_width
+    if not legacy:
+        row["cost_agent_mean"] = cost * agent_share
+        row["cost_human_mean"] = cost * (1.0 - agent_share)
     return row
 
 
@@ -198,23 +210,41 @@ def test_cost_split_is_exact(synthetic_frontier):
     assert ((df["agent_cost_share"] >= 0) & (df["agent_cost_share"] <= 1)).all()
 
 
-def test_cost_split_matches_cost_components(synthetic_frontier):
-    """The human/agent shares must agree with the simulator's own cost formula."""
+def test_cost_split_uses_the_recorded_shares(synthetic_frontier):
+    """The split is read from the simulation, not reconstructed from the config."""
     df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
-    params = scenario_params_for_id("h-m_p-m_d-m_a-m_b-m", str(_REPO_ROOT / "config"))
+    # _row records a 25 % agent share; a config-derived reconstruction would not
+    # reproduce it, since the fixture's compositions bear no relation to these costs.
+    assert df["agent_cost_share"].tolist() == pytest.approx([0.25] * len(df))
     for _, row in df.iterrows():
-        config = TeamConfiguration(
-            N=int(row["N"]),
-            A_dev=tuple(int(row[f"a_dev_{k}"]) for k in range(1, AGENT_ROLE_COUNT + 1)),
-            R=int(row["R"]), F_freeze=int(row["F_freeze"]),
-            A_qa=tuple(int(row[f"a_qa_{k}"]) for k in range(1, AGENT_ROLE_COUNT + 1)),
-        )
-        C_human, C_agents = cost_components(config, params, int(row["T"]))
-        assert row["C_human"] == pytest.approx(C_human)
-        assert row["C_agents"] == pytest.approx(C_agents)
-        assert row["cost_human_mean"] == pytest.approx(
-            row["cost_mean"] * C_human / (C_human + C_agents)
-        )
+        assert row["cost_agent_mean"] == pytest.approx(row["cost_mean"] * 0.25)
+        assert row["C_human"] + row["C_agents"] == pytest.approx(row["C_total"])
+
+
+def test_cost_split_falls_back_for_pre_usage_model_campaigns():
+    """A campaign without the recorded split still loads, via the old formula."""
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    legacy_df = pd.DataFrame([
+        _row(sid, "random", "hi_1", value=12.0, quality=100.0, cost=1000.0, legacy=True),
+    ])
+    assert "cost_agent_mean" not in legacy_df.columns
+
+    with pytest.warns(RuntimeWarning, match="pre-usage-based cost model"):
+        df = add_derived_columns(legacy_df, config_dir=str(_REPO_ROOT / "config"))
+
+    params = scenario_params_for_id(sid, str(_REPO_ROOT / "config"))
+    config = TeamConfiguration(
+        N=1, A_dev=tuple(1 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
+        R=4, F_freeze=0,
+        A_qa=tuple(1 if k == 2 else 0 for k in range(AGENT_ROLE_COUNT)),
+    )
+    C_human, C_agents = _legacy_cost_components(config, params, 104)
+    row = df.iloc[0]
+    assert row["C_human"] == pytest.approx(C_human)
+    assert row["C_agents"] == pytest.approx(C_agents)
+    assert row["cost_human_mean"] == pytest.approx(
+        row["cost_mean"] * C_human / (C_human + C_agents)
+    )
 
 
 def test_add_derived_columns_requires_T(synthetic_frontier):

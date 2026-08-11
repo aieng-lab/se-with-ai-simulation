@@ -27,6 +27,12 @@ class AggregatedObjectives:
     value_ci: tuple[float, float]
     quality_ci: tuple[float, float]
     cost_ci: tuple[float, float]
+    # Reporting only — the §3.10 dominance relation stays three-objective and must not
+    # read these.  They are persisted because C_agents depends on the realised
+    # trajectory and can no longer be reconstructed from `cost_mean` by a fixed ratio.
+    cost_human_mean: float = 0.0
+    cost_agent_mean: float = 0.0
+    actions_mean: tuple[float, ...] = ()
 
 
 def aggregate_config_result(
@@ -49,10 +55,16 @@ def aggregate_config_result(
     quality_boot = quality_arr[idx].mean(axis=1)
     cost_boot    = cost_arr[idx].mean(axis=1)
 
+    reps = result.replications
+    actions_arr = np.array([r.actions for r in reps], dtype=float) if reps and reps[0].actions else None
+
     return AggregatedObjectives(
         value_mean=float(value_arr.mean()),
         quality_mean=float(quality_arr.mean()),
         cost_mean=float(cost_arr.mean()),
+        cost_human_mean=float(np.mean([r.cost_human for r in reps])),
+        cost_agent_mean=float(np.mean([r.cost_agent for r in reps])),
+        actions_mean=tuple(actions_arr.mean(axis=0)) if actions_arr is not None else (),
         value_ci=(float(np.percentile(value_boot,     2.5)), float(np.percentile(value_boot,   97.5))),
         quality_ci=(float(np.percentile(quality_boot, 2.5)), float(np.percentile(quality_boot, 97.5))),
         cost_ci=(float(np.percentile(cost_boot,       2.5)), float(np.percentile(cost_boot,    97.5))),

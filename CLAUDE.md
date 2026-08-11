@@ -24,7 +24,7 @@ src/                    Python simulation package
     io.py               load_simulation_horizon / load_team_config / load_scenario_params
                         / load_search_config / load_initial_state
     feasibility.py      check_feasibility — human-capacity feasibility condition (§3.3)
-    sprint.py           step_sprint — full 10-step sprint transition + SprintRecord
+    sprint.py           step_sprint — full 10-step sprint transition; returns SprintActions
     simulation.py       run_configuration (K replications); SprintSnapshot / ConfigTrace
     pareto.py           aggregate_config_result (bootstrap CI), pareto_frontier (CI-aware)
     results.py          to_dataframe, save_result/load_result, save_traces/load_traces
@@ -262,7 +262,26 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
   points carry a nonzero unexercised `A_qa`. `composition_analysis.phase_frame` drops
   them and every public function in that module calls it first. Roles 1–2 are also
   structurally zero in QA, so QA panels show six roles, not eight.
-- **The human/agent cost split is reconstructed, not stored**: `cost` is a single scalar all the way from `ReplicationResult` to `frontiers.csv`. But `C_human` and `C_agents` (`simulation.cost_components`) are deterministic given `(config, params, T)` — only the `max(1, F_completed(T))` denominator is stochastic — so `cost_human = cost · C_human/C_total` is *exact*, for a single replication and for the mean alike. `results_analysis.add_derived_columns` uses this to split any persisted `cost_mean` with no re-simulation. Keep the formula in `cost_components` only; both the simulator and the analysis call it.
+- **Agents are billed for the work they performed, not for being deployed**:
+  `step_sprint` returns a `SprintActions` with the work each role completed that sprint,
+  measured in that role's own throughput unit (features for k=1, change requests for k=2,
+  bugs for k=3, debt for k=4, deployed instances for the flat-rate services k=5,6, tests
+  for k=7, documents for k=8). `run_configuration` accumulates it over the horizon and
+  `simulation.cost_components(config, params, T, actions)` returns
+  `C_agents = Σ_k actions_k · c_token,k`. An agent that no work reaches costs nothing.
+  Only roles 1–4 changed with this: k=5,6 were already flat per sprint (`r_k = 1`) and
+  k=7,8 always produce their full nominal output, so their bills are identical to the
+  old nominal-rate formula. Consequence to keep in mind: **cost no longer disciplines
+  over-provisioning of roles 1–4** — the saturation bound `u_k` and the human-capacity
+  gate are what bound them.
+- **The human/agent cost split is recorded, not reconstructed**: because `C_agents` now
+  depends on the realised trajectory, no fixed `C_human/C_total` ratio recovers it from
+  `cost`. `ReplicationResult` carries `cost_human`, `cost_agent` and the per-role
+  `actions`; `AggregatedObjectives` carries their means; both reach `search_summary.json`
+  and the flat table. `results_analysis.add_derived_columns` reads them, and falls back to
+  `_legacy_cost_components` with a `RuntimeWarning` for campaign files written before this
+  change. The two extra means are **reporting only** — the §3.10 dominance rule stays
+  three-objective and must not read them.
 
 ---
 
@@ -291,5 +310,6 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 | cost | (C_human + C_agents) / max(1, F_completed(T)) | minimize |
 
 - `C_human = N · c_salary · T/52` (`c_salary` is the annual cost of one FTE, pro-rated)
-- `C_agents = Σ_k a_dev,k · c_token,k · T_dev + Σ_k a_qa,k · c_token,k · T_qa`
+- `C_agents = Σ_k c_token,k · Σ_t u_k(t)`, where `u_k(t)` is the work role `k` completed in
+  sprint `t` (see the cost bullet above)
 - `ω_min ≤ ω_maj ≤ ω_sec` are severity weights for escaped bugs

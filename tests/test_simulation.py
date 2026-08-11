@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from src.config import SimulationHorizon
+from src.config import SimulationHorizon, TeamConfiguration
 from src.simulation import ConfigResult, ConfigTrace, run_configuration
 from src.state import SystemState
 
@@ -102,7 +102,8 @@ class TestCostAccounting:
         for rep in result.replications:
             assert rep.cost == pytest.approx(0.0)
 
-    def test_agent_cost_scaled_by_role_rate(self, base_config, base_params):
+    def test_agent_cost_is_the_work_performed_times_unit_cost(self, base_config, base_params):
+        """Eq. (cost_agents): the bill is the inner product of work and c_token."""
         from src.config import AGENT_ROLE_COUNT
         params = dataclasses.replace(
             base_params,
@@ -114,18 +115,63 @@ class TestCostAccounting:
         rep = trace.replications[0]
         F_completed = trace.traces[0].snapshots[-1].F_completed
 
-        agent_rates = (
-            params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
-            1.0, 1.0, params.r_test, params.r_doc,
+        # Unit token costs, so C_agents is just the total work performed.
+        assert rep.cost == pytest.approx(sum(rep.actions) / max(1, F_completed))
+        assert rep.cost_agent == pytest.approx(rep.cost)   # c_salary = 0
+        assert rep.cost_human == pytest.approx(0.0)
+
+    def test_idle_agents_are_free(self, base_params):
+        """With no work arriving, roles 1-4 bill nothing; 5-8 keep their fixed output."""
+        from src.config import AGENT_ROLE_COUNT
+        params = dataclasses.replace(
+            base_params, c_salary=0.0, r_arrival=0.0, f_arch_chg=0.0,
+            c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
         )
-        qa_sprint_count = sum(
-            1 for t in range(s.T)
-            if (t % base_config.R) >= (base_config.R - base_config.F_freeze)
+        config = TeamConfiguration(
+            N=2, A_dev=tuple(1 for _ in range(AGENT_ROLE_COUNT)), R=4, F_freeze=0,
         )
-        dev_sprint_count = s.T - qa_sprint_count
-        expected_C_agents = (
-            sum(base_config.A_dev[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
-            + sum(base_config.A_qa[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count
+        s = SimulationHorizon(T=6, K=1, master_seed=0)
+        rep = run_configuration(config, s, params).replications[0]
+
+        # k=1..4 idle: no features arrive, so nothing is implemented, no change
+        # requests are raised, no bugs are injected, and no debt accrues to remove.
+        assert rep.actions[0] == pytest.approx(0.0)
+        assert rep.actions[1] == pytest.approx(0.0)
+        assert rep.actions[2] == pytest.approx(0.0)
+        assert rep.actions[3] == pytest.approx(0.0)
+        # k=5,6 are flat per deployed instance per sprint; k=7,8 always write output.
+        assert rep.actions[4] == pytest.approx(s.T)
+        assert rep.actions[5] == pytest.approx(s.T)
+        assert rep.actions[6] == pytest.approx(params.r_test * s.T)
+        assert rep.actions[7] == pytest.approx(params.r_doc * s.T)
+
+    def test_saturated_demand_reproduces_the_nominal_bill(self, base_params):
+        """Regression anchor: when every agent is busy, usage billing meets the
+        old nominal formula.  This pins the unit convention of each action count."""
+        from src.config import AGENT_ROLE_COUNT
+        # Demand far above capacity and zero debt, so the implementation agent runs
+        # at its full rate every sprint.
+        params = dataclasses.replace(
+            base_params, c_salary=0.0, r_arrival=500.0, delta_min=1.0,
+            delta_impl=0.0, delta_fix=0.0, r_refactor=0.0,
+            c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
+            f_fix=0.0, h_feature=1e9,      # humans implement nothing
         )
-        expected_cost = expected_C_agents / max(1, F_completed)
-        assert rep.cost == pytest.approx(expected_cost)
+        config = TeamConfiguration(
+            N=2, A_dev=(2, 0, 0, 0, 1, 1, 1, 1), R=4, F_freeze=0,
+        )
+        s = SimulationHorizon(T=5, K=1, master_seed=3)
+        rep = run_configuration(config, s, params).replications[0]
+
+        # k=1 saturates at floor(r_F * 1.0 * a_1) features every sprint.
+        nominal_impl = int(params.r_F * 1.0 * config.A_dev[0]) * s.T
+        assert rep.actions[0] == pytest.approx(nominal_impl)
+        assert rep.actions[4] == pytest.approx(config.A_dev[4] * s.T)
+        assert rep.actions[6] == pytest.approx(params.r_test * config.A_dev[6] * s.T)
+
+    def test_cost_split_sums_to_cost(self, base_config, base_params):
+        params = dataclasses.replace(base_params, c_salary=120_000.0)
+        s = SimulationHorizon(T=8, K=3, master_seed=11)
+        for rep in run_configuration(base_config, s, params).replications:
+            assert rep.cost_human + rep.cost_agent == pytest.approx(rep.cost)
+            assert rep.cost_human > 0 and rep.cost_agent >= 0

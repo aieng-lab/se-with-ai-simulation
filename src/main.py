@@ -310,6 +310,8 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
                 "A_qa": list(cfg.A_qa),
                 "value_mean": agg.value_mean, "quality_mean": agg.quality_mean, "cost_mean": agg.cost_mean,
                 "value_ci": list(agg.value_ci), "quality_ci": list(agg.quality_ci), "cost_ci": list(agg.cost_ci),
+                "cost_human_mean": agg.cost_human_mean, "cost_agent_mean": agg.cost_agent_mean,
+                "actions_mean": list(agg.actions_mean),
             }
             for key, cfg, agg in aggs
         },

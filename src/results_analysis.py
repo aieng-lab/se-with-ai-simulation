@@ -16,11 +16,13 @@ Section 5 analyses the campaign of §4.2 along the three Pareto objectives:
    into its human and agent shares, and :func:`rank_frontier` /
    :func:`frontier_extremes` rank the surviving points.
 
-The cost split is exact rather than approximate: ``C_human`` and ``C_agents``
-(:func:`src.simulation.cost_components`) are deterministic given
-``(config, params, T)`` and only the ``max(1, F_completed(T))`` denominator is
-stochastic, so ``cost_human_mean = cost_mean * C_human / C_total`` holds for the
-mean over replications as well as for every single replication.
+The cost split is read from the simulation rather than reconstructed. Agents are
+billed for the work they actually performed (:func:`src.simulation.cost_components`),
+so ``C_agents`` depends on the realised trajectory and no fixed ``C_human / C_total``
+ratio can recover the split from ``cost_mean``. ``cost_human_mean`` and
+``cost_agent_mean`` are therefore persisted per candidate. Campaign files written
+before the usage-based cost model lack those columns; :func:`add_derived_columns`
+falls back to the old deterministic reconstruction for them and warns.
 
 This module also owns the flat-table schema that ``scripts/collect_results.py``
 and ``scripts/analyze_results.py`` share, so the two tools cannot drift apart.
@@ -51,6 +53,7 @@ Public API:
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -68,7 +71,7 @@ from .config import (
 from .io import load_scenario_params
 from .parameters import ScenarioParameters
 from .pareto import AggregatedObjectives, pareto_frontier
-from .simulation import cost_components, phase_sprint_counts
+from .simulation import phase_sprint_counts
 
 STRATEGIES: tuple[str, ...] = ("random", "evolutionary")
 
@@ -173,6 +176,14 @@ def _objective_row(
         row[f"{name}_mean"] = obj[f"{name}_mean"]
         row[f"{name}_ci_lo"] = obj[f"{name}_ci"][0]
         row[f"{name}_ci_hi"] = obj[f"{name}_ci"][1]
+    # The recorded human/agent cost split and the per-role work counts postdate the
+    # usage-based cost model; searches written before it carry neither, and
+    # add_derived_columns falls back to the deterministic reconstruction for them.
+    for name in ("cost_human_mean", "cost_agent_mean"):
+        if name in obj:
+            row[name] = obj[name]
+    for k, units in enumerate(obj.get("actions_mean", ()), start=1):
+        row[f"actions_{k}"] = units
     return row
 
 
@@ -499,6 +510,30 @@ def _team_config(row: pd.Series) -> TeamConfiguration:
     )
 
 
+def _legacy_cost_components(
+    config: TeamConfiguration, params: ScenarioParameters, T: int
+) -> tuple[float, float]:
+    """(C_human, C_agents) under the pre-usage-based cost model.
+
+    Charged every deployed agent its *nominal* throughput every sprint, regardless of
+    the work that reached it.  Kept only so that campaign tables written before the
+    switch still load; new results carry the recorded split instead.
+    """
+    C_human = config.N * params.c_salary * T / 52
+    dev_sprint_count, qa_sprint_count = phase_sprint_counts(config, T)
+    agent_rates = (
+        params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
+        1.0, 1.0, params.r_test, params.r_doc,
+    )
+    C_agents = (
+        sum(config.A_dev[r] * params.c_token[r] * agent_rates[r]
+            for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
+        + sum(config.A_qa[r] * params.c_token[r] * agent_rates[r]  # type: ignore[index]
+              for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count
+    )
+    return C_human, C_agents
+
+
 def add_derived_columns(df: pd.DataFrame, config_dir: str = "config") -> pd.DataFrame:
     """Add the §5 quantities to a frontier table.
 
@@ -514,39 +549,66 @@ def add_derived_columns(df: pd.DataFrame, config_dir: str = "config") -> pd.Data
         raise KeyError("frontier table needs a 'T' column; use load_frontier_table()")
 
     out = df.copy()
+    # The simulator persists the split; only pre-usage-model campaigns lack it.
+    has_persisted_split = {"cost_human_mean", "cost_agent_mean"} <= set(out.columns)
+
     records = []
     for _, row in out.iterrows():
         params = scenario_params_for_id(row["scenario_id"], config_dir)
         config = _team_config(row)
         T = int(row["T"])
         T_dev, T_qa = phase_sprint_counts(config, T)
-        C_human, C_agents = cost_components(config, params, T)
         records.append({
             "r_arrival": params.r_arrival,
             "T_dev": T_dev,
             "T_qa": T_qa,
-            "C_human": C_human,
-            "C_agents": C_agents,
             "n_sup_dev": supervised_agent_count(config.A_dev),
             "n_sup_qa": supervised_agent_count(config.A_qa),  # type: ignore[arg-type]
         })
     derived = pd.DataFrame(records, index=out.index)
     out = pd.concat([out, derived], axis=1)
 
-    out["C_total"] = out["C_human"] + out["C_agents"]
-    # C_total is strictly positive whenever c_salary > 0 or any agent is deployed,
-    # which the search range guarantees (a_dev_1 >= 1); guard anyway.
-    total = out["C_total"].replace(0.0, np.nan)
-    human_share = out["C_human"] / total
-    agent_share = out["C_agents"] / total
-    out["agent_cost_share"] = agent_share
+    if has_persisted_split:
+        # cost_human_mean and cost_agent_mean already carry the max(1, F_completed)
+        # denominator, so the per-horizon totals come back by multiplying it out via
+        # the ratio to cost_mean, which shares that denominator exactly.
+        cost_mean = out["cost_mean"].replace(0.0, np.nan)
+        agent_share = out["cost_agent_mean"] / cost_mean
+        human_share = out["cost_human_mean"] / cost_mean
+        out["agent_cost_share"] = agent_share
+        # The CI bounds are not split by the simulator; apportion them by the mean
+        # share, which is the best available estimate now that the split is stochastic.
+        for suffix in ("ci_lo", "ci_hi"):
+            out[f"cost_human_{suffix}"] = out[f"cost_{suffix}"] * human_share
+            out[f"cost_agent_{suffix}"] = out[f"cost_{suffix}"] * agent_share
+    else:
+        warnings.warn(
+            "frontier table has no cost_human_mean/cost_agent_mean columns; falling "
+            "back to the deterministic cost split of the pre-usage-based cost model. "
+            "Re-run the campaign to get the recorded split.",
+            RuntimeWarning, stacklevel=2,
+        )
+        legacy = []
+        for _, row in out.iterrows():
+            params = scenario_params_for_id(row["scenario_id"], config_dir)
+            config = _team_config(row)
+            legacy.append(_legacy_cost_components(config, params, int(row["T"])))
+        out["C_human"] = [c[0] for c in legacy]
+        out["C_agents"] = [c[1] for c in legacy]
+        total = (out["C_human"] + out["C_agents"]).replace(0.0, np.nan)
+        human_share = out["C_human"] / total
+        agent_share = out["C_agents"] / total
+        out["agent_cost_share"] = agent_share
+        for suffix in ("mean", "ci_lo", "ci_hi"):
+            out[f"cost_human_{suffix}"] = out[f"cost_{suffix}"] * human_share
+            out[f"cost_agent_{suffix}"] = out[f"cost_{suffix}"] * agent_share
 
-    # The cost objective is (C_human + C_agents) / max(1, F_completed) with both
-    # numerator terms deterministic, so the mean over replications splits exactly
-    # in the same proportion.  Same argument applies to the bootstrap CI bounds.
-    for suffix in ("mean", "ci_lo", "ci_hi"):
-        out[f"cost_human_{suffix}"] = out[f"cost_{suffix}"] * human_share
-        out[f"cost_agent_{suffix}"] = out[f"cost_{suffix}"] * agent_share
+    if "C_human" not in out.columns:
+        # Per-horizon totals, recovered from the per-feature means.
+        features = out["value_mean"] * out["T"]
+        out["C_human"] = out["cost_human_mean"] * features.clip(lower=1.0)
+        out["C_agents"] = out["cost_agent_mean"] * features.clip(lower=1.0)
+    out["C_total"] = out["C_human"] + out["C_agents"]
 
     out["value_ratio"] = out["value_mean"] / out["r_arrival"]
     out["value_ratio_ci_lo"] = out["value_ci_lo"] / out["r_arrival"]

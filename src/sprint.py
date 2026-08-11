@@ -23,14 +23,36 @@ within the same sprint as injection. There is no CI/CD latency buffer.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .config import TeamConfiguration, net_capacity, supervised_agent_count
+from .config import AGENT_ROLE_COUNT, TeamConfiguration, net_capacity, supervised_agent_count
 from .parameters import ScenarioParameters
 from .state import SystemState
 
 if TYPE_CHECKING:
     from numpy.random import Generator
+
+
+@dataclass(frozen=True, slots=True)
+class SprintActions:
+    """Work units completed by each agent role in one sprint, indexed k=1..8.
+
+    Each entry is denominated in the same unit as that role's throughput rate r_k
+    (features for k=1, change requests for k=2, bugs for k=3, debt for k=4, deployed
+    instances for the flat-rate services k=5,6, tests for k=7, documents for k=8), so
+    the agent cost of paper Eq. (cost_agents) is the plain inner product with
+    `c_token`.  The state vector of §3.4 stays 21-dimensional: these counts are
+    returned rather than stored.
+    """
+
+    units: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.units) != AGENT_ROLE_COUNT:
+            raise ValueError(
+                f"units must have length {AGENT_ROLE_COUNT}, got {len(self.units)}"
+            )
 
 
 def _volume_factor(impl: int, a: int, alpha_size: float) -> float:
@@ -53,10 +75,11 @@ def step_sprint(
     config: TeamConfiguration,
     params: ScenarioParameters,
     rng: "Generator",
-) -> None:
+) -> SprintActions:
     """Advance `state` from sprint t-1 to sprint t (in place).
 
-    Implements the ten-step transition in canonical order.
+    Implements the ten-step transition in canonical order and returns the work each
+    agent role actually completed, which is what Eq. (cost_agents) bills.
     """
 
     # ------------------------------------------------------------------
@@ -263,12 +286,18 @@ def step_sprint(
     # ------------------------------------------------------------------
     # Technical debt and documentation update (General Maintenance)
     # ------------------------------------------------------------------
-    state.D_tech = max(0.0, min(1.0,
-        state.D_tech
-        + params.delta_impl * impl
-        + params.delta_fix * total_fixes
-        - params.r_refactor * A_active[3],      # Refactoring Agent (k=4, index 3)
+    D_raw = (state.D_tech
+             + params.delta_impl * impl
+             + params.delta_fix * total_fixes)
+    D_new = max(0.0, min(1.0,
+        D_raw - params.r_refactor * A_active[3],   # Refactoring Agent (k=4, index 3)
     ))
+    # Debt the refactoring actually removed: where it would have landed without any
+    # refactoring, minus where it landed with it.  Bounded by r_refactor * a_4 and zero
+    # when the role is unstaffed, so it is the billable work unit for k=4.  Computed
+    # beside the update rather than by restructuring it — the clip order matters.
+    refactor_applied = min(1.0, D_raw) - D_new
+    state.D_tech = D_new
 
     state.N_doc += params.r_doc * A_active[7]   # Developer Documentation Agent (k=8)
 
@@ -289,4 +318,22 @@ def step_sprint(
         state.B_rel_sec += new_escaped_sec
         state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
         state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
+
+    # ------------------------------------------------------------------
+    # Billable work completed this sprint, by role (paper Eq. cost_agents)
+    # ------------------------------------------------------------------
+    # Roles 1-4 are demand-driven and idle when no work reaches them.  The two
+    # background services have no discrete unit of output, so they are charged per
+    # deployed instance per sprint (r_5 = r_6 = 1).  Roles 7-8 always produce their
+    # full nominal output, so their bill is unchanged by the switch to usage.
+    return SprintActions(units=(
+        float(impl_agents + arch_impl_done),   # k=1 features and proposals implemented
+        float(arch_chg_done),                  # k=2 change requests resolved
+        float(fixes_agent),                    # k=3 bugs repaired by agents
+        float(refactor_applied),               # k=4 technical debt removed
+        float(A_active[4]),                    # k=5 deployed review instances
+        float(A_active[5]),                    # k=6 deployed audit instances
+        params.r_test * A_active[6],           # k=7 tests written
+        params.r_doc * A_active[7],            # k=8 documentation items written
+    ))
 

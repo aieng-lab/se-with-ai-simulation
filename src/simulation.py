@@ -7,6 +7,7 @@ state evolution as a `ConfigTrace`; the default returns the lightweight `ConfigR
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
@@ -21,6 +22,16 @@ class ReplicationResult:
     value: float    # F_completed(T) / T — features/sprint
     quality: float  # weighted B_escaped(T) / max(1, F_completed(T))
     cost: float     # (C_human + C_agents) / max(1, F_completed(T)) — cost/feature
+    # The two components of `cost`, sharing its denominator, so cost_human + cost_agent
+    # == cost.  They are persisted rather than reconstructed: C_agents now depends on
+    # the realised trajectory (agents are billed for work performed), so the split is no
+    # longer a deterministic ratio the analysis could recover from `cost` alone.
+    cost_human: float = 0.0
+    cost_agent: float = 0.0
+    # Work completed per role over the horizon, in each role's own throughput unit.
+    # Kept so the analysis can tell a role that worked from one that was merely
+    # deployed; `cost_agent` is its inner product with c_token.
+    actions: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,28 +103,22 @@ def cost_components(
     config: TeamConfiguration,
     params: ScenarioParameters,
     T: int,
+    actions: Sequence[float],
 ) -> tuple[float, float]:
     """(C_human, C_agents) over a T-sprint horizon — Eqs. (cost_human), (cost_agents).
 
-    Both are deterministic given `(config, params, T)`; only the per-feature
-    denominator of the cost objective is stochastic. `src.results_analysis` relies
-    on this to split a persisted `cost_mean` into its human and agent shares
-    without re-simulating.
+    `actions` is the per-role work completed over the whole horizon, accumulated from
+    the `SprintActions` that `step_sprint` returns.  Agents are billed for the work they
+    actually performed, so an agent that no work reaches costs nothing; `c_token[k]` is
+    the cost of one unit of role k's throughput, which is exactly the unit `actions[k]`
+    is counted in.  C_human remains deterministic given `(config, T)`.
     """
+    if len(actions) != AGENT_ROLE_COUNT:
+        raise ValueError(
+            f"actions must have length {AGENT_ROLE_COUNT}, got {len(actions)}"
+        )
     C_human = config.N * params.c_salary * T / 52
-    # Agent costs are split by phase: dev sprints use A_dev, freeze sprints use A_qa.
-    dev_sprint_count, qa_sprint_count = phase_sprint_counts(config, T)
-    # c_token is a cost per unit of role-specific throughput; Code Review and
-    # Security Audit (indices 4, 5) are background services with no discrete unit
-    # of output, so they keep rate 1 — a flat per-sprint subscription cost.
-    agent_rates = (
-        params.r_F, params.r_arch_chg, params.r_fix, params.r_refactor,
-        1.0, 1.0, params.r_test, params.r_doc,
-    )
-    C_agents = (
-        sum(config.A_dev[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * dev_sprint_count
-        + sum(config.A_qa[r] * params.c_token[r] * agent_rates[r] for r in range(AGENT_ROLE_COUNT)) * qa_sprint_count  # type: ignore[index]
-    )
+    C_agents = sum(actions[k] * params.c_token[k] for k in range(AGENT_ROLE_COUNT))
     return C_human, C_agents
 
 
@@ -172,8 +177,14 @@ def _run_replication(
     # ------------------------------------------------------------------
     # Sprint loop
     # ------------------------------------------------------------------
+    # Work completed per role over the horizon; the agent bill is its inner product
+    # with c_token (Eq. cost_agents).
+    actions = [0.0] * AGENT_ROLE_COUNT
+
     for t in range(settings.T):
-        step_sprint(t, state, config, params, rng)
+        sprint_actions = step_sprint(t, state, config, params, rng)
+        for k in range(AGENT_ROLE_COUNT):
+            actions[k] += sprint_actions.units[k]
 
         # Optional trace capture (after all state updates)
         if capture_traces:
@@ -205,7 +216,7 @@ def _run_replication(
     # ------------------------------------------------------------------
     # Compute Costs
     # ------------------------------------------------------------------
-    C_human, C_agents = cost_components(config, params, settings.T)
+    C_human, C_agents = cost_components(config, params, settings.T, actions)
     C_total = C_human + C_agents
 
     # ------------------------------------------------------------------
@@ -220,6 +231,9 @@ def _run_replication(
         value=F_done / settings.T,
         quality=Q_weighted / denom,
         cost=C_total / denom,
+        cost_human=C_human / denom,
+        cost_agent=C_agents / denom,
+        actions=tuple(actions),
     )
 
     trace = ReplicationTrace(k=k, result=result, snapshots=tuple(snapshots)) if capture_traces else None
