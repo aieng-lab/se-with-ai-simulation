@@ -193,6 +193,27 @@ class TestRandomDraws:
         assert any(sum(cfg.A_dev) > supervised_agent_count(cfg.A_dev) * 2
                    for cfg in draws)
 
+    def test_no_qa_composition_is_drawn_without_a_freeze_window(self, search_cfg,
+                                                                medium_params):
+        """A_qa is only a parameter when F_freeze > 0; otherwise it must be zero."""
+        rng = np.random.default_rng(31)
+        draws = _random_draws(search_cfg, rng, 600, medium_params)
+        no_freeze = [c for c in draws if c.F_freeze == 0]
+        assert no_freeze, "the sampler must still produce F_freeze == 0 candidates"
+        assert all(c.A_qa == (0,) * AGENT_ROLE_COUNT for c in no_freeze)
+        # ... and a freeze window must still get a real, varied QA composition.
+        with_freeze = [c for c in draws if c.F_freeze > 0]
+        assert len({c.A_qa for c in with_freeze}) > 1
+
+    def test_draws_contain_no_behavioural_duplicates_beyond_exact_repeats(
+            self, search_cfg, medium_params):
+        """Two draws are either the same configuration or genuinely different models."""
+        rng = np.random.default_rng(32)
+        draws = _random_draws(search_cfg, rng, 800, medium_params)
+        models = {(c.N, c.R, c.F_freeze, c.A_dev,
+                   c.A_qa if c.F_freeze > 0 else None) for c in draws}
+        assert len(models) == len(set(draws))
+
 
 class TestMutation:
     def _parent(self):
@@ -264,6 +285,48 @@ class TestMutation:
         for _ in range(300):
             parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
             assert parent.A_dev[0] >= 1
+
+    def test_qa_is_not_mutated_while_the_freeze_window_is_closed(self, search_cfg):
+        """A_qa is inert at F_freeze=0, so mutating it would only produce a duplicate.
+
+        Before this rule one mutation type in four perturbed A_qa on an F_freeze=0 parent,
+        producing a child that is the same model as its parent, scored on a different RNG
+        stream, and co-retained on the frontier as a separate point.
+        """
+        rng = np.random.default_rng(23)
+        A_dev = [0] * AGENT_ROLE_COUNT
+        A_dev[0], A_dev[2] = 1, 1
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=4, F_freeze=0)
+        assert parent.A_qa == (0,) * AGENT_ROLE_COUNT
+        saw_open_window = False
+        for _ in range(400):
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+            if parent.F_freeze == 0 and child.F_freeze == 0:
+                assert child.A_qa == (0,) * AGENT_ROLE_COUNT
+            saw_open_window |= child.F_freeze > 0
+            parent = child
+        # The F_freeze mutation must still be able to open a window, otherwise the
+        # assertion above would be vacuous.
+        assert saw_open_window
+
+    def test_no_child_is_a_behavioural_duplicate_of_its_parent(self, search_cfg):
+        """Every child differs from its parent in a way the simulation can see."""
+        rng = np.random.default_rng(24)
+        for f_freeze in (0, 1):
+            A_dev = [0] * AGENT_ROLE_COUNT
+            A_dev[0], A_dev[2], A_dev[4] = 1, 1, 1
+            A_qa = [0] * AGENT_ROLE_COUNT
+            A_qa[2] = 1            # a_qa,1 = a_qa,2 = 0, as the freeze window requires
+            parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
+                                       R=4, F_freeze=f_freeze)
+            for _ in range(300):
+                child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+                if child != parent:
+                    def model(c):
+                        return (c.N, c.R, c.F_freeze, c.A_dev,
+                                c.A_qa if c.F_freeze > 0 else None)
+                    assert model(child) != model(parent)
+                parent = child
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from src.config import (
     TeamConfiguration,
     supervised_agent_count,
 )
+from src.rng import _config_hash
 
 
 def _A(*pairs) -> tuple[int, ...]:
@@ -143,10 +144,43 @@ class TestBackgroundServiceBudget:
         with pytest.raises(ValueError, match="a_qa,2"):
             TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=tuple(A_qa), R=4)
 
-    def test_qa_constraint_skipped_when_no_freeze(self):
-        A_qa = _VALID_A  # a_qa,1 != 0, but F_freeze=0 so it should be allowed
-        cfg = TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=A_qa, R=4, F_freeze=0)
-        assert cfg.A_qa[0] == _VALID_A[0]
+    def test_qa_canonicalised_when_no_freeze(self):
+        # a_qa,1 != 0 does not raise at F_freeze=0 — the vector is never applied.  It is
+        # canonicalised to zero rather than kept, so that a configuration is identified
+        # only by the parameters that affect it.
+        cfg = TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=_VALID_A, R=4, F_freeze=0)
+        assert cfg.A_qa == (0,) * AGENT_ROLE_COUNT
+
+    def test_qa_malformed_still_raises_when_no_freeze(self):
+        # Canonicalisation runs after the shape checks, so a broken A_qa is not swallowed.
+        with pytest.raises(ValueError, match="A_qa"):
+            TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=(1, 2, 3), R=4, F_freeze=0)
+        with pytest.raises(ValueError, match="A_qa"):
+            TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=(0,) * 7 + (-1,), R=4, F_freeze=0)
+
+    def test_inert_qa_variants_are_one_configuration(self):
+        """The regression test for the behavioural-duplicate finding.
+
+        Configurations differing only in an unexercised A_qa are the same model, and must
+        therefore be the same object: equal, equally hashed, and — via _config_hash —
+        scored on the same RNG stream.  Otherwise each variant lands at a different point
+        and they all survive onto the frontier as if they were distinct teams.
+        """
+        variants = [
+            (0,) * AGENT_ROLE_COUNT,
+            _A((3, 1)),
+            _A((3, 1), (4, 1), (5, 2), (6, 2), (7, 1), (8, 1)),
+            _A((4, 1), (5, 5), (7, 1)),
+        ]
+        cfgs = [TeamConfiguration(N=1.0, A_dev=_VALID_A, A_qa=v, R=4, F_freeze=0)
+                for v in variants]
+        assert len({c.A_qa for c in cfgs}) == 1
+        assert len(set(cfgs)) == 1
+        assert len({_config_hash(c) for c in cfgs}) == 1
+
+    def test_qa_preserved_when_freeze_present(self):
+        cfg = TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=_VALID_A_QA, R=4, F_freeze=1)
+        assert cfg.A_qa == _VALID_A_QA
 
     def test_frozen(self, base_config):
         with pytest.raises(Exception):

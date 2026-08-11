@@ -285,7 +285,7 @@ for the number of active supervised agents in sprint $t$. Every supervised agent
 The counts $a_{\cdot,5}$ and $a_{\cdot,6}$ of the background services are unbounded, since these agents require no supervision and therefore consume no human monitoring capacity. The only brake on them is their token cost, since at some point investing more in detecting possible bugs yields diminishing returns. The dev-phase and QA-phase counts are independent of each other, so a service can be staffed differently during a feature freeze than during development.
 $\mathbf{A}_\mathrm{dev}$ must satisfy $a_{dev,1} \geq 1$, i.e., there must be at least one Feature
 Implementation Agent in the development phase. This also ensures that there is $value$, i.e., that at least some features are implemented and the simulation does not trivially collapse to zero throughput.
-For $F_\mathrm{freeze} \geq 1$, $\mathbf{A}_\mathrm{qa}$ is required to have $a_{qa,1} = a_{qa,2} = 0$, to ensure that no new features are added during a feature freeze and that all agents are redeployed to QA roles. If $F_\mathrm{freeze}=0$, the QA composition is never active and has no effect on the simulation.
+For $F_\mathrm{freeze} \geq 1$, $\mathbf{A}_\mathrm{qa}$ is required to have $a_{qa,1} = a_{qa,2} = 0$, to ensure that no new features are added during a feature freeze and that all agents are redeployed to QA roles. If $F_\mathrm{freeze}=0$, the QA composition is never active and has no effect on the simulation. We therefore fix $\mathbf{A}_\mathrm{qa} = \mathbf{0}$ in that case.
 
 
 % ---- 3.4 ----
@@ -1107,7 +1107,9 @@ The uncertainty-aware extension of this rule is that $\mathbf{c}$ is considered 
   \label{eq:ci-sig}
 \end{equation}
 
-Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \emph{CI-dominates} $\mathbf{c}'$ iff $\mathbf{c}$ point-dominates $\mathbf{c}'$ and $\mathbf{c}$ is CI-significantly better than $\mathbf{c}'$ on at least one objective. The Pareto frontier is then defined as the set of configurations that are not CI-dominated by any other configuration in the feasible set.
+Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \emph{CI-dominates} $\mathbf{c}'$ iff $\mathbf{c}$ point-dominates $\mathbf{c}'$ and $\mathbf{c}$ is CI-significantly better than $\mathbf{c}'$ on at least one objective. The Pareto frontier is then defined as the set of configurations that are not CI-dominated by any other configuration in the feasible set. 
+
+Two configurations whose confidence intervals overlap on all three objectives are statistically indistinguishable, and the rule above retains both. There are cases where this applies, but one team has less than or equal headcount in all roles. We therefore add a parsimony tie-break, to remove the larger teams from the frontier. We say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff the two share the same $(N, R, F_\mathrm{freeze})$, satisfy $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ for all $k$ with at least one strict inequality, and neither is CI-significantly better than the other on any objective. 
 
 % ---- 3.11 ----
 \subsection{Search Strategies for Pareto-Optimal Configurations}
@@ -1182,9 +1184,13 @@ In random search, each candidate configuration is drawn independently. A single 
         $\{0, \ldots, u_k\}$ for the remaining $k \in \mathcal{K}_\mathrm{sup}$.
   \item Draw the supervised part of $\mathbf{A}_\mathrm{qa}$ in the same way, i.e.,
         $a_{\mathrm{qa},k}$ uniformly from $\{0, \ldots, u_k\}$ for
-        $k \in \{3,4,7,8\}$, and $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$.
-  \item Draw the four background service counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$,
-        $a_{\mathrm{qa},5}$, $a_{\mathrm{qa},6}$ independently and uniformly from
+        $k \in \{3,4,7,8\}$, and $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$. If
+        $F_\mathrm{freeze} = 0$ was drawn in step~2, then $\mathbf{A}_\mathrm{qa} = \mathbf{0}$
+        by Section~\ref{sec:model:team} and this step is skipped, as is the QA half of
+        step~5.
+  \item Draw the background service counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$ and,
+        when $F_\mathrm{freeze} \geq 1$, $a_{\mathrm{qa},5}$, $a_{\mathrm{qa},6}$
+        independently and uniformly from
         $\{0, 1, \ldots, \lfloor r_\mathrm{arrival} \rfloor\}$, i.e., we allow up to one instance
         of each service per feature that arrives in a sprint.
   \item Discard the candidate if it violates the human-capacity feasibility condition of
@@ -1208,7 +1214,8 @@ The mutation operator receives a parent configuration
 $\mathbf{c} = (N, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$
 and produces a child by perturbing exactly one randomly chosen parameter.
 $R$ is never mutated, i.e., the release cadence is only sampled when generating the initial population.
-The parameter to perturb is selected uniformly at random from four choices:
+The parameter to perturb is selected uniformly at random from four choices, or from the
+first three when $F_\mathrm{freeze} = 0$:
 \begin{itemize}
   \item \emph{Mutate $N$:} replace the current value with an adjacent value in the
         discrete set $\mathcal{N}$ (the next smaller or larger element).
@@ -1225,7 +1232,7 @@ The parameter to perturb is selected uniformly at random from four choices:
                 these roles require no supervision and are not part of the pool that the three
                 operations above redistribute, and it has no upper bound.
         \end{itemize}
-  \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero.
+  \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero. This choice is only available when $F_\mathrm{freeze} \geq 1$, i.e., the QA composition can only be modified, if it is active.
 \end{itemize}
 If a mutation attempt produces an invalid configuration or leaves the parent unchanged
 (e.g.\ because the chosen role is already at its

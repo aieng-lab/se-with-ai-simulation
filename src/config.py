@@ -76,7 +76,9 @@ class TeamConfiguration:
     A_qa  = (a_1, ..., a_8) — QA/stabilisation-phase composition.
             Defaults to A_dev when omitted.  Expected to have a_1=a_2=0 so the
             deployed agents are redeployed to bug-fixing, testing, and
-            refactoring during the feature-freeze window.
+            refactoring during the feature-freeze window.  When F_freeze == 0 it is
+            never applied and is therefore canonicalised to the zero vector, so that
+            a configuration is identified only by the parameters that affect it.
     N is a staffing level in full-time equivalents, not a headcount (paper §3.1),
     so it may be fractional: N = 0.25 is one developer investing a quarter of
     their working time.  How many *supervised* roles (see SUPERVISED_ROLE_INDICES)
@@ -89,7 +91,8 @@ class TeamConfiguration:
     F_freeze — number of sprints at the end of each release cycle in which the
             team uses A_qa instead of A_dev.  Sprints satisfying
             (t % R) >= (R - F_freeze) are "frozen".  Range: [0, R-1].
-            F_freeze = 0 means no feature freeze (A_qa is never used).
+            F_freeze = 0 means no feature freeze (A_qa is never used, and is
+            canonicalised to zero — see A_qa above).
     """
 
     N: float                            # Human staffing level in FTE
@@ -138,6 +141,18 @@ class TeamConfiguration:
                 raise ValueError(
                     "a_qa,2 (Architecture & Design Agent) must be 0 during feature freeze"
                 )
+        else:
+            # F_freeze == 0 means the QA composition is never applied (paper §3.3), so any
+            # vector here describes nothing.  Canonicalise it to zero *after* the shape
+            # checks above, so a malformed A_qa still raises rather than being silently
+            # replaced.  This is what keeps two configurations that differ only in an
+            # inert A_qa from becoming two points: `rng._config_hash` folds A_qa in, so
+            # without canonicalisation they would draw different RNG streams, land at
+            # different objective values, and both survive onto the frontier — while
+            # being the same model.  Equality and hashing of this frozen dataclass follow
+            # the fields, so the collapse also makes the evolutionary `seen` set reject
+            # such children for free.
+            object.__setattr__(self, "A_qa", (0,) * AGENT_ROLE_COUNT)
 
     def agent_count_dev(self, role_k: int) -> int:
         """1-indexed access to the development composition A_dev: role_k in {1, ..., 8}."""

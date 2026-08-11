@@ -70,7 +70,7 @@ from .config import (
 )
 from .io import load_scenario_params
 from .parameters import ScenarioParameters
-from .pareto import AggregatedObjectives, pareto_frontier
+from .pareto import AggregatedObjectives, ParsimonyKey, pareto_frontier
 from .simulation import phase_sprint_counts
 
 STRATEGIES: tuple[str, ...] = ("random", "evolutionary")
@@ -449,23 +449,53 @@ def _flatten_value(rows: "list[dict] | pd.DataFrame") -> list[AggregatedObjectiv
     ]
 
 
+def _parsimony_keys(rows: "list[dict] | pd.DataFrame") -> list[ParsimonyKey]:
+    """ParsimonyKeys for flat-table rows, for the §3.10 tie-break.
+
+    Built straight from the columns rather than via :func:`_team_config`, which would
+    construct and validate a TeamConfiguration per row for no benefit here.
+    """
+    if isinstance(rows, pd.DataFrame):
+        rows = rows.to_dict("records")
+    return [
+        ParsimonyKey(
+            process=(float(r["N"]), int(r["R"]), int(r["F_freeze"])),
+            agents=tuple(int(r[f"a_dev_{k + 1}"]) for k in range(AGENT_ROLE_COUNT))
+            + tuple(int(r[f"a_qa_{k + 1}"]) for k in range(AGENT_ROLE_COUNT)),
+        )
+        for r in rows
+    ]
+
+
 def quality_cost_frontier(
     rows: "list[dict] | pd.DataFrame",
     ci_aware: bool = True,
+    parsimony: bool = False,
 ) -> list[int]:
     """Positional indices of the (quality, cost) Pareto front, ignoring value.
 
     Both objectives are minimised.  Delegates to the tested
     `src.pareto.pareto_frontier` with the value dimension flattened — see
     :func:`_flatten_value`.
+
+    `parsimony=True` additionally applies the §3.10 tie-break, so among statistically
+    indistinguishable teams running the same process only the smallest is kept.  It is
+    opt-in rather than the default because it needs the 19 configuration columns
+    (`N`, `R`, `F_freeze`, `a_dev_*`, `a_qa_*`) on top of the six objective columns this
+    function otherwise reads; `filtered_front_from_table` always has them and turns it on.
+    The flattened value dimension is inert for the tie-break too: with value_ci = (0, 0)
+    everywhere no pair can be value-significant, so ties are decided on quality and cost
+    alone — exactly the two-objective question this front asks.
     """
-    return pareto_frontier(_flatten_value(rows), ci_aware=ci_aware)
+    keys = _parsimony_keys(rows) if parsimony else None
+    return pareto_frontier(_flatten_value(rows), ci_aware=ci_aware, keys=keys)
 
 
 def filtered_front_from_table(
     df: pd.DataFrame,
     threshold: float = DEFAULT_THROUGHPUT_THRESHOLD,
     ci_aware: bool = True,
+    parsimony: bool = True,
 ) -> pd.DataFrame:
     """Throughput-filter a frontier table, then take its quality/cost front.
 
@@ -473,6 +503,11 @@ def filtered_front_from_table(
     ``F_completed >= threshold * T * r_arrival`` — and computes the two-objective
     front per (scenario, strategy).  `df` must already carry `value_ratio`, so run
     :func:`add_derived_columns` first.
+
+    `parsimony=True` (the default) applies the §3.10 tie-break within each front, so a
+    reported point is the smallest team achieving its trade-off rather than one of several
+    statistically indistinguishable variants of it.  This is the §5 path and the flat
+    table always carries the configuration columns it needs.
 
     Note this operates on whatever pool `df` holds.  Given only the recorded
     three-objective frontier it is correct for strict dominance but can miss a
@@ -489,7 +524,7 @@ def filtered_front_from_table(
         passing = sub[sub["value_ratio"] >= threshold]
         if passing.empty:
             continue
-        idx = quality_cost_frontier(passing, ci_aware=ci_aware)
+        idx = quality_cost_frontier(passing, ci_aware=ci_aware, parsimony=parsimony)
         pieces.append(passing.iloc[idx])
     if not pieces:
         return df.iloc[0:0].copy()

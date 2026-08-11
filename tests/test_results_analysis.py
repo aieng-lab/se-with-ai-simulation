@@ -197,7 +197,12 @@ def test_add_derived_columns(synthetic_frontier):
     assert df.loc[df.config_key == "hi_1", "quality_cost_ratio"].item() == pytest.approx(0.1)
     assert df.loc[df.config_key == "hi_1", "quality_cost_index"].item() == pytest.approx(1e5)
     assert (df["n_sup_dev"] == 1).all()   # only a_dev_1
-    assert (df["n_sup_qa"] == 1).all()    # only a_qa_3
+    # a_qa_3 = 1 in every row, but n_sup_qa counts agents that are actually deployed:
+    # TeamConfiguration canonicalises A_qa to zero when F_freeze == 0, so only the rows
+    # with a freeze window report a QA agent.  Before that, no-freeze rows reported a
+    # phantom agent that no sprint ever ran.
+    assert (df.loc[df.F_freeze == 0, "n_sup_qa"] == 0).all()
+    assert (df.loc[df.F_freeze > 0, "n_sup_qa"] == 1).all()
 
 
 def test_cost_split_is_exact(synthetic_frontier):
@@ -550,6 +555,40 @@ def test_quality_cost_frontier_accepts_a_dataframe(synthetic_frontier):
     idx = quality_cost_frontier(df, ci_aware=False)
     assert all(0 <= i < len(df) for i in idx)
     assert len(set(idx)) == len(idx)
+
+
+def test_quality_cost_frontier_parsimony_keeps_the_smallest_tied_team():
+    """The §3.10 tie-break, opted in on rows that carry the configuration columns."""
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    # Same process, statistically indistinguishable, growing implementation-agent counts.
+    rows = [_row(sid, "random", f"k{n}", value=12.0, quality=100.0 + n, cost=1000.0 + n,
+                 a_dev_1=n, ci_width=500.0) for n in (1, 2, 3)]
+    assert quality_cost_frontier(rows, parsimony=False) == [0, 1, 2]
+    assert quality_cost_frontier(rows, parsimony=True) == [0]
+
+
+def test_quality_cost_frontier_parsimony_respects_a_significant_difference():
+    """A bigger team that demonstrably buys something is not pruned.
+
+    The two trade off quality against cost, so neither CI-dominates the other and both
+    are on the front.  The bigger one is CI-significantly better on quality, so they are
+    not "the same result" and the tie-break has no grounds to drop it.
+    """
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    rows = [_row(sid, "random", "small", value=12.0, quality=200.0, cost=900.0,
+                 a_dev_1=1, ci_width=1.0),
+            _row(sid, "random", "big", value=12.0, quality=100.0, cost=1000.0,
+                 a_dev_1=3, ci_width=1.0)]
+    assert sorted(quality_cost_frontier(rows, parsimony=False)) == [0, 1]
+    assert sorted(quality_cost_frontier(rows, parsimony=True)) == [0, 1]
+
+
+def test_filtered_front_applies_parsimony_by_default(synthetic_frontier):
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    with_tb = filtered_front_from_table(df)
+    without = filtered_front_from_table(df, parsimony=False)
+    assert len(with_tb) <= len(without)
+    assert set(with_tb["config_key"]) <= set(without["config_key"])
 
 
 def test_filtered_front_respects_the_threshold(synthetic_frontier):

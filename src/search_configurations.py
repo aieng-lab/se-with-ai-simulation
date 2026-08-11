@@ -36,7 +36,12 @@ from .config import (
     TeamConfiguration,
 )
 from .feasibility import check_feasibility
-from .pareto import AggregatedObjectives, aggregate_config_result, pareto_frontier
+from .pareto import (
+    AggregatedObjectives,
+    aggregate_config_result,
+    pareto_frontier,
+    parsimony_key,
+)
 from .results import save_result
 from .simulation import ConfigResult, run_configuration
 from .state import SystemState
@@ -222,9 +227,19 @@ def _mutate(
 ) -> TeamConfiguration:
     """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
     R is never mutated. Retries up to 10 times if the result is unchanged or invalid;
-    returns the parent if all attempts fail."""
+    returns the parent if all attempts fail.
+
+    When the parent has F_freeze == 0 the A_qa option is dropped and the choice is over
+    the remaining three.  A_qa is canonically zero there (see TeamConfiguration), so
+    mutating it would produce a child that is canonicalised straight back to its parent —
+    burning a retry every time.  Before that canonicalisation existed this was the single
+    largest source of behavioural duplicates: the mutation produced a child that differed
+    from its parent in name only, was scored on a different RNG stream, and joined it on
+    the frontier as a separate point.
+    """
+    n_mutation_types = 3 if config.F_freeze == 0 else 4
     for _ in range(10):
-        mutation_type = int(rng.integers(4))  # 0=N, 1=F_freeze, 2=A_dev, 3=A_qa
+        mutation_type = int(rng.integers(n_mutation_types))  # 0=N, 1=F_freeze, 2=A_dev, 3=A_qa
 
         N = config.N
         A_dev = list(config.A_dev)
@@ -244,7 +259,11 @@ def _mutate(
                 N = float(rng.choice(candidates))
 
         elif mutation_type == 1:
-            # Mutate F_freeze: ±1 clamped to [0, R-1]
+            # Mutate F_freeze: ±1 clamped to [0, R-1].  Going 0 -> 1 opens a freeze window
+            # onto the canonical zero A_qa, i.e. a window staffed by nobody.  That is a
+            # valid configuration (a_qa,1 = a_qa,2 = 0 holds trivially) that later A_qa
+            # mutations can grow; re-sampling A_qa here would perturb two parameters at
+            # once and break this operator's one-parameter contract.
             F_freeze = int(np.clip(F_freeze + int(rng.choice([-1, 1])), 0, config.R - 1))
 
         elif mutation_type == 2:
@@ -294,14 +313,18 @@ def _random_draws(
     for _ in range(n_samples):
         N = float(rng.choice(search_cfg.N_values))
         R = int(rng.choice(search_cfg.R_values))
+        # Sample F_freeze before the compositions, because it decides whether A_qa is a
+        # real parameter at all.  Restricted to the admissible values for this R; the list
+        # is never empty, since SearchConfiguration requires 0 in F_freeze_values.
+        F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
         # Each supervised role is drawn independently within its saturation bound;
         # the background services are drawn separately inside the samplers and are
         # bounded by neither u_k nor anything else.
         A_dev = _sample_dev_composition(rng, bounds, bg_max)
-        A_qa = _sample_qa_composition(rng, bounds, bg_max)
-        # Sample F_freeze, restricted to the admissible values for this R.  The list is
-        # never empty: SearchConfiguration requires 0 in F_freeze_values.
-        F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
+        # With no freeze window the QA composition is never applied, so drawing one would
+        # only attach meaningless coordinates to the candidate (paper §3.11.2, step 4).
+        A_qa = (_sample_qa_composition(rng, bounds, bg_max) if F_freeze > 0
+                else (0,) * AGENT_ROLE_COUNT)
         draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
                                        F_freeze=F_freeze, A_qa=A_qa))
     return draws
@@ -475,7 +498,11 @@ def _run_evolutionary_search(
     for gen in range(1, n_gen + 1):
         # Build Pareto and non-Pareto parent pools (80% / 20% sampling)
         agg_objs = [a for _, _, a in outcome.aggs]
-        front_idx = pareto_frontier(agg_objs) if agg_objs else []
+        # The parent pool is the parsimony-reduced frontier, so the search spends its
+        # offspring on the smallest team achieving each trade-off rather than on the
+        # statistically indistinguishable larger variants of it (§3.10).
+        front_keys = [parsimony_key(cfg) for _, cfg, _ in outcome.aggs]
+        front_idx = pareto_frontier(agg_objs, keys=front_keys) if agg_objs else []
         front_set = set(front_idx)
         pareto_parents = [outcome.aggs[i][1] for i in front_idx]
         non_pareto_parents = [outcome.aggs[i][1]

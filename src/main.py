@@ -51,7 +51,7 @@ from .config import (
     supervised_agent_count,
 )
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
-from .pareto import aggregate_config_result, pareto_frontier
+from .pareto import aggregate_config_result, pareto_frontier, parsimony_key
 from .results import load_result, load_traces, save_result, save_traces
 from .search_configurations import _run_evolutionary_search, _run_random_search, write_samples
 from .simulation import ConfigResult, ConfigTrace, run_configuration
@@ -255,7 +255,11 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
 
     aggs = outcome.aggs
     agg_objs = [a for _, _, a in aggs]
-    frontier_indices = pareto_frontier(agg_objs) if agg_objs else []
+    # Parsimony keys are supplied, so the reported frontier carries the smallest team for
+    # each trade-off rather than every statistically indistinguishable variant of it (§3.10).
+    frontier_keys_parsimony = [parsimony_key(cfg) for _, cfg, _ in aggs]
+    frontier_indices = (pareto_frontier(agg_objs, keys=frontier_keys_parsimony)
+                        if agg_objs else [])
     frontier_keys = [aggs[i][0] for i in frontier_indices]
 
     # Sample files are written only now, so that the "frontier" policy can restrict

@@ -26,10 +26,12 @@ rather than the average front.  :func:`_front_mean` is the single place that rul
 
 One correctness guard is worth stating loudly: **the QA composition is only meaningful
 when ``F_freeze > 0``**.  When ``F_freeze == 0`` the freeze window is empty, ``T_qa`` is
-zero and ``A_qa`` is never applied, yet the search still writes an arbitrary vector into
-those rows — on the §4.2 campaign 50,680 of the 50,727 ``F_freeze == 0`` front points
-carry a nonzero ``A_qa`` that was never exercised.  :func:`phase_frame` drops them, and
-every public function calls it first.
+zero and ``A_qa`` is never applied.  ``TeamConfiguration`` now canonicalises those rows to
+the zero vector, so on a fresh campaign they carry no phantom agents — but the guard must
+stay: campaigns written before that change hold an arbitrary unexercised vector there (on
+the §4.2 campaign, 50,680 of the 50,727 ``F_freeze == 0`` front points), and averaging a
+canonical zero into the QA panels would be just as wrong as averaging in a phantom.
+:func:`phase_frame` drops them either way, and every public function calls it first.
 
 Public API:
     phase_columns(phase)                        -> (all, supervised, background)

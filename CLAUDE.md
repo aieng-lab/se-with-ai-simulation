@@ -241,6 +241,7 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
 - **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `frontier` — the `ConfigResult`s are buffered in memory and only frontier members are written, *after* `pareto_frontier` has run. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`.
 - **21-dimensional state vector**: features (2), bugs by type×stage (12), technical debt and human capacity queues (5), test infrastructure and documentation (2).
+- **The CI-aware dominance relation of §3.10 is not transitive, so `pareto_frontier` compares every ordered pair**: point-dominance chains, but CI significance does not — `k` can CI-dominate `j` and `j` CI-dominate `i` while `k` is significantly better than `i` on no objective, which happens when the two links are significant on *different* objectives (if they share one, the chain is provably transitive). The loop therefore must **not** skip candidates that have themselves been eliminated; doing so leaves CI-dominated points on the frontier and makes the result depend on candidate ordering. Pinned by `tests/test_pareto.py::TestParetoFrontierNonTransitive`. Do not "optimise" this back: the full comparison costs ~1.5 s at 10,000 candidates (vs ~1.2 s pruned, and a chunked NumPy version measured *slower* at 1.3 s), i.e. +0.5 min worst case over an evolutionary run's 90 generations. Note the defect this replaced was latent — on real campaign-like pools (1,500 candidates, 222,048 CI-dominance pairs) there were zero non-transitivity witnesses, because relative CI half-width is homogeneous within a scenario; a witness needs a wider *relative* CI at a *worse* mean. That accident is not something to rely on.
 - **The §5 filtered front is computed over all candidates, not the recorded frontier**: `search_summary.json` stores objectives *and* config fields for every simulated candidate, not just the frontier ones. `results_analysis.build_campaign` filters that full pool to `value >= 0.98·r_arrival` and runs a fresh two-objective pass. Restricting to the recorded three-objective frontier would be correct under *strict* dominance (a 2-D non-dominated point cannot be 3-D dominated) but loses points under the CI-aware rule of §3.10, because a candidate can be eliminated in 3-D on a *value* significance that no longer applies once value is dropped. The 2-D pass reuses `pareto.pareto_frontier` with the value dimension flattened to a constant — do not write a second dominance implementation. Note the resulting front is only monotone in (quality, cost) after dropping the CI-co-retained points; that is expected.
 - **Composition analysis normalises supervised and background roles differently, and
   weights fronts equally**: the two background services (k=5 Code Review, k=6 Security
@@ -256,12 +257,37 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
   being averaged across fronts (`_front_mean`): front sizes span 13–1,190 points and
   evolutionary contributes ~10× the points of random, so a flat `groupby.mean()` would
   describe the biggest evolutionary fronts rather than the average front.
-- **QA compositions are only valid where `F_freeze > 0`**: with no freeze window `T_qa`
-  is zero and `A_qa` is never applied, but the search still writes an arbitrary vector
-  into those rows — on the §4.2 campaign 50,680 of the 50,727 `F_freeze == 0` front
-  points carry a nonzero unexercised `A_qa`. `composition_analysis.phase_frame` drops
-  them and every public function in that module calls it first. Roles 1–2 are also
+- **`A_qa` is canonically zero where `F_freeze == 0`**: with no freeze window `T_qa` is
+  zero and `A_qa` is never applied, so `TeamConfiguration.__post_init__` normalises it to
+  the zero vector (after the shape checks, so a malformed vector still raises). This is
+  what keeps a redundant coordinate from becoming extra frontier points: `rng._config_hash`
+  folds `A_qa` in, so without it two configurations that are the *same model* draw
+  different RNG streams, land at different objective values, and are both co-retained by
+  §3.10 as if they were distinct teams. The sampler and the mutation operator cooperate —
+  `_random_draws` draws `F_freeze` before the compositions and skips the QA draw, and
+  `_mutate` drops the `A_qa` option from its four-way choice at `F_freeze == 0`. Measured
+  on a smoke evolutionary search before the fix: 23.9 % of evaluated candidates were
+  behavioural duplicates and 35 % of the frontier was inflation (79 points, 51 distinct
+  models); random search was unaffected at 0 %.
+  `composition_analysis.phase_frame` still drops `F_freeze == 0` rows and must stay — it
+  is what keeps pre-change campaign files readable (the §4.2 campaign has 50,680 of 50,727
+  such front points carrying a nonzero unexercised `A_qa`). Roles 1–2 are also
   structurally zero in QA, so QA panels show six roles, not eight.
+- **The frontier carries a parsimony tie-break (§3.10)**: among configurations that share
+  `(N, R, F_freeze)`, use no more agents of every role in both phases with strictly fewer
+  of at least one, and are statistically indistinguishable on all three objectives, only
+  the smallest is reported. `pareto.parsimony_dominates` is the relation and
+  `pareto.pareto_frontier(..., keys=[parsimony_key(cfg), ...])` applies it; with
+  `keys=None` the result is exactly the CI-aware frontier, which is why
+  `visualization._recompute_mean_pareto` and `analysis.convergence_check` need no change.
+  It is applied **within** the frontier, never across the whole pool — the CI-aware
+  relation is not transitive, so a pool-wide pass would let an eliminated candidate remove
+  a frontier point. Note it cannot substitute for the `A_qa` canonicalisation above:
+  componentwise `≤` is a partial order and only collapses chains, and 49 % of the
+  duplicate pairs on a real frontier are componentwise incomparable (e.g. `(…,3,2,…)` vs
+  `(…,2,3,…)`). `results_analysis.quality_cost_frontier` takes `parsimony=False` by default
+  because it needs the 19 configuration columns on top of the six objective ones;
+  `filtered_front_from_table` — the §5 path, which always has them — defaults to `True`.
 - **Agents are billed for the work they performed, not for being deployed**:
   `step_sprint` returns a `SprintActions` with the work each role completed that sprint,
   measured in that role's own throughput unit (features for k=1, where an implemented

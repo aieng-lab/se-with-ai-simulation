@@ -1,15 +1,21 @@
 """Tests for src/pareto.py — dominance, CI significance, frontier, aggregation."""
 
+import itertools
+
 import numpy as np
 import pytest
 
 from src.pareto import (
     AggregatedObjectives,
+    ParsimonyKey,
     _ci_significantly_better,
     aggregate_config_result,
     dominates_strict,
     pareto_frontier,
+    parsimony_dominates,
+    parsimony_key,
 )
+from src.config import TeamConfiguration
 from src.simulation import ConfigResult, ReplicationResult
 
 
@@ -21,6 +27,46 @@ def _obj(V, Q, CF, ci_w=0.0):
         quality_ci=(Q - ci_w, Q + ci_w),
         cost_ci=(CF - ci_w, CF + ci_w),
     )
+
+
+def _obj_ci(V, Q, CF, value_ci, quality_ci, cost_ci):
+    """Build AggregatedObjectives with an explicit, per-objective asymmetric CI."""
+    return AggregatedObjectives(
+        value_mean=V, quality_mean=Q, cost_mean=CF,
+        value_ci=value_ci, quality_ci=quality_ci, cost_ci=cost_ci,
+    )
+
+
+def _naive_frontier(points, ci_aware=True):
+    """Brute-force transcription of paper §3.10, used as the reference oracle.
+
+    `i` is on the frontier iff *no* other candidate CI-dominates it.  Deliberately
+    makes no use of dominance transitivity, which the CI-aware relation lacks.
+    """
+    keep = []
+    for i, p in enumerate(points):
+        if not any(
+            dominates_strict(q, p)
+            and (not ci_aware or _ci_significantly_better(q, p))
+            for j, q in enumerate(points) if j != i
+        ):
+            keep.append(i)
+    return keep
+
+
+def _nontransitive_triple():
+    """(k, j, i) with CIdom(k,j) and CIdom(j,i) but NOT CIdom(k,i).
+
+    The two links must be significant on *different* objectives.  If both were
+    significant on the same one, say quality, then q_hi[k] < q_lo[j] <= q_hi[j] < q_lo[i]
+    would give q_hi[k] < q_lo[i] and k would dominate i as well — the chain is provably
+    transitive in that case.  Here k beats j on quality and j beats i on cost, while k,
+    whose cost CI is wide, is significantly better than i on nothing.
+    """
+    k = _obj_ci(10.0, 1.0, 100.0, (9.99, 10.01), (0.5, 1.5), (50.0, 260.0))
+    j = _obj_ci(10.0, 2.0, 110.0, (9.99, 10.01), (1.9, 2.1), (105.0, 115.0))
+    i = _obj_ci(10.0, 3.0, 250.0, (9.99, 10.01), (1.4, 4.6), (245.0, 255.0))
+    return k, j, i
 
 
 def _config_result(V_vals, Q_vals, CF_vals, config):
@@ -122,6 +168,213 @@ class TestParetoFrontier:
         result = pareto_frontier([best, mid, bad])
         assert 0 in result
         assert 2 not in result  # bad is dominated by best
+
+
+class TestParetoFrontierNonTransitive:
+    """The CI-aware relation of §3.10 is not transitive.
+
+    A candidate that has itself been eliminated must still be allowed to eliminate
+    others, so `pareto_frontier` may not skip already-dominated candidates when
+    searching for a dominator.
+    """
+
+    def test_triple_is_a_genuine_witness(self):
+        k, j, i = _nontransitive_triple()
+        for a, b in ((k, j), (j, i), (k, i)):
+            assert dominates_strict(a, b)          # point-dominance IS transitive
+        assert _ci_significantly_better(k, j)      # link 1, significant on quality
+        assert _ci_significantly_better(j, i)      # link 2, significant on cost
+        assert not _ci_significantly_better(k, i)  # ... but the chain does not close
+
+    def test_dominated_candidate_still_eliminates(self):
+        # j is CI-dominated by k, and j is the only candidate that CI-dominates i.
+        # i must therefore be off the frontier, leaving k alone on it.
+        k, j, i = _nontransitive_triple()
+        assert pareto_frontier([k, j, i]) == [0]
+
+    def test_frontier_is_order_invariant(self):
+        k, j, i = _nontransitive_triple()
+        points = [k, j, i]
+        expected = {0}   # only k survives, whatever the ordering
+        for perm in itertools.permutations(range(3)):
+            permuted = [points[p] for p in perm]
+            front = {perm[idx] for idx in pareto_frontier(permuted)}
+            assert front == expected, f"ordering {perm} changed the frontier"
+
+    @pytest.mark.parametrize("ci_aware", [True, False])
+    @pytest.mark.parametrize("seed", range(8))
+    def test_matches_naive_reference_on_random_input(self, seed, ci_aware):
+        rng = np.random.default_rng(seed)
+        n = 40
+        points = []
+        for _ in range(n):
+            v, q, c = rng.uniform(1, 10), rng.uniform(0.01, 5), rng.uniform(50, 500)
+            # Deliberately heterogeneous CI widths: a homogeneous relative width makes
+            # the relation accidentally transitive and hides the defect.
+            wv, wq, wc = rng.uniform(0.01, 2), rng.uniform(0.01, 3), rng.uniform(1, 200)
+            points.append(_obj_ci(v, q, c, (v - wv, v + wv), (q - wq, q + wq), (c - wc, c + wc)))
+        assert pareto_frontier(points, ci_aware=ci_aware) == _naive_frontier(points, ci_aware=ci_aware)
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_random_input_order_invariant(self, seed):
+        rng = np.random.default_rng(seed)
+        points = []
+        for _ in range(40):
+            v, q, c = rng.uniform(1, 10), rng.uniform(0.01, 5), rng.uniform(50, 500)
+            wv, wq, wc = rng.uniform(0.01, 2), rng.uniform(0.01, 3), rng.uniform(1, 200)
+            points.append(_obj_ci(v, q, c, (v - wv, v + wv), (q - wq, q + wq), (c - wc, c + wc)))
+        baseline = set(pareto_frontier(points))
+        for shuffle_seed in range(5):
+            perm = np.random.default_rng(shuffle_seed).permutation(len(points))
+            front = {int(perm[idx]) for idx in pareto_frontier([points[p] for p in perm])}
+            assert front == baseline
+
+
+def _pk(agents, process=(1.0, 4, 0)):
+    """ParsimonyKey from an 8- or 16-element agent tuple (padded to both phases)."""
+    agents = tuple(agents)
+    if len(agents) == 8:
+        agents += (0,) * 8
+    return ParsimonyKey(process=process, agents=agents)
+
+
+class TestParsimonyKey:
+    def test_key_covers_process_and_both_phases(self):
+        cfg = TeamConfiguration(N=1.5, A_dev=(1, 0, 1, 0, 2, 0, 1, 0),
+                                A_qa=(0, 0, 1, 1, 2, 0, 0, 0), R=4, F_freeze=1)
+        key = parsimony_key(cfg)
+        assert key.process == (1.5, 4, 1)
+        assert key.agents == (1, 0, 1, 0, 2, 0, 1, 0) + (0, 0, 1, 1, 2, 0, 0, 0)
+
+    def test_inert_qa_half_is_zero(self):
+        """Follows from the canonicalisation in TeamConfiguration, not from this helper."""
+        cfg = TeamConfiguration(N=1.0, A_dev=(1, 0, 1, 0, 2, 0, 1, 0),
+                                A_qa=(0, 0, 3, 3, 3, 3, 3, 3), R=4, F_freeze=0)
+        assert parsimony_key(cfg).agents[8:] == (0,) * 8
+
+
+class TestParsimonyRelation:
+    """The §3.10 tie-break: same process, no larger anywhere, smaller somewhere, tied."""
+
+    def _tied_pair(self):
+        # Wide CIs on every objective → statistically indistinguishable in both directions.
+        return _obj(V=5, Q=1.0, CF=100, ci_w=50), _obj(V=5, Q=1.2, CF=110, ci_w=50)
+
+    def test_smaller_team_dominates_when_tied(self):
+        small, big = self._tied_pair()
+        assert parsimony_dominates(_pk((1, 0, 0, 0, 1, 0, 0, 0)),
+                                   _pk((1, 0, 0, 0, 3, 0, 0, 0)), small, big)
+
+    def test_identical_agent_counts_do_not_dominate(self):
+        a, b = self._tied_pair()
+        assert not parsimony_dominates(_pk((1, 0, 0, 0, 2, 0, 0, 0)),
+                                       _pk((1, 0, 0, 0, 2, 0, 0, 0)), a, b)
+
+    def test_incomparable_counts_do_not_dominate(self):
+        """Larger in one role, smaller in another — the partial order says nothing.
+
+        This is why the tie-break cannot replace canonicalising an inert A_qa: half of
+        the duplicate pairs on a real frontier look like this.
+        """
+        a, b = self._tied_pair()
+        ka, kb = _pk((1, 0, 0, 0, 3, 2, 0, 0)), _pk((1, 0, 0, 0, 2, 3, 0, 0))
+        assert not parsimony_dominates(ka, kb, a, b)
+        assert not parsimony_dominates(kb, ka, b, a)
+
+    def test_different_process_blocks_it(self):
+        """A team with fewer agents but more humans is not more parsimonious."""
+        small, big = self._tied_pair()
+        assert not parsimony_dominates(_pk((1, 0, 0, 0, 1, 0, 0, 0), process=(2.0, 4, 0)),
+                                       _pk((1, 0, 0, 0, 3, 0, 0, 0), process=(1.0, 4, 0)),
+                                       small, big)
+
+    def test_significant_difference_blocks_it(self):
+        # Narrow CIs → the bigger team is significantly better on quality, so they are
+        # not "the same result" and §3.10 already separates them.
+        small = _obj(V=5, Q=2.0, CF=100, ci_w=0.01)
+        big   = _obj(V=5, Q=1.0, CF=100, ci_w=0.01)
+        assert not parsimony_dominates(_pk((1, 0, 0, 0, 1, 0, 0, 0)),
+                                       _pk((1, 0, 0, 0, 3, 0, 0, 0)), small, big)
+
+    def test_qa_counts_participate(self):
+        small, big = self._tied_pair()
+        ka = ParsimonyKey(process=(1.0, 4, 1), agents=(1,) * 8 + (0, 0, 1, 0, 0, 0, 0, 0))
+        kb = ParsimonyKey(process=(1.0, 4, 1), agents=(1,) * 8 + (0, 0, 2, 0, 0, 0, 0, 0))
+        assert parsimony_dominates(ka, kb, small, big)
+
+    @pytest.mark.parametrize("seed", range(10))
+    def test_antisymmetry(self, seed):
+        rng = np.random.default_rng(seed)
+        for _ in range(200):
+            ka = _pk(tuple(int(x) for x in rng.integers(0, 4, 16)))
+            kb = _pk(tuple(int(x) for x in rng.integers(0, 4, 16)))
+            a = _obj(V=5, Q=rng.uniform(1, 2), CF=100, ci_w=50)
+            b = _obj(V=5, Q=rng.uniform(1, 2), CF=100, ci_w=50)
+            assert not (parsimony_dominates(ka, kb, a, b)
+                        and parsimony_dominates(kb, ka, b, a))
+
+
+class TestParetoFrontierParsimony:
+    def test_keys_none_leaves_the_frontier_untouched(self):
+        """The backward-compatibility guarantee for callers that do not opt in."""
+        rng = np.random.default_rng(0)
+        points, keys = [], []
+        for _ in range(60):
+            v, q, c = rng.uniform(1, 10), rng.uniform(0.01, 5), rng.uniform(50, 500)
+            w = rng.uniform(0.01, 1)
+            points.append(_obj(v, q, c, ci_w=w))
+            keys.append(_pk(tuple(int(x) for x in rng.integers(0, 3, 16))))
+        baseline = pareto_frontier(points)
+        assert pareto_frontier(points, keys=None) == baseline
+        assert set(pareto_frontier(points, keys=keys)) <= set(baseline)
+
+    def test_tied_family_collapses_to_the_smallest(self):
+        # Four statistically indistinguishable teams forming a chain in agent counts.
+        pts = [_obj(V=5, Q=1.0 + 0.05 * i, CF=100 + i, ci_w=50) for i in range(4)]
+        keys = [_pk((1, 0, 0, 0, i + 1, 0, 0, 0)) for i in range(4)]
+        assert pareto_frontier(pts) == [0, 1, 2, 3]          # §3.10 alone keeps all four
+        assert pareto_frontier(pts, keys=keys) == [0]        # ... parsimony keeps one
+
+    def test_frontier_is_never_emptied(self):
+        rng = np.random.default_rng(4)
+        for _ in range(50):
+            pts = [_obj(V=5, Q=1.0 + 0.01 * i, CF=100, ci_w=50) for i in range(6)]
+            keys = [_pk(tuple(int(x) for x in rng.integers(0, 3, 16))) for _ in range(6)]
+            assert pareto_frontier(pts, keys=keys)
+
+    @pytest.mark.parametrize("seed", range(6))
+    def test_order_invariant_with_keys(self, seed):
+        rng = np.random.default_rng(seed)
+        points, keys = [], []
+        for _ in range(50):
+            v, q, c = rng.uniform(1, 10), rng.uniform(0.5, 2), rng.uniform(90, 110)
+            points.append(_obj(v, q, c, ci_w=rng.uniform(1, 10)))
+            keys.append(_pk(tuple(int(x) for x in rng.integers(0, 3, 16))))
+        baseline = set(pareto_frontier(points, keys=keys))
+        for shuffle_seed in range(4):
+            perm = np.random.default_rng(shuffle_seed).permutation(len(points))
+            front = {int(perm[i]) for i in pareto_frontier([points[p] for p in perm],
+                                                           keys=[keys[p] for p in perm])}
+            assert front == baseline
+
+    def test_length_mismatch_raises(self):
+        pts = [_obj(5, 1, 100, ci_w=1), _obj(4, 2, 200, ci_w=1)]
+        with pytest.raises(ValueError, match="one entry per point"):
+            pareto_frontier(pts, keys=[_pk((1,) * 16)])
+
+    def test_inert_qa_family_reduces_to_one_point(self):
+        """End-to-end on the duplicate family from the review, via parsimony alone.
+
+        With Part 1 in place these four are a single TeamConfiguration; this checks the
+        independent path, for a chain of inert QA vectors built by hand.
+        """
+        pts = [_obj(V=11.96, Q=7.379, CF=250.48, ci_w=1.0),
+               _obj(V=12.03, Q=7.971, CF=249.23, ci_w=1.0),
+               _obj(V=12.05, Q=7.402, CF=248.90, ci_w=1.0),
+               _obj(V=12.03, Q=7.920, CF=249.18, ci_w=1.0)]
+        keys = [ParsimonyKey(process=(1.0, 4, 1), agents=(1,) * 8 + (0, 0, n, 0, 0, 0, 0, 0))
+                for n in (0, 1, 2, 3)]
+        assert len(pareto_frontier(pts, keys=keys)) == 1
 
 
 class TestAggregateConfigResult:
