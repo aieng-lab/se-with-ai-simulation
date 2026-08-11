@@ -49,7 +49,6 @@ from .config import (
     SCENARIO_GROUPS,
     TeamConfiguration,
     supervised_agent_count,
-    supervision_budget,
 )
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .pareto import aggregate_config_result, pareto_frontier
@@ -80,7 +79,7 @@ def _scenario_paths_from_args(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _print_config(config: TeamConfiguration) -> None:
-    print(f"Team configuration:  N={config.N:g} FTE, M={config.M}, R={config.R}, "
+    print(f"Team configuration:  N={config.N:g} FTE, R={config.R}, "
           f"F_freeze={config.F_freeze}")
     for phase, A, getter in (
         ("Dev phase ", config.A_dev, config.agent_count_dev),
@@ -88,9 +87,7 @@ def _print_config(config: TeamConfiguration) -> None:
     ):
         n_sup = supervised_agent_count(A)   # type: ignore[arg-type]
         n_bg = sum(A) - n_sup              # type: ignore[arg-type]
-        budget = supervision_budget(config.N, config.M)
-        print(f"  {phase} ({n_sup} supervised of floor(N*M)={budget}, "
-              f"{n_bg} background)")
+        print(f"  {phase} ({n_sup} supervised, {n_bg} background)")
         for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
             count = getter(k)
             if count:
@@ -279,7 +276,6 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
                     "master_seed": horizon.master_seed},
         "search": {
             "N_values": list(search_cfg.N_values),
-            "M_max": search_cfg.M_max,
             "R_values": list(search_cfg.R_values),
             "F_freeze_values": list(search_cfg.F_freeze_values),
             "sigma": search_cfg.sigma,
@@ -309,7 +305,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "pareto_frontier": frontier_keys,
         "objectives": {
             key: {
-                "N": cfg.N, "M": cfg.M, "R": cfg.R, "F_freeze": cfg.F_freeze,
+                "N": cfg.N, "R": cfg.R, "F_freeze": cfg.F_freeze,
                 "A_dev": list(cfg.A_dev),
                 "A_qa": list(cfg.A_qa),
                 "value_mean": agg.value_mean, "quality_mean": agg.quality_mean, "cost_mean": agg.cost_mean,
@@ -330,7 +326,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Pareto frontier ({len(frontier_keys)} config(s)):")
     for key in frontier_keys:
         obj = search_summary["objectives"][key]
-        print(f"  {key}  N={obj['N']:g} M={obj['M']} R={obj['R']}  "
+        print(f"  {key}  N={obj['N']:g} R={obj['R']}  "
               f"value={obj['value_mean']:.3f}  quality={obj['quality_mean']:.4f}  CF={obj['cost_mean']:.0f}")
         print(f"         A_dev={obj['A_dev']}")
     print()

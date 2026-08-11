@@ -139,10 +139,10 @@ class TestArchChangeQueue:
         return dataclasses.replace(base_params, f_arch_chg=f_arch_chg, r_arch_chg=r_arch_chg)
 
     def _arch_config(self, base_config, a2=1):
-        """Return a config with a2 arch agents; reduces impl agents to stay within N*M."""
+        """Return a config with a2 arch agents; reduces impl agents to keep n_sup fixed."""
         A = list(base_config.A_dev)
         A[1] = a2
-        A[0] = max(1, A[0] - a2)   # keep a_1 >= 1 and the supervised count <= N*M
+        A[0] = max(1, A[0] - a2)   # keep a_1 >= 1
         return dataclasses.replace(base_config, A_dev=tuple(A))
 
     def test_Q_arch_grows_without_arch_agents(self, base_config, base_params):
@@ -232,8 +232,8 @@ class TestFractionalStaffingLevel:
         # No agents beyond the mandatory implementer, so the difference between the two
         # runs is human capacity: it scales with N everywhere except H_net itself.
         params = dataclasses.replace(base_params, c_comm=0.0)
-        part = TeamConfiguration(N=0.25, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
-        full = TeamConfiguration(N=1.0, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
+        part = TeamConfiguration(N=0.25, A_dev=_A(k1=1), R=4, F_freeze=0)
+        full = TeamConfiguration(N=1.0, A_dev=_A(k1=1), R=4, F_freeze=0)
         a = _run_sprints(6, part, params, np.random.default_rng(31), initial_backlog=200)
         b = _run_sprints(6, full, params, np.random.default_rng(31), initial_backlog=200)
         assert 0 < a.F_completed < b.F_completed
@@ -249,8 +249,8 @@ class TestFractionalStaffingLevel:
         params = dataclasses.replace(base_params, c_comm=30.0, H_capacity=40.0)
         assert net_capacity(40.0, 30.0, 1.0) * 1.0 == 40.0
         assert net_capacity(40.0, 30.0, 1.25) * 1.25 == 12.5
-        solo = TeamConfiguration(N=1.0, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
-        pair = TeamConfiguration(N=1.25, M=8, A_dev=_A(k1=1), R=4, F_freeze=0)
+        solo = TeamConfiguration(N=1.0, A_dev=_A(k1=1), R=4, F_freeze=0)
+        pair = TeamConfiguration(N=1.25, A_dev=_A(k1=1), R=4, F_freeze=0)
         a = _run_sprints(6, solo, params, np.random.default_rng(32), initial_backlog=200)
         b = _run_sprints(6, pair, params, np.random.default_rng(32), initial_backlog=200)
         assert b.F_completed < a.F_completed
@@ -299,7 +299,7 @@ class TestDetectionGating:
     def _cfg(self, A_dev):
         # F_freeze=0 keeps every sprint in the development phase; R=4 with 3 sprints
         # run means no release fires, so nothing is flushed out of B_hid/B_kno.
-        return TeamConfiguration(N=2, M=3, A_dev=A_dev, A_qa=A_dev, R=4, F_freeze=0)
+        return TeamConfiguration(N=2, A_dev=A_dev, A_qa=A_dev, R=4, F_freeze=0)
 
     def test_no_detection_agents_leaves_all_bugs_hidden(self, base_params):
         """a_5 = a_6 = a_7 = 0: bugs are injected but nothing is ever detected."""

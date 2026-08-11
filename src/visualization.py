@@ -1281,7 +1281,7 @@ def plot_composition_drift(
     if not rows:
         raise ValueError("no strategies present in the front table")
 
-    control_columns = ("n_sup", "n_bg", "N", "M", "R", "F_freeze", "capacity_util")
+    control_columns = ("n_sup", "n_bg", "N", "R", "F_freeze", "agents_per_fte")
 
     with plt.style.context(_STYLE):
         fig, axes = plt.subplots(
@@ -1309,7 +1309,7 @@ def plot_composition_drift(
             share_ax.set_ylim(0, 1)
             _stacked_shares(bg_ax, x, table, bg_cols, False)
 
-            # Seven series in one panel: a legend box would sit on top of them wherever
+            # Six series in one panel: a legend box would sit on top of them wherever
             # it went, so the lines are labelled directly at their left end and carry
             # their final value at the right.
             for i, column in enumerate(control_columns):

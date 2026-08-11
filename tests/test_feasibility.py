@@ -6,11 +6,11 @@ from src.config import AGENT_ROLE_COUNT, TeamConfiguration, net_capacity
 from src.feasibility import check_feasibility
 
 
-def _cfg(comp_dict, N=2, M=3, R=4, F_freeze=0):
+def _cfg(comp_dict, N=2, R=4, F_freeze=0):
     A = [0] * AGENT_ROLE_COUNT
     for k, v in comp_dict.items():
         A[k - 1] = v
-    return TeamConfiguration(N=N, M=M, A_dev=tuple(A), R=R, F_freeze=F_freeze)
+    return TeamConfiguration(N=N, A_dev=tuple(A), R=R, F_freeze=F_freeze)
 
 
 class TestFeasiblePath:
@@ -20,11 +20,11 @@ class TestFeasiblePath:
         assert report.failed_step is None
 
 
-class TestStep1SpanControl:
-    def test_M_too_large_infeasible(self, base_params):
+class TestStep1MonitoringCapacity:
+    def test_too_many_supervised_agents_infeasible(self, base_params):
         # Gamma_doc=0 so doc_cov assumption is irrelevant; 12 supervised agents over
         # N=2 developers cost 6 * 2h = 12h of monitoring each > H_net ≈ 9h
-        cfg = _cfg({1: 4, 3: 3, 4: 3, 7: 2}, N=2, M=6)
+        cfg = _cfg({1: 4, 3: 3, 4: 3, 7: 2}, N=2)
         from dataclasses import replace
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
         report = check_feasibility(cfg, p)
@@ -36,10 +36,10 @@ class TestStep1SpanControl:
         from dataclasses import replace
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
         # 4 supervised agents over N=2 developers = 2 * 2h = 4h < H_net ≈ 9h
-        lean = _cfg({1: 2, 3: 1, 7: 1}, N=2, M=6)
+        lean = _cfg({1: 2, 3: 1, 7: 1}, N=2)
         assert check_feasibility(lean, p).feasible
         # Same supervised load, but 40 background services on top
-        loaded = _cfg({1: 2, 3: 1, 7: 1, 5: 20, 6: 20}, N=2, M=6)
+        loaded = _cfg({1: 2, 3: 1, 7: 1, 5: 20, 6: 20}, N=2)
         assert check_feasibility(loaded, p).feasible
 
 
@@ -65,8 +65,8 @@ class TestCommunicationOverheadUsesHeadcount:
         # H_net = 10 - 2 = 8 under the ceiling, 8.5 under a linear (N-1).  With 20
         # supervised agents over 2.5 FTE, monitoring costs exactly 8 h per FTE, which
         # the ">=" of the gate rejects — but a linear rule would still accept.
-        cfg = _cfg({1: 10, 3: 10}, N=2.5, M=8)
+        cfg = _cfg({1: 10, 3: 10}, N=2.5)
         report = check_feasibility(cfg, p)
         assert not report.feasible and report.failed_step == 1
         # One agent fewer leaves 7.6 h < 8 h and passes.
-        assert check_feasibility(_cfg({1: 10, 3: 9}, N=2.5, M=8), p).feasible
+        assert check_feasibility(_cfg({1: 10, 3: 9}, N=2.5), p).feasible

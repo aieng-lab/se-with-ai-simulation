@@ -5,7 +5,7 @@ Reads every ``<results-dir>/<scenario_id>/<strategy>/{manifest,search_summary}.j
 written by ``python -m src.main optimize`` and emits:
 
     frontiers.csv   one row per Pareto-optimal configuration, with its scenario tiers,
-                    search strategy, the six control variables, both 8-element
+                    search strategy, the five control variables, both 8-element
                     composition vectors, and the three objectives with 95 % CIs
     scenarios.csv   one row per (scenario, strategy): realised evaluation counts,
                     frontier size, and wall-clock time — the search-effort figures

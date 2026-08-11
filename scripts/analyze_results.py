@@ -328,7 +328,7 @@ def _print_headline(summary: dict, threshold: float) -> None:
         print(f"    distinct role-presence sets   {entry['n_distinct_signatures']}")
         print(f"    mean supervised / background  {entry['mean_n_sup']:.1f} / "
               f"{entry['mean_n_bg']:.1f} agents "
-              f"({entry['mean_capacity_util']:.0%} of N·M used)")
+              f"({entry['mean_agents_per_fte']:.1f} supervised per FTE)")
         for key, top in sorted(entry.items()):
             if not key.startswith("top_archetype_"):
                 continue

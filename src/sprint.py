@@ -63,7 +63,7 @@ def step_sprint(
     A_active = config.active_A(is_frozen)
     # Only the supervised roles consume human oversight; the background detection
     # services (k=5,6) are exempt (see config.SUPERVISED_ROLE_INDICES).
-    n_supervised = supervised_agent_count(A_active)   # may be < floor(N*M)
+    n_supervised = supervised_agent_count(A_active)
 
     # ------------------------------------------------------------------
     # Degradation functions at current debt D(t)

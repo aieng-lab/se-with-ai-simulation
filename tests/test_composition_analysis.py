@@ -38,7 +38,6 @@ def _row(
     scenario_id: str,
     strategy: str = "random",
     N: int = 2,
-    M: int = 10,
     R: int = 4,
     F_freeze: int = 1,
     quality: float = 10.0,
@@ -48,7 +47,7 @@ def _row(
     row = {f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS}
     row.update(
         scenario_id=scenario_id, strategy=strategy,
-        N=N, M=M, R=R, F_freeze=F_freeze,
+        N=N, R=R, F_freeze=F_freeze,
         quality_mean=quality, cost_mean=cost,
         n_sup_dev=sum(A_dev[i] for i in (0, 1, 2, 3, 6, 7)),
         n_sup_qa=sum(A_qa[i] for i in (0, 1, 2, 3, 6, 7)),
@@ -135,7 +134,8 @@ def test_supervised_shares_sum_to_one_and_exclude_background(synthetic_front):
     lean = work[work["a_dev_2"] == 0].iloc[0]
     assert lean["n_sup"] == 1          # only the Feature agent is supervised
     assert lean["n_bg"] == 10          # 6 review + 4 security
-    assert lean["capacity_util"] == pytest.approx(1 / 20)
+    # n_sup / N: one supervised agent carried by a 2-FTE team.
+    assert lean["agents_per_fte"] == pytest.approx(1 / 2)
 
 
 def test_n_sup_is_taken_from_the_persisted_column(synthetic_front):

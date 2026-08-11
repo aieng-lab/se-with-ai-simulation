@@ -137,11 +137,11 @@ def test_scenario_params_for_id_is_cached():
 # Synthetic frontier table
 # ---------------------------------------------------------------------------
 
-def _row(scenario_id, strategy, key, *, N=1, M=10, R=4, F_freeze=0,
+def _row(scenario_id, strategy, key, *, N=1, R=4, F_freeze=0,
          value, quality, cost, T=104, a_dev_1=1, ci_width=0.0):
     tiers = tiers_from_scenario_id(scenario_id)
     row = {"scenario_id": scenario_id, "strategy": strategy, "config_key": key,
-           "N": N, "M": M, "R": R, "F_freeze": F_freeze, "T": T}
+           "N": N, "R": R, "F_freeze": F_freeze, "T": T}
     row.update({f"tier_{g}": tiers[g] for g in SCENARIO_GROUPS})
     for k in range(1, AGENT_ROLE_COUNT + 1):
         row[f"a_dev_{k}"] = a_dev_1 if k == 1 else 0
@@ -204,7 +204,7 @@ def test_cost_split_matches_cost_components(synthetic_frontier):
     params = scenario_params_for_id("h-m_p-m_d-m_a-m_b-m", str(_REPO_ROOT / "config"))
     for _, row in df.iterrows():
         config = TeamConfiguration(
-            N=int(row["N"]), M=int(row["M"]),
+            N=int(row["N"]),
             A_dev=tuple(int(row[f"a_dev_{k}"]) for k in range(1, AGENT_ROLE_COUNT + 1)),
             R=int(row["R"]), F_freeze=int(row["F_freeze"]),
             A_qa=tuple(int(row[f"a_qa_{k}"]) for k in range(1, AGENT_ROLE_COUNT + 1)),
@@ -407,7 +407,7 @@ def test_index_optimum_per_scenario_pools_strategies(synthetic_frontier):
     row = best.iloc[0]
     assert row["quality_cost_index"] == df["quality_mean"].mul(df["cost_mean"]).min()
     # The full configuration of the winning point comes along.
-    for column in ("strategy", "config_key", "N", "M", "R", "F_freeze", "a_dev_1"):
+    for column in ("strategy", "config_key", "N", "R", "F_freeze", "a_dev_1"):
         assert column in best.columns
 
 

@@ -90,7 +90,7 @@ _INITIAL_TO_TIER = {v: k for k, v in _TIER_INITIALS.items()}
 
 #: Control variables the deviation-pattern breakdown groups by, alongside the
 #: five tier columns.
-CONTROL_FACTORS: tuple[str, ...] = ("N", "M", "R", "F_freeze", "a_dev_1", "n_sup_dev")
+CONTROL_FACTORS: tuple[str, ...] = ("N", "R", "F_freeze", "a_dev_1", "n_sup_dev")
 
 
 # ----------------------------------------------------------------------------
@@ -158,7 +158,7 @@ def _objective_row(
     row.update({
         "strategy": strategy,
         "config_key": key,
-        "N": obj["N"], "M": obj["M"], "R": obj["R"],
+        "N": obj["N"], "R": obj["R"],
         # F_freeze and A_qa were added to search_summary.json alongside the campaign;
         # fall back to the manifest for searches written before that.
         "F_freeze": obj.get("F_freeze", manifest["configs"][key]["F_freeze"]),
@@ -492,7 +492,6 @@ def filtered_front_from_table(
 def _team_config(row: pd.Series) -> TeamConfiguration:
     return TeamConfiguration(
         N=float(row["N"]),
-        M=int(row["M"]),
         A_dev=tuple(int(row[f"a_dev_{k + 1}"]) for k in range(AGENT_ROLE_COUNT)),
         R=int(row["R"]),
         F_freeze=int(row["F_freeze"]),

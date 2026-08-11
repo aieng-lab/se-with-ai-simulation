@@ -98,7 +98,6 @@ def load_team_config(path: str | Path) -> TeamConfiguration:
     A_qa = tuple(int(x) for x in A_qa_raw) if A_qa_raw is not None else None
     return TeamConfiguration(
         N=float(data["N"]),
-        M=int(data["M"]),
         A_dev=A_dev,
         R=int(data["R"]),
         F_freeze=int(data.get("F_freeze", 1)),
@@ -178,7 +177,6 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
         horizon_path=data["horizon"],
         strategy=s["strategy"],
         N_values=tuple(float(x) for x in s["N_values"]),
-        M_max=int(s["M_max"]),
         R_values=tuple(int(x) for x in s["R_values"]),
         F_freeze_values=tuple(int(x) for x in s.get("F_freeze_values", [1])),
         sigma=float(s.get("sigma", 2.0)),

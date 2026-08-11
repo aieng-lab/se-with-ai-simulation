@@ -16,13 +16,13 @@ if TYPE_CHECKING:
 
 
 def _config_hash(config: "TeamConfiguration") -> int:
-    """Stable integer hash of (N, M, A_dev, R, F_freeze, A_qa) independent of PYTHONHASHSEED."""
+    """Stable integer hash of (N, A_dev, R, F_freeze, A_qa) independent of PYTHONHASHSEED."""
     h = 1469598103934665603  # FNV-1a 64-bit offset basis
     prime = 1099511628211
     # N is a fractional FTE staffing level; fold it in at 1/100 FTE resolution so the
     # mixing stays integer-only.  The §4.2 search range uses quarter-FTE steps.
     N_key = round(config.N * 100)
-    for value in (N_key, config.M, config.R, config.F_freeze, *config.A_dev, *config.A_qa):  # type: ignore[union-attr]
+    for value in (N_key, config.R, config.F_freeze, *config.A_dev, *config.A_qa):  # type: ignore[union-attr]
         h = ((h ^ (value & 0xFFFFFFFFFFFFFFFF)) * prime) & 0xFFFFFFFFFFFFFFFF
     return h
 

@@ -262,7 +262,7 @@ def _composition_row(tiers: dict[str, str], A_dev, A_qa, **kwargs) -> dict:
     """A frontier row carrying the composition columns the §5 team plots read."""
     row = _row(tiers, kwargs.pop("quality", 10.0), kwargs.pop("cost", 100.0))
     row.update(
-        N=2, M=10, R=4, F_freeze=1,
+        N=2, R=4, F_freeze=1,
         n_sup_dev=sum(A_dev[i] for i in (0, 1, 2, 3, 6, 7)),
         n_sup_qa=sum(A_qa[i] for i in (0, 1, 2, 3, 6, 7)),
     )

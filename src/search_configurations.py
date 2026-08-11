@@ -1,7 +1,7 @@
 """Search for the optimal agent team composition using random or evolutionary search.
 
 Unlike a fixed-recipe sweep, this module searches over the full space of integer agent
-compositions A for given (N, M, R) values.
+compositions A for given (N, R) values.
 
 Output layout
 -------------
@@ -9,13 +9,14 @@ Output layout
         manifest.json          metadata, per-config feasibility, A composition
         search_summary.json    Pareto frontier + all objectives including A
         samples/
-            N2_M3_R4_00042.json    per-replication objectives; which candidates get a
-                                   file is governed by SearchConfiguration.samples
-                                   ("all" / "frontier" / "none")
+            N2_R4_00042.json   per-replication objectives; which candidates get a
+                               file is governed by SearchConfiguration.samples
+                               ("all" / "frontier" / "none")
 
-Supervised role counts are bounded twice: by the span of control floor(N*M)
-(Eq. budget) and, per role, by the throughput saturation bound u_k of
-`saturation_bounds` (Eq. sat_bound) — beyond u_k an agent has no work to do.
+Supervised role counts are bounded per role by the throughput saturation bound u_k
+of `saturation_bounds` (Eq. sat_bound) — beyond u_k an agent has no work to do —
+and collectively by the human-capacity condition of Eq. (feas_monitoring), which
+`src.feasibility` checks after the draw.
 """
 
 from __future__ import annotations
@@ -33,8 +34,6 @@ from .config import (
     SearchConfiguration,
     SimulationHorizon,
     TeamConfiguration,
-    supervised_agent_count,
-    supervision_budget,
 )
 from .feasibility import check_feasibility
 from .pareto import AggregatedObjectives, aggregate_config_result, pareto_frontier
@@ -135,8 +134,8 @@ def _sample_supervised(
 
     Paper §3.13.2, steps 3-4: a_k ~ U{0, ..., u_k}, except that the dev-phase
     Feature Implementation role (index 0) is drawn from U{1, ..., u_1} so that
-    a_dev,1 >= 1 holds by construction.  The span-of-control budget is *not*
-    enforced here — a draw that overruns it is discarded by the caller.
+    a_dev,1 >= 1 holds by construction.  The human-capacity condition is *not*
+    enforced here — a draw that violates it is rejected by the feasibility gate.
     """
     supervised: dict[int, int] = {}
     for idx in indices:
@@ -175,18 +174,16 @@ def _pick(indices: tuple[int, ...], rng: np.random.Generator) -> int:
 def _mutate_composition(
     A: list[int],
     mutable: tuple[int, ...],
-    budget: int,
     bounds: dict[int, int],
     rng: np.random.Generator,
     min_impl: bool,
 ) -> None:
     """Apply one elementary mutation to `A` in place.
 
-    `mutable` are the supervised role indices that may be changed; they share the
-    span-of-control `budget` and each is additionally capped by its throughput
-    saturation bound `bounds[i]` (paper §3.13.1).  The background services are
-    mutated by a separate +/-1 operation and are subject to neither.  With
-    `min_impl`, index 0 (Feature Implementation) is protected from being drained
+    `mutable` are the supervised role indices that may be changed; each is capped by
+    its throughput saturation bound `bounds[i]` (paper §3.13.1).  The background
+    services are mutated by a separate +/-1 operation and are capped by nothing.
+    With `min_impl`, index 0 (Feature Implementation) is protected from being drained
     to zero.
     """
     op = int(rng.integers(4))   # 0=move, 1=add, 2=remove, 3=background +/-1
@@ -200,8 +197,7 @@ def _mutate_composition(
     donors = [i for i in mutable if A[i] > 0 and (i != 0 or A[i] > floor)]
     # Only roles still below their saturation bound can receive an agent.
     recipients = tuple(i for i in mutable if A[i] < bounds[i])
-    current_sum = supervised_agent_count(tuple(A))
-    if op == 1 and current_sum < budget and recipients:
+    if op == 1 and recipients:
         A[_pick(recipients, rng)] += 1
     elif op == 2 and donors:
         A[int(rng.choice(donors))] -= 1
@@ -219,18 +215,16 @@ def _mutate(
     search_cfg: SearchConfiguration,
     bounds: dict[int, int],
 ) -> TeamConfiguration:
-    """Perturb exactly one randomly chosen parameter from {N, M, F_freeze, A_dev, A_qa}.
+    """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
     R is never mutated. Retries up to 10 times if the result is unchanged or invalid;
     returns the parent if all attempts fail."""
     for _ in range(10):
-        mutation_type = int(rng.integers(5))  # 0=N, 1=M, 2=F_freeze, 3=A_dev, 4=A_qa
+        mutation_type = int(rng.integers(4))  # 0=N, 1=F_freeze, 2=A_dev, 3=A_qa
 
         N = config.N
-        M = config.M
         A_dev = list(config.A_dev)
         A_qa = list(config.A_qa)
         F_freeze = config.F_freeze
-        budget = supervision_budget(N, M)
 
         if mutation_type == 0:
             # Mutate N: pick an adjacent value in the sorted N_values list
@@ -245,37 +239,23 @@ def _mutate(
                 N = float(rng.choice(candidates))
 
         elif mutation_type == 1:
-            # Mutate M: increase it by just enough to buy one more supervision slot
-            # and spend that slot immediately, so the step changes behaviour.  With a
-            # part-time staffing level a single +1 need not raise floor(N*M) at all,
-            # hence the 1/N step.  Decreasing M is skipped — it cannot change
-            # behavior, only tighten the budget.
-            dM = math.ceil(max(1.0, 1.0 / N))
-            recipients = tuple(i for i in SUPERVISED_ROLE_INDICES if A_dev[i] < bounds[i])
-            if M + dM <= search_cfg.M_max and recipients:
-                M += dM
-                # The extra capacity is a supervision slot, so it must go to a
-                # supervised role — the background services do not use it.
-                A_dev[_pick(recipients, rng)] += 1
-
-        elif mutation_type == 2:
             # Mutate F_freeze: ±1 clamped to [0, R-1]
             F_freeze = int(np.clip(F_freeze + int(rng.choice([-1, 1])), 0, config.R - 1))
 
-        elif mutation_type == 3:
-            # Mutate A_dev: exactly one elementary op, maintaining
-            # supervised_agent_count(A_dev) <= floor(N*M), a_k <= u_k and A_dev[0] >= 1
-            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, budget, bounds,
+        elif mutation_type == 2:
+            # Mutate A_dev: exactly one elementary op, maintaining a_k <= u_k and
+            # A_dev[0] >= 1
+            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, bounds,
                                 rng, min_impl=True)
 
         else:
             # Mutate A_qa: exactly one elementary op restricted to the supervised QA
             # roles (indices 0-1 stay at 0) plus the background services
-            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, budget, bounds,
+            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, bounds,
                                 rng, min_impl=False)
 
         try:
-            child = TeamConfiguration(N=N, M=M, A_dev=tuple(A_dev), R=config.R,
+            child = TeamConfiguration(N=N, A_dev=tuple(A_dev), R=config.R,
                                       F_freeze=F_freeze, A_qa=tuple(A_qa))
         except ValueError:
             continue   # invalid; retry
@@ -289,48 +269,35 @@ def _mutate(
 # Config generation
 # ---------------------------------------------------------------------------
 
-#: A single random draw: the manifest fields of the candidate, plus the assembled
-#: TeamConfiguration — or None when the draw overruns the span-of-control budget of
-#: Eq. (budget) and is therefore discarded (paper §3.13.2, step 6).  A discarded draw
-#: still consumes one evaluation of the §4.2 budget, so it is reported, not silently
-#: redrawn.
-Draw = tuple[dict, "TeamConfiguration | None"]
-
-_BUDGET_REJECTED = "supervised agents exceed the span of control floor(N*M)"
-
-
 def _random_draws(
     search_cfg: SearchConfiguration,
     rng: np.random.Generator,
     n_samples: int,
     params,
-) -> list[Draw]:
-    """Draw `n_samples` random (N, M, A_dev, R, F_freeze, A_qa) candidates."""
+) -> list[TeamConfiguration]:
+    """Draw `n_samples` random (N, A_dev, R, F_freeze, A_qa) candidates.
+
+    Every draw satisfies the structural constraints of `TeamConfiguration` by
+    construction, so the samplers never produce a configuration that has to be
+    discarded here.  The only rejection path left is the human-capacity condition of
+    Eq. (feas_monitoring), applied by the feasibility gate in `_evaluate`
+    (paper §3.13.2, step 6).
+    """
     bg_max = background_count_max(params)
     bounds = saturation_bounds(params, search_cfg.sigma)
-    draws: list[Draw] = []
+    draws: list[TeamConfiguration] = []
     for _ in range(n_samples):
         N = float(rng.choice(search_cfg.N_values))
-        M = int(rng.integers(1, search_cfg.M_max + 1))
         R = int(rng.choice(search_cfg.R_values))
         # Each supervised role is drawn independently within its saturation bound;
         # the background services are drawn separately inside the samplers and are
-        # bounded by neither u_k nor the span of control.
+        # bounded by neither u_k nor anything else.
         A_dev = _sample_dev_composition(rng, bounds, bg_max)
         A_qa = _sample_qa_composition(rng, bounds, bg_max)
         # Sample F_freeze, clamped so it respects [0, R-1]
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1] or [1]))
-        raw = {"N": N, "M": M, "R": R, "F_freeze": F_freeze,
-               "A_dev": list(A_dev), "A_qa": list(A_qa)}
-        try:
-            cfg = TeamConfiguration(N=N, M=M, A_dev=A_dev, R=R,
-                                    F_freeze=F_freeze, A_qa=A_qa)
-        except ValueError:
-            # The only constraint the sampler does not enforce is Eq. (budget); this
-            # also catches N*M < 1, where a_dev,1 >= 1 is unreachable by construction.
-            draws.append((raw, None))
-            continue
-        draws.append((raw, cfg))
+        draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
+                                       F_freeze=F_freeze, A_qa=A_qa))
     return draws
 
 
@@ -339,27 +306,11 @@ def _random_draws(
 # ---------------------------------------------------------------------------
 
 def _config_key(config: TeamConfiguration, idx: int) -> str:
-    return _draw_key({"N": config.N, "M": config.M, "R": config.R}, idx)
-
-
-def _draw_key(raw: dict, idx: int) -> str:
-    """Key of a candidate, usable for a discarded draw that has no TeamConfiguration.
+    """Key of a candidate, used as its manifest entry and its `samples/` filename.
 
     `:g` keeps a whole-FTE staffing level as ``N2`` and a fractional one as ``N0.25``.
     """
-    return f"N{raw['N']:g}_M{raw['M']}_R{raw['R']}_{idx:05d}"
-
-
-def _rejected_entry(raw: dict, generation: int) -> dict:
-    """Manifest entry for a draw discarded by Eq. (budget) before any simulation.
-
-    Rejected draws are reported rather than redrawn: they consume one evaluation of
-    the search budget, exactly like the candidates the feasibility gate rejects
-    (paper §4.2).  `failed_step` is 0 to separate them from the numbered feasibility
-    steps of `src.feasibility`.
-    """
-    return {"feasible": False, **raw, "failed_step": 0, "reason": _BUDGET_REJECTED,
-            "generation": generation}
+    return f"N{config.N:g}_R{config.R}_{idx:05d}"
 
 
 def _evaluate(
@@ -377,7 +328,7 @@ def _evaluate(
     report = check_feasibility(config, params)
     entry: dict = {
         "feasible": report.feasible,
-        "N": config.N, "M": config.M, "R": config.R, "F_freeze": config.F_freeze,
+        "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
         "A_dev": list(config.A_dev),
         "A_qa": list(config.A_qa),
     }
@@ -458,18 +409,15 @@ def _run_random_search(
     outcome = SearchOutcome(manifest={}, aggs=[], results={})
     keep_samples = search_cfg.samples != "none"
 
-    for i, (raw, cfg) in enumerate(draws):
-        key = _draw_key(raw, i)
-        if cfg is None:
-            outcome.manifest[key] = _rejected_entry(raw, generation=0)
-        else:
-            entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
-            entry["generation"] = 0
-            outcome.manifest[key] = entry
-            if agg is not None:
-                outcome.aggs.append((key, cfg, agg))
-                if keep_samples:
-                    outcome.results[key] = cr    # type: ignore[assignment]
+    for i, cfg in enumerate(draws):
+        key = _config_key(cfg, i)
+        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
+        entry["generation"] = 0
+        outcome.manifest[key] = entry
+        if agg is not None:
+            outcome.aggs.append((key, cfg, agg))
+            if keep_samples:
+                outcome.results[key] = cr    # type: ignore[assignment]
         _progress(i + 1, len(draws), outcome, progress_every)
 
     return outcome
@@ -486,10 +434,9 @@ def _run_evolutionary_search(
     """Evolutionary search: random init + guided mutation toward the Pareto front.
 
     Budget accounting follows paper §4.2: every candidate that reaches the
-    feasibility check consumes one evaluation, whether or not it is simulated, as
-    does an initial draw discarded by Eq. (budget).  A generation can therefore fall
-    short of `n_offspring` only when the mutation operator keeps producing
-    duplicates until its attempt limit is exhausted.
+    feasibility check consumes one evaluation, whether or not it is simulated.  A
+    generation can therefore fall short of `n_offspring` only when the mutation
+    operator keeps producing duplicates until its attempt limit is exhausted.
     """
     n_initial   = search_cfg.n_samples_initial
     n_gen       = search_cfg.n_generations
@@ -515,12 +462,8 @@ def _run_evolutionary_search(
 
     print(f"Random initialisation ({n_initial} samples) …", flush=True)
     init_draws = _random_draws(search_cfg, rng, n_initial, params)
-    for i, (raw, cfg) in enumerate(init_draws):
-        if cfg is None:
-            outcome.manifest[_draw_key(raw, outcome.n_evaluated)] = \
-                _rejected_entry(raw, generation=0)
-        else:
-            evaluate_new(cfg, generation=0)
+    for i, cfg in enumerate(init_draws):
+        evaluate_new(cfg, generation=0)
         _progress(i + 1, len(init_draws), outcome, progress_every)
 
     for gen in range(1, n_gen + 1):

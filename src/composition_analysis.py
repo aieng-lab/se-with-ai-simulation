@@ -3,20 +3,20 @@
 `src.results_analysis` answers what the front looks like in *objective* space; this
 module answers what the teams *on* it look like.  It consumes the same flat table —
 `CampaignTables.filtered_front`, i.e. `results/analysis/filtered_front.csv` — which
-already carries `N`, `M`, `R`, `F_freeze`, `a_dev_1..8`, `a_qa_1..8`, `n_sup_dev` and
+already carries `N`, `R`, `F_freeze`, `a_dev_1..8`, `a_qa_1..8`, `n_sup_dev` and
 `n_sup_qa` next to the objectives, so nothing here re-simulates or re-derives.
 
 Two normalisation rules shape every table below.
 
 *Supervised and background roles are normalised differently.*  Per §3.3 the two
 background detection services (k=5 Code Review, k=6 Security Audit) are unbounded —
-their only brake is token cost — while the six supervised roles are bounded by the span
-of control ``floor(N*M)``.  Background counts reach 77 on the front and would take ~77 % of any
+their only brake is token cost — while the six supervised roles are held down by the
+human-capacity condition of Eq. (feas_monitoring) and by their saturation bounds
+``u_k``.  Background counts reach 77 on the front and would take ~77 % of any
 stacked bar drawn over all eight roles, flattening the supervised roles into invisibility.
-So supervised roles are reported as a **share of n_sup** (the bounded budget, where the
-signal lives: the Feature Implementation share falls from ~0.81 to ~0.26 between the
-cheapest and the most expensive fifth of the front) and background roles as **absolute
-counts**.
+So supervised roles are reported as a **share of n_sup** (where the signal lives: the
+Feature Implementation share falls from ~0.81 to ~0.26 between the cheapest and the
+most expensive fifth of the front) and background roles as **absolute counts**.
 
 *Every aggregate is computed per (scenario_id, strategy) front first, then averaged
 across fronts with equal weight.*  Front sizes span 13 to 1,190 points and the
@@ -54,7 +54,6 @@ from .config import (
     BACKGROUND_ROLE_INDICES,
     SCENARIO_GROUPS,
     SUPERVISED_ROLE_INDICES,
-    supervision_budget,
 )
 
 PHASES: tuple[str, ...] = ("dev", "qa")
@@ -69,7 +68,7 @@ OTHER_ARCHETYPE = "other"
 #: different units, so they are never mixed into the share bars — they get their own
 #: panel in every figure.
 CONTROL_COLUMNS: tuple[str, ...] = (
-    "N", "M", "R", "F_freeze", "n_sup", "n_bg", "n_agents", "capacity_util",
+    "N", "R", "F_freeze", "n_sup", "n_bg", "n_agents", "agents_per_fte",
 )
 
 #: Roles 1 (Feature Implementation) and 2 (Architecture & Design) are structurally
@@ -150,7 +149,7 @@ def add_composition_columns(
 
     Adds, for the roles of `phase`:
         `n_sup`, `n_bg`, `n_agents`  — supervised / background / total agent counts
-        `capacity_util`             — n_sup / floor(N*M), the span-of-control utilisation
+        `agents_per_fte`            — n_sup / N, the monitoring load one FTE carries
         `share_<role column>`       — supervised role share of n_sup (NaN when n_sup = 0)
         `signature`                 — role-presence bitstring, one bit per role
         `front_pos`                 — percentile rank of cost_mean within the row's front
@@ -172,14 +171,12 @@ def add_composition_columns(
         out["n_sup"] = out[sup_cols].sum(axis=1).astype(float)
     out["n_bg"] = out[bg_cols].sum(axis=1).astype(float)
     out["n_agents"] = out["n_sup"] + out["n_bg"]
-    # N is an FTE staffing level, so the span of control it buys is floor(N*M) whole
-    # agents — the same bound the search enforces.  Dividing by the raw product would
-    # report a utilisation below 1 for a team that has in fact filled every slot.
-    out["capacity_util"] = out["n_sup"] / [
-        supervision_budget(n, m) for n, m in zip(out["N"], out["M"])
-    ]
+    # Supervised agents per FTE: exactly the quantity the human-capacity condition of
+    # Eq. (feas_monitoring) bounds, so it is comparable across staffing levels without
+    # needing the scenario parameters that fix where that bound sits.
+    out["agents_per_fte"] = out["n_sup"] / out["N"]
 
-    # Shares are of the *bounded* budget only; a team with no supervised agents has no
+    # Shares are of the supervised roles only; a team with no supervised agents has no
     # meaningful mix, so it contributes NaN rather than a zero that would drag means down.
     denom = out["n_sup"].replace(0.0, np.nan)
     for col in sup_cols:
@@ -420,7 +417,7 @@ def composition_headline(
             "n_distinct_signatures": int(work["signature"].nunique()),
             "mean_n_sup": float(work["n_sup"].mean()),
             "mean_n_bg": float(work["n_bg"].mean()),
-            "mean_capacity_util": float(work["capacity_util"].mean()),
+            "mean_agents_per_fte": float(work["agents_per_fte"].mean()),
         }
         for strategy, sub in arch.groupby("strategy", observed=True):
             real = sub[sub["archetype"] != OTHER_ARCHETYPE]

@@ -102,7 +102,7 @@ class TestLoadSimulationHorizon:
 class TestLoadTeamConfig:
     def test_default_team_loads(self):
         team = load_team_config("config/team_default.json")
-        assert team.N == 2 and team.M == 3 and team.R == 4 and team.F_freeze == 1
+        assert team.N == 2 and team.R == 4 and team.F_freeze == 1
         assert len(team.A_dev) == 8
         assert len(team.A_qa) == 8
 
@@ -200,7 +200,6 @@ class TestLoadSearchConfig:
         # Staffing levels in quarter-FTE steps from a one-day-per-week part-timer to a
         # five-FTE team; N is a staffing level, so the values are floats.
         assert cfg.N_values == tuple(0.25 * i for i in range(1, 21))
-        assert cfg.M_max == 30
         assert cfg.R_values == (1, 2, 4, 13)
         assert cfg.F_freeze_values == (0, 1, 2)
         assert cfg.sigma == 2.0

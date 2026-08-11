@@ -1,10 +1,11 @@
 """Tests for src/search_configurations.py — composition sampling and mutation.
 
-Two bounds are the invariants under test.  The supervised roles share the
-span-of-control budget floor(N*M) *and* are each capped by their throughput
-saturation bound u_k (paper §3.13.1); the background detection services (Code
-Review, Security Audit) are subject to neither and are sampled separately,
-uniformly from {0, ..., floor(r_arrival)}.
+The invariant under test is the throughput saturation bound u_k (paper §3.13.1),
+which caps each supervised role; the background detection services (Code Review,
+Security Audit) are subject to no bound at all and are sampled separately,
+uniformly from {0, ..., floor(r_arrival)}.  The one collective limit on the
+supervised roles, the human-capacity condition of Eq. (feas_monitoring), is applied
+by the feasibility gate after the draw, not by the sampler.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from src.config import (
     SimulationHorizon,
     TeamConfiguration,
     supervised_agent_count,
-    supervision_budget,
 )
 from src.io import load_scenario_params
 from src.pareto import pareto_frontier
@@ -42,8 +42,8 @@ from src.search_configurations import (
 
 BG_MAX = 12   # matches r_arrival of config/project_medium.json
 
-#: Generous stand-in bounds: large enough that the budget, not u_k, is the binding
-#: constraint in the tests that are about the budget.
+#: Generous stand-in bounds: large enough that u_k is not the binding constraint in
+#: the tests that are about something else.
 WIDE_BOUNDS = {i: 4 for i in SUPERVISED_ROLE_INDICES}
 
 
@@ -56,7 +56,6 @@ def search_cfg():
         horizon_path="config/horizon_default.json",
         strategy="random",
         N_values=(1.0, 2.0, 3.0),
-        M_max=6,
         R_values=(2, 4),
         F_freeze_values=(1, 2),
         n_samples=50,
@@ -173,56 +172,42 @@ class TestCompositionSampling:
 
 
 class TestRandomDraws:
-    def test_accepted_draws_respect_both_bounds(self, search_cfg, medium_params):
+    def test_every_draw_is_structurally_valid_and_within_u_k(self, search_cfg,
+                                                             medium_params):
+        """The sampler builds only valid candidates, so nothing is discarded here."""
         rng = np.random.default_rng(3)
         bounds = saturation_bounds(medium_params, search_cfg.sigma)
         draws = _random_draws(search_cfg, rng, 300, medium_params)
         assert len(draws) == 300
-        accepted = [cfg for _, cfg in draws if cfg is not None]
-        assert accepted, "the search range must admit some valid candidates"
-        for cfg in accepted:
-            budget = supervision_budget(cfg.N, cfg.M)
-            assert supervised_agent_count(cfg.A_dev) <= budget
-            assert supervised_agent_count(cfg.A_qa) <= budget
+        for cfg in draws:
             assert cfg.A_dev[0] >= 1
+            assert cfg.A_qa[0] == 0 and cfg.A_qa[1] == 0
+            assert 0 <= cfg.F_freeze <= cfg.R - 1
             assert all(cfg.A_dev[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
             assert all(cfg.A_qa[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
 
-    def test_a_budget_overrun_is_reported_not_redrawn(self, search_cfg, medium_params):
-        """M=1 with N=0.25 leaves floor(N*M)=0, so every such draw must be discarded."""
-        from dataclasses import replace
-        cfg = replace(search_cfg, N_values=(0.25,), M_max=1)
-        draws = _random_draws(cfg, np.random.default_rng(5), 50, medium_params)
-        assert len(draws) == 50, "discarded draws stay in the list, they are not redrawn"
-        assert all(config is None for _, config in draws)
-        assert all(raw["N"] == 0.25 and raw["M"] == 1 for raw, _ in draws)
-
-    def test_background_services_may_exceed_the_budget(self, search_cfg, medium_params):
+    def test_background_services_are_capped_by_nothing(self, search_cfg, medium_params):
+        """The services answer to neither u_k nor the supervised count."""
         rng = np.random.default_rng(4)
         draws = _random_draws(search_cfg, rng, 300, medium_params)
-        # Total headcount is not bounded by floor(N*M) any more, so at least one
-        # config must exceed it once the background services are counted in.
-        assert any(sum(cfg.A_dev) > supervision_budget(cfg.N, cfg.M)
-                   for _, cfg in draws if cfg is not None)
+        assert any(sum(cfg.A_dev) > supervised_agent_count(cfg.A_dev) * 2
+                   for cfg in draws)
 
 
 class TestMutation:
     def _parent(self):
         A_dev = [0] * AGENT_ROLE_COUNT
-        A_dev[0], A_dev[2], A_dev[4] = 2, 1, 1     # 3 supervised of N*M = 6
+        A_dev[0], A_dev[2], A_dev[4] = 2, 1, 1     # 3 supervised + 1 background
         A_qa = [0] * AGENT_ROLE_COUNT
         A_qa[2], A_qa[5] = 2, 1
-        return TeamConfiguration(N=2.0, M=3, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
+        return TeamConfiguration(N=2.0, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
                                  R=4, F_freeze=1)
 
-    def test_children_are_valid_and_within_the_supervised_budget(self, search_cfg):
+    def test_children_are_structurally_valid(self, search_cfg):
         rng = np.random.default_rng(5)
         parent = self._parent()
         for _ in range(500):
             child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
-            budget = supervision_budget(child.N, child.M)
-            assert supervised_agent_count(child.A_dev) <= budget
-            assert supervised_agent_count(child.A_qa) <= budget
             assert child.A_dev[0] >= 1
             assert child.A_qa[0] == 0 and child.A_qa[1] == 0
             parent = child   # chain mutations to explore further from the start
@@ -237,22 +222,16 @@ class TestMutation:
                 assert parent.A_dev[i] <= bounds[i], f"A_dev role index {i} overran u_k"
                 assert parent.A_qa[i] <= bounds[i], f"A_qa role index {i} overran u_k"
 
-    def test_M_step_buys_a_slot_at_a_fractional_staffing_level(self, search_cfg):
-        """dM = ceil(max(1, 1/N)), so a +1 that cannot raise floor(N*M) is not used."""
-        from dataclasses import replace
-        cfg = replace(search_cfg, N_values=(0.25,), M_max=30)
+    def test_N_walks_the_discrete_staffing_ladder(self, search_cfg):
+        """The N mutation moves to an adjacent element of N_values and stays in it."""
         rng = np.random.default_rng(16)
-        A_dev = [0] * AGENT_ROLE_COUNT
-        A_dev[0] = 1
-        parent = TeamConfiguration(N=0.25, M=4, A_dev=tuple(A_dev), R=2, F_freeze=0)
-        seen_M = set()
+        parent = self._parent()
+        seen_N = set()
         for _ in range(400):
-            parent = _mutate(parent, rng, cfg, WIDE_BOUNDS)
-            seen_M.add(parent.M)
-        # Starting from M=4 the reachable values are 4, 8, 12, ... — a step of 4 = 1/N.
-        assert seen_M, "M must move at all"
-        assert all(M % 4 == 0 for M in seen_M), seen_M
-        assert max(seen_M) > 4, "the step must actually be taken"
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+            seen_N.add(parent.N)
+        assert len(seen_N) > 1, "N must move at all"
+        assert seen_N <= set(search_cfg.N_values)
 
     def test_mutation_reaches_the_background_services(self, search_cfg):
         """The +/-1 background operation must actually fire and move both roles."""
@@ -267,8 +246,8 @@ class TestMutation:
         for i in BACKGROUND_ROLE_INDICES:
             assert len(seen[i]) > 1, f"role index {i} was never mutated"
 
-    def test_background_services_can_grow_past_the_budget(self, search_cfg):
-        """Nothing caps the services — neither floor(N*M) nor u_k."""
+    def test_background_services_can_grow_without_bound(self, search_cfg):
+        """Nothing caps the services — not u_k, not the supervised count."""
         rng = np.random.default_rng(7)
         parent = self._parent()
         peak = 0
@@ -281,7 +260,7 @@ class TestMutation:
         rng = np.random.default_rng(8)
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0] = 1   # already at the floor
-        parent = TeamConfiguration(N=1.0, M=2, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         for _ in range(300):
             parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
             assert parent.A_dev[0] >= 1
@@ -291,12 +270,13 @@ class TestMutation:
 # Search drivers: budget accounting (paper §4.2) and sample retention
 # ---------------------------------------------------------------------------
 
-# A deliberately wasteful search range: the quarter-FTE staffing level combined with a
-# narrow span of control leaves floor(N*M) = 0 for M <= 3, so a fair share of the draws
-# is discarded by the budget constraint before any simulation.  The debt-low tier has
-# Gamma_doc = 0 on top of that, so monitoring alone exhausts the 40 h capacity from 16
-# supervised agents per FTE on.  Both rejection paths are what makes the budget
-# accounting of §4.2 observable.
+# A deliberately wasteful search range.  The debt-low tier has Gamma_doc = 0, so
+# monitoring costs the full H_mon.overhead = 2.5 h per agent and exhausts the 40 h
+# capacity from 16 supervised agents per FTE on.  At the quarter-FTE staffing level
+# that threshold is already crossed by 4 supervised agents, which the saturation
+# bounds comfortably allow, so a fair share of the draws is rejected by the
+# human-capacity condition of Eq. (feas_monitoring) — the one rejection path, and
+# what makes the budget accounting of §4.2 observable.
 _WASTEFUL_TIERS = {group: "medium" for group in SCENARIO_GROUPS} | {"debt": "low"}
 
 
@@ -308,7 +288,6 @@ def wasteful_cfg():
         horizon_path="config/horizon_default.json",
         strategy="random",
         N_values=(0.25, 1.0),
-        M_max=30,
         R_values=(2, 4),
         F_freeze_values=(0, 1),
         n_samples=40,
@@ -342,21 +321,21 @@ class TestSearchBudget:
             1 for e in outcome.manifest.values() if not e["feasible"]
         )
 
-    def test_budget_rejections_are_charged_and_labelled(self, wasteful_cfg, tiny_horizon,
-                                                        wasteful_params):
-        """A draw discarded by Eq. (budget) still consumes one evaluation (§4.2)."""
+    def test_infeasible_draws_are_charged_and_labelled(self, wasteful_cfg, tiny_horizon,
+                                                       wasteful_params):
+        """A draw rejected by Eq. (feas_monitoring) still consumes one evaluation (§4.2)."""
         from dataclasses import replace
-        cfg = replace(wasteful_cfg, N_values=(0.25,), M_max=2, n_samples=30)
+        cfg = replace(wasteful_cfg, N_values=(0.25,), n_samples=30)
         outcome = _run_random_search(
             cfg, tiny_horizon, wasteful_params, np.random.default_rng(3),
             cfg.n_samples, progress_every=0,
         )
         assert outcome.n_evaluated == cfg.n_samples
-        assert outcome.n_simulated == 0
-        entries = list(outcome.manifest.values())
-        assert all(e["failed_step"] == 0 and "floor(N*M)" in e["reason"] for e in entries)
+        rejected = [e for e in outcome.manifest.values() if not e["feasible"]]
+        assert rejected, "the wasteful range must produce rejections"
+        assert all(e["failed_step"] == 1 for e in rejected)
         # The manifest must still describe the candidate that was thrown away.
-        assert all({"N", "M", "R", "F_freeze", "A_dev", "A_qa"} <= e.keys() for e in entries)
+        assert all({"N", "R", "F_freeze", "A_dev", "A_qa"} <= e.keys() for e in rejected)
 
     def test_evolutionary_search_stays_within_its_nominal_budget(
         self, wasteful_cfg, tiny_horizon, wasteful_params
@@ -369,7 +348,7 @@ class TestSearchBudget:
             progress_every=0,
         )
         assert outcome.n_evaluated <= budget
-        # The wasteful span of control guarantees rejections, so this run must have
+        # The wasteful staffing range guarantees rejections, so this run must have
         # charged some infeasible candidates against the budget.
         assert outcome.n_simulated < outcome.n_evaluated
 
@@ -380,7 +359,7 @@ class TestSearchBudget:
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(2),
             progress_every=0,
         )
-        keys = [(e["N"], e["M"], e["R"], e["F_freeze"],
+        keys = [(e["N"], e["R"], e["F_freeze"],
                  tuple(e["A_dev"]), tuple(e["A_qa"]))
                 for e in outcome.manifest.values()]
         assert len(keys) == len(set(keys))

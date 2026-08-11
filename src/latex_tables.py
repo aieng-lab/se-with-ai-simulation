@@ -113,7 +113,7 @@ def index_optima_latex(
     `optima` is the frame of :func:`src.results_analysis.index_optimum`, normally
     grouped by scenario so it holds one row per scenario.  Columns follow the order
     the paper uses: scenario, objectives, the control variables, then the dev and QA
-    agent counts — 25 columns in total.
+    agent counts — 24 columns in total.
 
     The search `strategy` that produced each row is *not* a column; it stays in the
     CSV that accompanies this file.
@@ -121,7 +121,7 @@ def index_optima_latex(
     heads = (
         ["Scenario"]
         + ["Feat.", "Qual.", "Cost", "Index"]
-        + ["$N$", "$M$", "$R$", "$F$"]
+        + ["$N$", "$R$", "$F$"]
         + list(ROLE_HEADS) * 2
     )
     n_cols = len(heads)
@@ -130,13 +130,13 @@ def index_optima_latex(
     group_row = " & ".join([
         "",
         r"\multicolumn{4}{c}{Objectives}",
-        r"\multicolumn{4}{c}{Team}",
+        r"\multicolumn{3}{c}{Team}",
         r"\multicolumn{8}{c}{Development agents}",
         r"\multicolumn{8}{c}{QA agents}",
     ]) + r" \\"
     cmidrules = (
-        r"\cmidrule(lr){2-5}\cmidrule(lr){6-9}"
-        r"\cmidrule(lr){10-17}\cmidrule(lr){18-25}"
+        r"\cmidrule(lr){2-5}\cmidrule(lr){6-8}"
+        r"\cmidrule(lr){9-16}\cmidrule(lr){17-24}"
     )
     head_row = " & ".join(heads) + r" \\"
 
@@ -148,7 +148,7 @@ def index_optima_latex(
         f"% {n_cols} columns at \\tiny with \\tabcolsep=1.5pt fits the 338pt text block",
         "% of svjour3[smallextended] with no overfull box; widen either setting only",
         "% on a wider text block.",
-        # The padding dominates the width: 25 columns carry 50*\tabcolsep, i.e. 300pt
+        # The padding dominates the width: 24 columns carry 48*\tabcolsep, i.e. 288pt
         # at the 6pt default — nearly the whole text block before a single digit is
         # set.  Font size alone cannot recover that.
         r"\begingroup\tiny\setlength{\tabcolsep}{1.5pt}",
@@ -172,7 +172,7 @@ def index_optima_latex(
             + [format_number(row[c]) for c in
                ("value_mean", "quality_mean", "cost_mean", "quality_cost_index")]
             + [_fte(row["N"])]
-            + [_int(row[c]) for c in ("M", "R", "F_freeze")]
+            + [_int(row[c]) for c in ("R", "F_freeze")]
             + [_int(row[f"a_dev_{k + 1}"]) for k in range(AGENT_ROLE_COUNT)]
             + [_int(row[f"a_qa_{k + 1}"]) for k in range(AGENT_ROLE_COUNT)]
         )

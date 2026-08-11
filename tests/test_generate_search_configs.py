@@ -58,7 +58,6 @@ class TestGeneratedGrid:
             # that frontier differences are attributable to the scenario alone (§4.2).
             assert cfg.horizon_path == reference.horizon_path
             assert cfg.N_values == reference.N_values
-            assert cfg.M_max == reference.M_max
             assert cfg.R_values == reference.R_values
             assert cfg.F_freeze_values == reference.F_freeze_values
             assert cfg.n_samples == reference.n_samples

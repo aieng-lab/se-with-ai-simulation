@@ -22,7 +22,7 @@ from src.latex_tables import (
     scenario_code,
 )
 
-N_COLUMNS = 1 + 4 + 4 + 2 * AGENT_ROLE_COUNT
+N_COLUMNS = 1 + 4 + 3 + 2 * AGENT_ROLE_COUNT
 
 
 def _optimum_row(tiers: dict[str, str], i: int) -> dict:
@@ -34,7 +34,7 @@ def _optimum_row(tiers: dict[str, str], i: int) -> dict:
         quality_mean=1.5 + i,
         cost_mean=250.0 + i,
         quality_cost_index=(1.5 + i) * (250.0 + i),
-        N=2, M=10, R=4, F_freeze=1,
+        N=2, R=4, F_freeze=1,
     )
     for k in range(1, AGENT_ROLE_COUNT + 1):
         row[f"a_dev_{k}"] = k

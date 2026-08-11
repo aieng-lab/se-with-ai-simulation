@@ -1,4 +1,4 @@
-"""Team configuration (N, M, A_dev, R, F_freeze, A_qa)"""
+"""Team configuration (N, A_dev, R, F_freeze, A_qa)"""
 
 from __future__ import annotations
 
@@ -42,11 +42,12 @@ AGENT_ROLE_ABBREV: tuple[str, ...] = (
 )
 
 # Roles are split into two tiers with respect to human oversight (paper §3.3).
-# Supervised roles consume monitoring capacity and are bounded by the span of
-# control floor(N*M).  The two background detection services (Code Review, Security
-# Audit) are triggered automatically by the CI infrastructure and report their
-# findings asynchronously, so they need no human supervision and are therefore
-# neither counted against that budget nor charged monitoring overhead.
+# Supervised roles consume monitoring capacity, and how many of them a staffing
+# level can carry follows from the human-capacity condition of §3.6,
+# Eq. (feas_monitoring) — there is no separate span-of-control budget.  The two
+# background detection services (Code Review, Security Audit) are triggered
+# automatically by the CI infrastructure and report their findings asynchronously,
+# so they need no human supervision and are charged no monitoring overhead.
 SUPERVISED_ROLE_INDICES: tuple[int, ...] = (0, 1, 2, 3, 6, 7)   # k = 1,2,3,4,7,8
 BACKGROUND_ROLE_INDICES: tuple[int, ...] = (4, 5)               # k = 5,6
 
@@ -54,16 +55,6 @@ BACKGROUND_ROLE_INDICES: tuple[int, ...] = (4, 5)               # k = 5,6
 def supervised_agent_count(A: tuple[int, ...]) -> int:
     """Number of agents in `A` that consume human supervision (n_sup, paper §3.3)."""
     return sum(A[i] for i in SUPERVISED_ROLE_INDICES)
-
-
-def supervision_budget(N: float, M: int) -> int:
-    """floor(N*M) — the supervised-agent budget of paper §3.4, Eq. (budget).
-
-    N is a staffing level in FTE and may be fractional, so the span of control it
-    buys has to be rounded down to whole agents.  A budget of 0 (N*M < 1) admits no
-    supervised agents at all and therefore cannot satisfy a_dev,1 >= 1.
-    """
-    return math.floor(N * M)
 
 
 def net_capacity(H_capacity: float, c_comm: float, N: float) -> float:
@@ -79,7 +70,7 @@ def net_capacity(H_capacity: float, c_comm: float, N: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class TeamConfiguration:
-    """Configuration tuple (N, M, A_dev, R, F_freeze, A_qa) fixed across replications.
+    """Configuration tuple (N, A_dev, R, F_freeze, A_qa) fixed across replications.
 
     A_dev = (a_1, ..., a_8) — development-phase composition, a_1 >= 1.
     A_qa  = (a_1, ..., a_8) — QA/stabilisation-phase composition.
@@ -88,10 +79,13 @@ class TeamConfiguration:
             refactoring during the feature-freeze window.
     N is a staffing level in full-time equivalents, not a headcount (paper §3.1),
     so it may be fractional: N = 0.25 is one developer investing a quarter of
-    their working time.  The span-of-control bound sum <= floor(N*M) applies to
-    the *supervised* roles only (see SUPERVISED_ROLE_INDICES); the two background
-    detection services (a_5, a_6) are unbounded, since their only brake is their
-    token cost weighed against concave detection returns.
+    their working time.  How many *supervised* roles (see SUPERVISED_ROLE_INDICES)
+    a staffing level can carry is not a structural property of the configuration:
+    it follows from the human-capacity condition of §3.6, Eq. (feas_monitoring),
+    which needs the scenario parameters and is therefore checked by
+    `src.feasibility`, not here.  The two background detection services (a_5, a_6)
+    are unbounded, since their only brake is their token cost weighed against
+    concave detection returns.
     F_freeze — number of sprints at the end of each release cycle in which the
             team uses A_qa instead of A_dev.  Sprints satisfying
             (t % R) >= (R - F_freeze) are "frozen".  Range: [0, R-1].
@@ -99,7 +93,6 @@ class TeamConfiguration:
     """
 
     N: float                            # Human staffing level in FTE
-    M: int                              # Span of control (agents per FTE)
     A_dev: tuple[int, ...]              # Dev-phase composition, length == AGENT_ROLE_COUNT
     R: int                              # Release cadence (sprints)
     F_freeze: int = 1                   # QA-phase length per release cycle, in [0, R-1]
@@ -112,23 +105,14 @@ class TeamConfiguration:
 
         if self.N <= 0:
             raise ValueError(f"N must be > 0, got {self.N}")
-        if self.M < 1:
-            raise ValueError(f"M must be >= 1, got {self.M}")
         if self.R < 1:
             raise ValueError(f"R must be >= 1, got {self.R}")
-
-        budget = supervision_budget(self.N, self.M)
 
         # Validate development composition A_dev
         if len(self.A_dev) != AGENT_ROLE_COUNT:
             raise ValueError(f"A_dev must have length {AGENT_ROLE_COUNT}, got {len(self.A_dev)}")
         if any(a < 0 for a in self.A_dev):
             raise ValueError(f"A_dev entries must be >= 0, got {self.A_dev}")
-        if supervised_agent_count(self.A_dev) > budget:
-            raise ValueError(
-                f"supervised agents in A_dev must be <= floor(N*M) = {budget}, "
-                f"got {supervised_agent_count(self.A_dev)}"
-            )
         if self.A_dev[0] < 1:
             raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
 
@@ -145,11 +129,6 @@ class TeamConfiguration:
             )
         if any(a < 0 for a in self.A_qa):  # type: ignore[union-attr]
             raise ValueError(f"A_qa entries must be >= 0, got {self.A_qa}")
-        if supervised_agent_count(self.A_qa) > budget:  # type: ignore[arg-type]
-            raise ValueError(
-                f"supervised agents in A_qa must be <= floor(N*M) = {budget}, "
-                f"got {supervised_agent_count(self.A_qa)}"  # type: ignore[arg-type]
-            )
         if self.F_freeze > 0:
             if self.A_qa[0] != 0:  # type: ignore[index]
                 raise ValueError(
@@ -189,7 +168,6 @@ class SearchConfiguration:
     horizon_path: str
     strategy: str                           # "random" or "evolutionary"
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
-    M_max: int
     R_values: tuple[int, ...]
     F_freeze_values: tuple[int, ...] = (1,)
     sigma: float = 2.0                      # throughput-saturation headroom factor (§3.13.1)
@@ -215,8 +193,6 @@ class SearchConfiguration:
             raise ValueError("N_values must be non-empty")
         if any(n <= 0 for n in self.N_values):
             raise ValueError(f"N_values must all be > 0, got {self.N_values}")
-        if self.M_max < 1:
-            raise ValueError(f"M_max must be >= 1, got {self.M_max}")
         if self.sigma < 1:
             raise ValueError(f"sigma must be >= 1, got {self.sigma}")
         if not self.R_values:

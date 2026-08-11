@@ -41,14 +41,14 @@ src/                    Python simulation package
 
 config/
     horizon_default.json      Monte Carlo protocol of §4.2: T=104, K=100, master_seed=42
-    team_default.json         default team configuration (N, M, R, F_freeze, A_dev, A_qa)
+    team_default.json         default team configuration (N, R, F_freeze, A_dev, A_qa)
     human_{low,medium,high}.json      scenario group: human developers (§4.1)
     project_{low,medium,high}.json    scenario group: project dynamics
     debt_{low,medium,high}.json       scenario group: debt dynamics
     agent_{low,medium,high}.json      scenario group: agent costs and throughput
     bugimpact_{low,medium,high}.json  scenario group: bug impact
     search_default.json       search config template: §4.2 range (N in quarter-FTE steps,
-                              M_max, R, F_freeze, sigma) and budget, all groups medium
+                              R, F_freeze, sigma) and budget, all groups medium
     search/search_<id>.json   the 243 generated scenario searches (§4.2); id = h-l_p-m_d-h_a-l_b-m
     startstate_default.json   initial SystemState values (all-zero baseline)
 
@@ -58,11 +58,13 @@ scripts/
     analyze_results.py          the §5 results analysis: derived tables + figures
 run_experiments.sh      campaign driver: 486 searches in parallel, resumable (§4.2)
 
-tests/                  pytest suite (278 tests, ~60 s)
+tests/                  pytest suite (337 tests, ~50 s)
 results/                persisted sweep and campaign results (not committed).
-                        Anything under results/experiments predating the FTE change
-                        is stale: the model, the search range and the RNG config
-                        hash all moved, so the campaign needs a full re-run.
+                        Everything under results/experiments and results/analysis is
+                        stale as of the removal of the span-of-control variable M:
+                        the search space, the RNG config hash and the sample-key
+                        format (N2_M3_R4_00042 -> N2_R4_00042) all changed, on top of
+                        the earlier FTE change. The campaign needs a full re-run.
 ```
 
 ---
@@ -227,13 +229,13 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 
 ## Key Design Decisions
 
-- **Configuration has 6 control variables**: `(N, M, A_dev, A_qa, R, F_freeze)`. `N` = human staffing level, `M` = max agents per FTE (span of control), `R` = sprints per release, `F_freeze` = length of feature-freeze period before each release.
-- **`N` is a staffing level in FTE, not a headcount** (paper §3.1): `N ∈ ℝ_{>0}` and may be fractional — `N = 0.25` is one developer investing a day a week, the §4.2 range runs `{0.25, 0.50, …, 5.00}`. Two consequences, both in `src/config.py` so no module re-derives them: `supervision_budget(N, M) = ⌊N·M⌋` is the supervised-agent bound, and `net_capacity(H_capacity, c_comm, N) = H_capacity − c_comm·⌈N−1⌉` is the per-FTE budget after communication — the peer count follows the *headcount* `⌈N⌉`, since a half-time developer is still one person. `H_capacity` and `c_salary` are both per FTE. The float `N` is folded into `rng._config_hash` at 1/100 FTE resolution.
-- **Two 8-element composition vectors**: `A_dev` for development sprints and `A_qa` for feature-freeze (QA) sprints. Both must satisfy `n_sup ≤ ⌊N·M⌋`. `A_dev` requires `a_dev,1 ≥ 1` (at least one Feature Implementation Agent), which also rules out `N·M < 1`. `A_qa` requires `a_qa,1 = a_qa,2 = 0` (no Feature Implementation or Architecture agents during freeze).
+- **Configuration has 5 control variables**: `(N, A_dev, A_qa, R, F_freeze)`. `N` = human staffing level, `R` = sprints per release, `F_freeze` = length of feature-freeze period before each release. There is **no span-of-control variable `M`** — it was removed from the model; how many supervised agents a staffing level can carry follows from the human-capacity condition of §3.6 Eq. (feas_monitoring), not from a separate budget.
+- **`N` is a staffing level in FTE, not a headcount** (paper §3.1): `N ∈ ℝ_{>0}` and may be fractional — `N = 0.25` is one developer investing a day a week, the §4.2 range runs `{0.25, 0.50, …, 5.00}`. `net_capacity(H_capacity, c_comm, N) = H_capacity − c_comm·⌈N−1⌉` in `src/config.py` is the per-FTE budget after communication — the peer count follows the *headcount* `⌈N⌉`, since a half-time developer is still one person. `H_capacity` and `c_salary` are both per FTE. The float `N` is folded into `rng._config_hash` at 1/100 FTE resolution.
+- **Two 8-element composition vectors**: `A_dev` for development sprints and `A_qa` for feature-freeze (QA) sprints. Neither carries a structural cap on `n_sup` — `TeamConfiguration` deliberately does not check one, because the only collective limit needs the scenario parameters and therefore lives in `src/feasibility.py`. `A_dev` requires `a_dev,1 ≥ 1` (at least one Feature Implementation Agent). `A_qa` requires `a_qa,1 = a_qa,2 = 0` (no Feature Implementation or Architecture agents during freeze).
 - **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`.
-- **Supervised roles are additionally capped by throughput saturation** (§3.13.1): `search_configurations.saturation_bounds(params, sigma)` returns `u_k = ⌈σ·W_k/ρ_k⌉` per supervised role, where `W_k` is the steady-state work that reaches the role (all of it derived from `r_arrival`) and `ρ_k` the throughput one agent sustains, with the debt amplifier at its floor `delta_min`. `σ` (`SearchConfiguration.sigma`, default and §4.2 value 2) is the headroom for Poisson arrival peaks. Beyond `u_k` an agent simply has no work, so the search does not spend budget there. With the calibrated rates this bites hard: `u_k = 1` for every role in 18 of the 27 project×agent×debt combinations, `u_1 = 2` at the high project tier — so `⌊N·M⌋` and the feasibility gate are rarely the binding constraint any more.
-- **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` draws each supervised role independently and uniformly in `{0, …, u_k}` (`{1, …, u_1}` for the dev implementer) and/or mutates both vectors evolutionarily. Stars-and-bars composition sampling is gone — a draw is no longer built to fit the budget, it is *checked* against it.
-- **Feasibility pre-filter** runs before any simulation. Two rejection paths, both recorded and skipped: a draw whose `n_sup` overruns `⌊N·M⌋` (`failed_step = 0`), and the human-capacity condition of §3.3 Eq. monitoring (`failed_step = 1`). Both still **consume one evaluation of the search budget** (§4.2), in both strategies, so `n_evaluated` is the budget spend and `n_simulated` the realised simulation count — both are written to `manifest.json`. Rejected draws are reported, never silently redrawn.
+- **Supervised roles are additionally capped by throughput saturation** (§3.13.1): `search_configurations.saturation_bounds(params, sigma)` returns `u_k = ⌈σ·W_k/ρ_k⌉` per supervised role, where `W_k` is the steady-state work that reaches the role (all of it derived from `r_arrival`) and `ρ_k` the throughput one agent sustains, with the debt amplifier at its floor `delta_min`. `σ` (`SearchConfiguration.sigma`, default and §4.2 value 2) is the headroom for Poisson arrival peaks. Beyond `u_k` an agent simply has no work, so the search does not spend budget there. With the calibrated rates this bites hard: `u_k = 1` for every role in 18 of the 27 project×agent×debt combinations, `u_1 = 2` at the high project tier — so `u_k`, not the feasibility gate, is usually what keeps compositions small.
+- **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` draws each supervised role independently and uniformly in `{0, …, u_k}` (`{1, …, u_1}` for the dev implementer) and/or mutates both vectors evolutionarily. Stars-and-bars composition sampling is gone. Every draw is structurally valid by construction, so `_random_draws` returns `TeamConfiguration`s directly — there is no discarded-draw path in the sampler.
+- **Feasibility pre-filter** runs before any simulation. One rejection path, recorded and skipped: the human-capacity condition of §3.6 Eq. (feas_monitoring) (`failed_step = 1`). It still **consumes one evaluation of the search budget** (§4.2), in both strategies, so `n_evaluated` is the budget spend and `n_simulated` the realised simulation count — both are written to `manifest.json`. Rejected candidates are reported, never silently redrawn. (The old `failed_step = 0` budget-overrun path went away with `M`.)
 - **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
 - **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, giving 3^5 = 243 scenarios. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
@@ -245,9 +247,11 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
   Audit) are unbounded and reach counts of 77 on the front, so a stacked bar over all
   eight roles gives them ~77 % of its width and flattens the six supervised roles into
   nothing. `src/composition_analysis.py` therefore reports supervised roles as a **share
-  of `n_sup`** (the `N·M`-bounded budget, where the signal is: the Feature Implementation
-  share falls 0.81 → 0.26 from the cheapest to the priciest front quintile, which the
-  all-eight normalisation hides completely) and background roles as **absolute counts**.
+  of `n_sup`** (where the signal is: the Feature Implementation share falls 0.81 → 0.26
+  from the cheapest to the priciest front quintile, which the all-eight normalisation
+  hides completely) and background roles as **absolute counts**. The per-FTE monitoring
+  load is reported separately as `agents_per_fte = n_sup / N`, the quantity
+  Eq. (feas_monitoring) bounds (it replaced the M-derived `capacity_util`).
   Separately, every aggregate is averaged per `(scenario_id, strategy)` front *before*
   being averaged across fronts (`_front_mean`): front sizes span 13–1,190 points and
   evolutionary contributes ~10× the points of random, so a flat `groupby.mean()` would

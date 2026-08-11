@@ -51,7 +51,6 @@ def save_result(
     data = {
         "config": {
             "N": result.config.N,
-            "M": result.config.M,
             "A_dev": list(result.config.A_dev),
             "R": result.config.R,
             "F_freeze": result.config.F_freeze,
@@ -84,7 +83,7 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
         raise ValueError(f"A_dev has length {len(A_dev)}, expected {AGENT_ROLE_COUNT}")
     F_freeze = cfg.get("F_freeze", 1)
     A_qa = tuple(cfg["A_qa"]) if "A_qa" in cfg else None  # None → defaults to A_dev
-    config = TeamConfiguration(N=cfg["N"], M=cfg["M"], A_dev=A_dev, R=cfg["R"],
+    config = TeamConfiguration(N=cfg["N"], A_dev=A_dev, R=cfg["R"],
                                F_freeze=F_freeze, A_qa=A_qa)
 
     replications = tuple(
