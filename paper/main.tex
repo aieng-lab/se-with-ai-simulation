@@ -1113,9 +1113,7 @@ Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \em
 \subsection{Search Strategies for Pareto-Optimal Configurations}
 \label{sec:model:search}
 
-% TODO: Check if exhaustive search is possible
-
-Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible. The number combinations of unsupervised roles alone -- assuming we allow for up 99 review agents and 99 security audit agents -- is already $100^2 = 10\,000$. All additional factors -- the human staffing level, the release cadence, the feature-freeze length, and the separate development and QA compositions -- multiply this number further making the overall computation infeasible. 
+Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible, because the counts of the two background services are unbounded (Section~\ref{sec:model:team}). Even under an arbitrary cap of 99 agents per service, the four background counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$, $a_{\mathrm{qa},5}$, and $a_{\mathrm{qa},6}$ alone already give $100^4 = 10^8$ combinations, which the human staffing level, the release cadence, the feature-freeze length, and the supervised parts of both compositions multiply further.
 
 We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configurations using two different approaches. Within both approaches, we first define a general search range for the parameters. \emph{Uniform random sampling} is our simple baseline strategy that randomly selects configurations uniformly from this search range. \emph{Evolutionary search} is a more sophisticated strategy that also starts with a uniform random sampling, but then looks for better configurations through evolutionary search.
 
