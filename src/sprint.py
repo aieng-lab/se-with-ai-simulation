@@ -34,6 +34,15 @@ if TYPE_CHECKING:
     from numpy.random import Generator
 
 
+#: Token cost of implementing one approved architecture proposal, in units of one
+#: feature implementation (paper §3.7, Table tab:work_units).  Implementing a proposal
+#: needs the same code-base-wide analysis that makes producing one five times as
+#: expensive as a feature (c_token,2 = 5 * c_token,1 across every tier of §4.1), so it
+#: is billed at five features.  It still consumes only one unit of the implementation
+#: agent's *capacity* in Eq. (arch_impl) — this factor is a cost weight, not a rate.
+ARCH_IMPL_COST_UNITS = 5.0
+
+
 @dataclass(frozen=True, slots=True)
 class SprintActions:
     """Work units completed by each agent role in one sprint, indexed k=1..8.
@@ -327,7 +336,8 @@ def step_sprint(
     # deployed instance per sprint (r_5 = r_6 = 1).  Roles 7-8 always produce their
     # full nominal output, so their bill is unchanged by the switch to usage.
     return SprintActions(units=(
-        float(impl_agents + arch_impl_done),   # k=1 features and proposals implemented
+        # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each
+        float(impl_agents + ARCH_IMPL_COST_UNITS * arch_impl_done),
         float(arch_chg_done),                  # k=2 change requests resolved
         float(fixes_agent),                    # k=3 bugs repaired by agents
         float(refactor_applied),               # k=4 technical debt removed

@@ -1007,7 +1007,10 @@ $r_5 = r_6 = 1$, which charges the investment into these roles as a flat subscri
 Agents are therefore charged for the work they actually performed, so that an agent that
 no work reaches incurs no cost. Let $u_k(t)$ denote the work role $k$ completed in sprint
 $t$, measured in the unit of that role's rate $r_k$ and read off the sprint transition as
-summarised in Table~\ref{tab:work_units}. This gives us the agent costs
+summarised in Table~\ref{tab:work_units}. Implementing an approved architecture proposal is
+billed as five feature implementations, since it requires the same code-base-wide analysis
+that makes an architecture proposal five times as expensive to produce (Section~\ref{sec:scenario:agentcosts}). This gives us the
+agent costs
 \begin{equation}
   C_\mathrm{agents} = \sum_{k=1}^{8} c_{\mathrm{token},k} \sum_{t=1}^{T} u_k(t).
   \label{eq:cost_agents}
@@ -1021,7 +1024,7 @@ summarised in Table~\ref{tab:work_units}. This gives us the agent costs
 \toprule
 $k$ & Role & $u_k(t)$ \\
 \midrule
-1 & Feature Impl.\ & $\mathrm{impl\_agents}(t) + \mathrm{arch\_impl}(t)$ \\[2pt]
+1 & Feature Impl.\ & $\mathrm{impl\_agents}(t) + 5\,\mathrm{arch\_impl}(t)$ \\[2pt]
 2 & Architecture & $\mathrm{arch\_chg\_done}(t)$ \\[2pt]
 3 & Bug Fixing & $\mathrm{fixes\_agent}(t)$ \\[2pt]
 4 & Refactoring & technical debt actually removed by Eq.~\eqref{eq:debt_update}, bounded by $r_\mathrm{refactor}\,a_{\cdot,4}$ \\[2pt]
@@ -1345,6 +1348,7 @@ $\Gamma_\mathrm{doc}$  & 0.0  & 0.34  & 0.40  & \cite{dzidek2008uml, abdelsalam2
 \end{table}
 
 \subsubsection{Agent costs and throughput parameters}
+\label{sec:scenario:agentcosts}
 
 The agent cost parameters are summarized in Table~\ref{tab:scenario:agents}. While there is no direct scientific evidence for the exact costs per feature implementation, we assume that implementing a feature requires 100 tool calls, 2M cumulative input tokens, and 40K output tokens~\citep{morph2026aicodingcosts}. For bug fixes, we assume 25 tool calls, 400K cumulative input tokens, and 10K output tokens~\citep{morph2026aicodingcosts}. The costs for the other activities are grounded on these two costs:
 \begin{itemize}

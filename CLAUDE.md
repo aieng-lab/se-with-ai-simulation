@@ -264,7 +264,8 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
   structurally zero in QA, so QA panels show six roles, not eight.
 - **Agents are billed for the work they performed, not for being deployed**:
   `step_sprint` returns a `SprintActions` with the work each role completed that sprint,
-  measured in that role's own throughput unit (features for k=1, change requests for k=2,
+  measured in that role's own throughput unit (features for k=1, where an implemented
+  architecture proposal counts as `ARCH_IMPL_COST_UNITS = 5` features; change requests for k=2,
   bugs for k=3, debt for k=4, deployed instances for the flat-rate services k=5,6, tests
   for k=7, documents for k=8). `run_configuration` accumulates it over the horizon and
   `simulation.cost_components(config, params, T, actions)` returns

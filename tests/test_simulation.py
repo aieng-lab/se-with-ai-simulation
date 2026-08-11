@@ -169,6 +169,32 @@ class TestCostAccounting:
         assert rep.actions[4] == pytest.approx(config.A_dev[4] * s.T)
         assert rep.actions[6] == pytest.approx(params.r_test * config.A_dev[6] * s.T)
 
+    def test_architecture_implementation_bills_five_features(self, base_params):
+        """Table tab:work_units: u_1 counts a proposal as ARCH_IMPL_COST_UNITS features."""
+        from src.config import AGENT_ROLE_COUNT
+        from src.sprint import ARCH_IMPL_COST_UNITS, step_sprint
+        from src.state import SystemState
+        import numpy as np
+
+        # No arrivals and no backlog, so the implementation agent's only work is the
+        # queued architecture proposals; u_1 is then purely the arch_impl term.
+        params = dataclasses.replace(
+            base_params, r_arrival=0.0, f_arch_chg=0.0, delta_min=1.0,
+        )
+        config = TeamConfiguration(
+            N=2, A_dev=tuple(1 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
+            R=8, F_freeze=0,
+        )
+        state = SystemState(F_backlog=0, Q_arch_impl=3)
+        actions = step_sprint(0, state, config, params, np.random.default_rng(0))
+
+        # Capacity is floor(r_F * 1.0 * 1) = 3 with the fixture's r_F, so all three
+        # proposals are implemented this sprint and nothing else is.
+        implemented = 3 - state.Q_arch_impl
+        assert implemented == 3
+        assert actions.units[0] == pytest.approx(ARCH_IMPL_COST_UNITS * implemented)
+        assert ARCH_IMPL_COST_UNITS == 5.0
+
     def test_cost_split_sums_to_cost(self, base_config, base_params):
         params = dataclasses.replace(base_params, c_salary=120_000.0)
         s = SimulationHorizon(T=8, K=3, master_seed=11)
