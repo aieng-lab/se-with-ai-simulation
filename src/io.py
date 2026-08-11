@@ -178,7 +178,7 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
         strategy=s["strategy"],
         N_values=tuple(float(x) for x in s["N_values"]),
         R_values=tuple(int(x) for x in s["R_values"]),
-        F_freeze_values=tuple(int(x) for x in s.get("F_freeze_values", [1])),
+        F_freeze_values=tuple(int(x) for x in s.get("F_freeze_values", [0, 1])),
         sigma=float(s.get("sigma", 2.0)),
         n_samples=int(s.get("n_samples", 500)),
         n_samples_initial=int(s.get("n_samples_initial", 100)),

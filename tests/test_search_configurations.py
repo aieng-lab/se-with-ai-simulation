@@ -57,7 +57,7 @@ def search_cfg():
         strategy="random",
         N_values=(1.0, 2.0, 3.0),
         R_values=(2, 4),
-        F_freeze_values=(1, 2),
+        F_freeze_values=(0, 1, 2),
         n_samples=50,
         seed=7,
     )

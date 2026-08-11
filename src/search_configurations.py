@@ -58,7 +58,7 @@ _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
 
 
 def saturation_bounds(params, sigma: float) -> dict[int, int]:
-    """Per-role upper bounds u_k of paper §3.13.1, Eq. (sat_bound), by 0-based index.
+    """Per-role upper bounds u_k of paper §3.11.1, Eq. (sat_bound), by 0-based index.
 
     Every supervised role is fed by work that ultimately derives from the feature
     arrival rate, so deploying more agents than the inflow can keep busy buys
@@ -68,7 +68,8 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
     permissive case.  `sigma >= 1` is the headroom factor that still lets the search
     over-allocate against the Poisson peaks of the arrival process.
 
-    The bound is at least 1 for every role, so a_dev,1 >= 1 always stays reachable.
+    Every workload is a positive multiple of r_arrival, so the ceiling is at least 1
+    for every role and a_dev,1 >= 1 stays reachable without an explicit floor.
     """
     if sigma < 1:
         raise ValueError(f"sigma must be >= 1, got {sigma}")
@@ -98,7 +99,7 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
             raise ValueError(
                 f"saturation rate rho for role index {idx} must be > 0, got {rate}"
             )
-        bounds[idx] = max(1, math.ceil(sigma * workload[idx] / rate))
+        bounds[idx] = math.ceil(sigma * workload[idx] / rate)
     return bounds
 
 
@@ -132,7 +133,7 @@ def _sample_supervised(
 ) -> dict[int, int]:
     """Draw each supervised role independently and uniformly within its bound u_k.
 
-    Paper §3.13.2, steps 3-4: a_k ~ U{0, ..., u_k}, except that the dev-phase
+    Paper §3.11.2, steps 3-4: a_k ~ U{0, ..., u_k}, except that the dev-phase
     Feature Implementation role (index 0) is drawn from U{1, ..., u_1} so that
     a_dev,1 >= 1 holds by construction.  The human-capacity condition is *not*
     enforced here — a draw that violates it is rejected by the feasibility gate.
@@ -181,7 +182,7 @@ def _mutate_composition(
     """Apply one elementary mutation to `A` in place.
 
     `mutable` are the supervised role indices that may be changed; each is capped by
-    its throughput saturation bound `bounds[i]` (paper §3.13.1).  The background
+    its throughput saturation bound `bounds[i]` (paper §3.11.1).  The background
     services are mutated by a separate +/-1 operation and are capped by nothing.
     With `min_impl`, index 0 (Feature Implementation) is protected from being drained
     to zero.
@@ -204,9 +205,13 @@ def _mutate_composition(
     elif op == 0 and donors and recipients:
         src = int(rng.choice(donors))
         A[src] -= 1
-        # Re-check the bound: the donor may have been the only role below it.
-        recipients = tuple(i for i in mutable if A[i] < bounds[i])
-        A[_pick(recipients, rng)] += 1
+        # Re-check the bound, excluding the donor: moving an agent to the role it came
+        # from is a no-op, and the donor is always below its bound after the decrement.
+        recipients = tuple(i for i in mutable if i != src and A[i] < bounds[i])
+        if recipients:
+            A[_pick(recipients, rng)] += 1
+        else:
+            A[src] += 1   # nothing else can receive; undo and let the caller retry
 
 
 def _mutate(
@@ -281,7 +286,7 @@ def _random_draws(
     construction, so the samplers never produce a configuration that has to be
     discarded here.  The only rejection path left is the human-capacity condition of
     Eq. (feas_monitoring), applied by the feasibility gate in `_evaluate`
-    (paper §3.13.2, step 6).
+    (paper §3.11.2, step 6).
     """
     bg_max = background_count_max(params)
     bounds = saturation_bounds(params, search_cfg.sigma)
@@ -294,8 +299,9 @@ def _random_draws(
         # bounded by neither u_k nor anything else.
         A_dev = _sample_dev_composition(rng, bounds, bg_max)
         A_qa = _sample_qa_composition(rng, bounds, bg_max)
-        # Sample F_freeze, clamped so it respects [0, R-1]
-        F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1] or [1]))
+        # Sample F_freeze, restricted to the admissible values for this R.  The list is
+        # never empty: SearchConfiguration requires 0 in F_freeze_values.
+        F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
         draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
                                        F_freeze=F_freeze, A_qa=A_qa))
     return draws
@@ -404,7 +410,7 @@ def _run_random_search(
     initial_state: SystemState | None = None,
     progress_every: int = 100,
 ) -> SearchOutcome:
-    """Uniform random search over the configuration space (paper §3.13.2)."""
+    """Uniform random search over the configuration space (paper §3.11.2)."""
     draws = _random_draws(search_cfg, rng, n_samples, params)
     outcome = SearchOutcome(manifest={}, aggs=[], results={})
     keep_samples = search_cfg.samples != "none"

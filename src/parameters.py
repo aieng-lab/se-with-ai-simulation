@@ -67,9 +67,11 @@ class ScenarioParameters:
     # r_refactor/1/1/r_test/r_doc for roles 1-8), not per sprint.
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Annual fully-loaded cost of one FTE
+    # Severity weights default to the medium bugimpact tier of paper §4.1
+    # (tab:scenario:bugimpact); every scenario file supplies them explicitly.
     omega_min: float = 1.0           # Quality objective weight for minor bugs
-    omega_maj: float = 3.0           # Quality objective weight for major bugs
-    omega_sec: float = 10.0          # Quality objective weight for security bugs
+    omega_maj: float = 2000.0        # Quality objective weight for major bugs
+    omega_sec: float = 6700.0        # Quality objective weight for security bugs
 
     def __post_init__(self) -> None:
         if len(self.c_token) != AGENT_ROLE_COUNT:

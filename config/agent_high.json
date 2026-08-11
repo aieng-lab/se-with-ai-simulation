@@ -12,7 +12,7 @@
     "d_CR": 0.89,
     "d_SA": 0.88,
     "d_test": 0.75,
-    "c_test_ceil": 0.52,
+    "c_test_ceil": 0.60,
     "alpha_size": 0.10,
     "rho_esc": 0.01
   }

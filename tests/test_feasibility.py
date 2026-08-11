@@ -70,3 +70,44 @@ class TestCommunicationOverheadUsesHeadcount:
         assert not report.feasible and report.failed_step == 1
         # One agent fewer leaves 7.6 h < 8 h and passes.
         assert check_feasibility(_cfg({1: 10, 3: 9}, N=2.5), p).feasible
+
+
+class TestQaCompositionIsChecked:
+    """Eq. (feas_monitoring) is applied to A_qa too, but only when it is ever used.
+
+    With F_freeze = 0 the QA vector is never applied, and the search leaves an
+    arbitrary unexercised composition in those rows, so checking it would reject
+    configurations on the strength of agents that are never deployed.
+    """
+
+    def _params(self, base_params):
+        from dataclasses import replace
+        return replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0,
+                       Gamma_doc=0.0)
+
+    def _pair(self, F_freeze):
+        """Lean A_dev (feasible) paired with a bloated A_qa (over the bound)."""
+        A_dev = [0] * AGENT_ROLE_COUNT
+        A_dev[0] = 2                       # 2 supervised over N=2 -> 2h < H_net
+        A_qa = [0] * AGENT_ROLE_COUNT
+        A_qa[2] = 12                       # 12 supervised over N=2 -> 12h > H_net
+        return TeamConfiguration(N=2, A_dev=tuple(A_dev), R=4,
+                                 F_freeze=F_freeze, A_qa=tuple(A_qa))
+
+    def test_bloated_qa_composition_is_rejected_when_a_freeze_exists(self, base_params):
+        report = check_feasibility(self._pair(F_freeze=1), self._params(base_params))
+        assert not report.feasible
+        assert report.failed_step == 1
+        assert "A_qa" in report.reason
+
+    def test_bloated_qa_composition_is_ignored_without_a_freeze(self, base_params):
+        assert check_feasibility(self._pair(F_freeze=0), self._params(base_params)).feasible
+
+    def test_dev_composition_is_still_checked(self, base_params):
+        """A_dev is checked regardless of F_freeze, and is named in the reason."""
+        A_dev = [0] * AGENT_ROLE_COUNT
+        A_dev[0] = 12
+        cfg = TeamConfiguration(N=2, A_dev=tuple(A_dev), R=4, F_freeze=0)
+        report = check_feasibility(cfg, self._params(base_params))
+        assert not report.feasible
+        assert "A_dev" in report.reason

@@ -169,8 +169,8 @@ class SearchConfiguration:
     strategy: str                           # "random" or "evolutionary"
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
     R_values: tuple[int, ...]
-    F_freeze_values: tuple[int, ...] = (1,)
-    sigma: float = 2.0                      # throughput-saturation headroom factor (§3.13.1)
+    F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
+    sigma: float = 2.0                      # throughput-saturation headroom factor (§3.11.1)
     n_samples: int = 500                    # random: total samples
     n_samples_initial: int = 100            # evolutionary: initial population
     n_generations: int = 15                 # evolutionary: generation count
@@ -199,6 +199,13 @@ class SearchConfiguration:
             raise ValueError("R_values must be non-empty")
         if not self.F_freeze_values:
             raise ValueError("F_freeze_values must be non-empty")
+        if 0 not in self.F_freeze_values:
+            # F_freeze is capped at R-1, so without 0 a drawn R=1 would leave no
+            # admissible freeze length at all.
+            raise ValueError(
+                f"F_freeze_values must contain 0 so that every R (in particular R=1) "
+                f"has an admissible feature-freeze length, got {self.F_freeze_values}"
+            )
         if self.n_samples < 1:
             raise ValueError(f"n_samples must be >= 1, got {self.n_samples}")
         if self.n_samples_initial < 1:

@@ -7,14 +7,17 @@ Within-sprint ordering:
   Step 4  Test suite update
   Step 5  Bug injection + detection (Test → CR → SA; all synchronous)
   Step 6  Architecture queue dynamics (Q_rev, Q_arch_impl, Q_arch)
-  Step 7  Escalation queue dynamics
-  Step 8  Bug fixing
+  Step 7  Bug fixing
+  Step 8  Escalation queue dynamics
   Step 9  General maintenance (technical debt + documentation update)
   Step 10 Release event
 
+Bug fixing precedes the escalation queue because the escalation arrival rate is
+driven by the agent work completed this sprint, which includes the agent-phase
+bug fixes (paper §3.6, Eq. qesc).
+
 Detection is unified: Code Review, Security Audit, and the Test suite all act
 within the same sprint as injection. There is no CI/CD latency buffer.
-Regression bugs bypass detection and go directly to the hidden stock (A6).
 """
 
 from __future__ import annotations
@@ -88,39 +91,46 @@ def step_sprint(
     doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
     H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
     # Monitoring overhead is proportional to actual supervised agents per FTE.
-    # The feasibility gate only guarantees this at doc_cov = 1, so H_after_mon can
-    # still be negative early in a run.
+    # The feasibility gate only guarantees a positive remainder at doc_cov = 1, so
+    # monitoring can still exhaust the budget early in a run; the clamp at 0 means
+    # such a sprint produces no productive human work (paper §3.6, Eq. hafter_mon)
+    # rather than a negative budget that would run the queues backwards.
     agents_per_fte = n_supervised / config.N
-    H_after_mon = H_net - agents_per_fte * H_mon_eff
+    H_after_mon = max(0.0, H_net - agents_per_fte * H_mon_eff)
 
     # Architecture reviews served this sprint (eq. rev_done, H_after_rev)
-    rev_done = min(int(H_after_mon * config.N / params.H_review_time), state.Q_rev)
+    rev_done = min(math.floor(H_after_mon * config.N / params.H_review_time), state.Q_rev)
     H_after_rev = H_after_mon - rev_done * params.H_review_time / config.N
 
     # Escalations served this sprint (eq. esc_done, H_after_esc)
-    esc_done = min(int(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
+    esc_done = min(math.floor(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
     H_after_esc = H_after_rev - esc_done * params.H_escalation_time / config.N
 
     # f_fix fraction of H_after_esc goes to bug fixing; (1-f_fix) to feature coding.
     # During feature freeze, the coding fraction is redirected to bug fixing as well.
     H_fix_human = H_after_esc if is_frozen else params.f_fix * H_after_esc
-    fix_human_budget = int(H_fix_human * config.N / params.h_fix)
-    impl_human = 0 if is_frozen else int((1.0 - params.f_fix) * H_after_esc * config.N / params.h_feature)
+    fix_human_budget = math.floor(H_fix_human * config.N / params.h_fix)
+    impl_human = 0 if is_frozen else math.floor(
+        (1.0 - params.f_fix) * H_after_esc * config.N / params.h_feature
+    )
 
     # ------------------------------------------------------------------
     # Feature arrival and implementation
     # ------------------------------------------------------------------
     arrivals = int(rng.poisson(params.r_arrival))
-    a_3 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
-    total_impl_cap = int(params.r_F * delta_D * a_3)
+    a_1 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
+    total_impl_cap = int(params.r_F * delta_D * a_1)
     # Approved architecture proposals are implemented first (priority over backlog).
     # arch_impl_done consumes agent capacity but does NOT count toward F_completed.
     arch_impl_done = min(state.Q_arch_impl, total_impl_cap)
-    impl_agents = min(
-        state.F_backlog + arrivals,
-        total_impl_cap - arch_impl_done,
-    )
-    impl = min(impl_agents + impl_human, state.F_backlog + arrivals)
+    # Demand is served by the humans first; the agents fill whatever is left. Capping
+    # each stream at the residual backlog (rather than capping only their sum) keeps
+    # impl_agents + impl_human == impl, so the two bug-injection streams of Step 5
+    # cannot inject defects for features that were never implemented.
+    demand = state.F_backlog + arrivals
+    impl_human = min(impl_human, demand)
+    impl_agents = min(demand - impl_human, total_impl_cap - arch_impl_done)
+    impl = impl_agents + impl_human
     state.F_backlog = max(0, state.F_backlog + arrivals - impl)
     state.F_completed += impl
 
@@ -197,20 +207,12 @@ def step_sprint(
     state.Q_arch_impl = max(0, state.Q_arch_impl + rev_done - arch_impl_done)
 
     # ------------------------------------------------------------------
-    # Escalation queue update
-    # ------------------------------------------------------------------
-    # Background detection services file findings rather than escalating to humans,
-    # so only the supervised agents generate escalations.
-    esc_new = int(rng.poisson(n_supervised * params.rho_esc))
-    state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
-
-    # ------------------------------------------------------------------
     # Bug fixing — strict priority: sec > maj > min; rel > kno
     # Both phases spend a count budget of bugs, one unit per fix regardless of
     # severity. Humans fix first (debt-independent budget), then agents (budget
     # scaled by headcount and slowed by debt).
     # ------------------------------------------------------------------
-    a_4 = A_active[2]   # Bug Fixing Agent (k=3, index 2)
+    a_3 = A_active[2]   # Bug Fixing Agent (k=3, index 2)
 
     def _drain_count(queue: int, budget: int) -> int:
         """Fix as many bugs as the count budget allows; return fixes."""
@@ -226,7 +228,7 @@ def step_sprint(
     h_fixes_min     = _drain_count(state.B_kno_min, hb); hb -= h_fixes_min;     state.B_kno_min -= h_fixes_min
 
     # Agent fixes (debt-slowed count budget, drain remaining queues)
-    ab = int(a_4 * delta_D * params.r_fix)
+    ab = int(a_3 * delta_D * params.r_fix)
     rel_fixes_sec = _drain_count(state.B_rel_sec, ab); ab -= rel_fixes_sec; state.B_rel_sec -= rel_fixes_sec
     fixes_sec     = _drain_count(state.B_kno_sec, ab); ab -= fixes_sec;     state.B_kno_sec -= fixes_sec
     rel_fixes_maj = _drain_count(state.B_rel_maj, ab); ab -= rel_fixes_maj; state.B_rel_maj -= rel_fixes_maj
@@ -234,10 +236,29 @@ def step_sprint(
     rel_fixes_min = _drain_count(state.B_rel_min, ab); ab -= rel_fixes_min; state.B_rel_min -= rel_fixes_min
     fixes_min     = _drain_count(state.B_kno_min, ab); ab -= fixes_min;     state.B_kno_min -= fixes_min
 
+    # The agent-phase total is tracked separately from total_fixes: escalations are
+    # raised by agents, so only agent work feeds the escalation rate below, whereas
+    # the debt update below that is driven by all repairs regardless of who made them.
+    fixes_agent = (rel_fixes_min + rel_fixes_maj + rel_fixes_sec
+                 + fixes_min     + fixes_maj     + fixes_sec)
     total_fixes = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
                  + h_fixes_min    + h_fixes_maj    + h_fixes_sec
-                 + rel_fixes_min  + rel_fixes_maj  + rel_fixes_sec
-                 + fixes_min      + fixes_maj      + fixes_sec)
+                 + fixes_agent)
+
+    # ------------------------------------------------------------------
+    # Escalation queue update
+    # ------------------------------------------------------------------
+    # Escalations arrive per completed *agent* work item, not per deployed agent:
+    # rho_esc is a per-task escalation probability.  Only the roles whose throughput
+    # is denominated in comparable task units enter W_agent — the refactoring, test
+    # and documentation rates are in index units and would swamp the sum.  Human work
+    # is excluded because a developer does not escalate to themselves, and the
+    # background detection services (k=5,6) file findings rather than escalating.
+    # The (2 - delta_D) factor makes debt increase the escalation rate, matching the
+    # convention of r_bugs_eff above.
+    W_agent = impl_agents + arch_chg_done + fixes_agent
+    esc_new = int(rng.poisson(params.rho_esc * (2.0 - delta_D) * W_agent))
+    state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
 
     # ------------------------------------------------------------------
     # Technical debt and documentation update (General Maintenance)

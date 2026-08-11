@@ -19,7 +19,7 @@ paper/
 src/                    Python simulation package
     config.py           TeamConfiguration, SimulationHorizon, SearchConfiguration, SCENARIO_GROUPS
     parameters.py       ScenarioParameters (36 fields)
-    state.py            SystemState, LatencyBuffer
+    state.py            SystemState
     rng.py              reproducible PCG-64 seeding (FNV-1a config hash)
     io.py               load_simulation_horizon / load_team_config / load_scenario_params
                         / load_search_config / load_initial_state

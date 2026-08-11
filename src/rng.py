@@ -30,8 +30,9 @@ def _config_hash(config: "TeamConfiguration") -> int:
 def replication_seed(master_seed: int, config: "TeamConfiguration", k: int):
     """Derive a SeedSequence for configuration `config`, replication index `k`.
 
-    Uses the configuration hash and replication index as the spawn_key, matching
-    FRAMEWORK §9.0's derivation scheme.
+    Uses the configuration hash and replication index as the spawn_key, so identical
+    configurations share a stream across scenarios (common random numbers) while
+    replications stay independent.
     """
     from numpy.random import SeedSequence
 
@@ -43,14 +44,3 @@ def generator_for(master_seed: int, config: "TeamConfiguration", k: int) -> "Gen
     from numpy.random import PCG64, Generator
 
     return Generator(PCG64(replication_seed(master_seed, config, k)))
-
-
-def sobol_seed_sequence(master_seed: int):
-    """Independent stream for §9.6 Sobol sampling.
-
-    Derived from the master seed but with a distinct spawn_key so that varying K
-    in the Monte Carlo sweep does not perturb Sobol draws.
-    """
-    from numpy.random import SeedSequence
-
-    return SeedSequence(master_seed, spawn_key=(0xDEAD_BEEF, 0))

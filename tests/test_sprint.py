@@ -367,3 +367,214 @@ class TestBackgroundServicesSkipOversight:
         a = _run_sprints(8, lean, params, np.random.default_rng(24), initial_backlog=100)
         b = _run_sprints(8, loaded, params, np.random.default_rng(24), initial_backlog=100)
         assert dataclasses.asdict(a) != dataclasses.asdict(b)
+
+
+class TestCapacityIsNeverNegative:
+    """A configuration can clear Eq. (feas_monitoring) and still be over-subscribed.
+
+    The gate holds only at doc_cov = 1, so before documentation accumulates the
+    monitoring load can exceed H_net.  H_after_mon is clamped at 0 (Eq. hafter_mon),
+    which must keep every derived budget non-negative — an unclamped budget used to
+    run the review, escalation and bug queues *backwards*.
+    """
+
+    def _oversubscribed(self, base_params):
+        """Feasible at doc_cov=1, over-subscribed at doc_cov=0."""
+        from dataclasses import replace
+        from src.config import AGENT_ROLE_COUNT
+        from src.feasibility import check_feasibility
+        p = replace(base_params, H_capacity=40.0, H_monitoring_overhead=2.5,
+                    Gamma_doc=0.4, c_comm=1.0)
+        A = [0] * AGENT_ROLE_COUNT
+        A[0], A[2], A[3], A[6], A[7] = 1, 1, 1, 1, 1
+        A[1] = 1
+        cfg = TeamConfiguration(N=0.25, A_dev=tuple(A), R=4, F_freeze=1,
+                                A_qa=(0, 0, 1, 1, 0, 0, 1, 1))
+        assert check_feasibility(cfg, p).feasible, "fixture must pass the gate"
+        # 6 supervised over 0.25 FTE at doc_cov=0 costs 60 h against H_net = 40 h.
+        assert net_capacity(p.H_capacity, p.c_comm, cfg.N) == 40.0
+        return cfg, p
+
+    def test_queues_never_run_backwards(self, base_params):
+        cfg, p = self._oversubscribed(base_params)
+        rng = np.random.default_rng(11)
+        state = SystemState(F_backlog=5)
+        for t in range(30):
+            before = dataclasses.replace(state)
+            step_sprint(t, state, cfg, p, rng)
+            # Bug queues may only grow via injection (step 5) or release (step 10);
+            # a negative human fix budget used to grow them here instead.
+            for q in ("B_rel_min", "B_rel_maj", "B_rel_sec"):
+                released = (t + 1) % cfg.R == 0
+                if not released:
+                    assert getattr(state, q) <= getattr(before, q), (
+                        f"{q} grew outside a release at t={t}"
+                    )
+            for q in ("F_backlog", "F_completed", "Q_rev", "Q_arch", "Q_arch_impl",
+                      "Q_esc", "N_test", "N_doc"):
+                assert getattr(state, q) >= 0, f"{q} negative at t={t}"
+
+    def test_completed_features_are_monotone(self, base_params):
+        """A negative impl_human used to be able to decrement F_completed."""
+        cfg, p = self._oversubscribed(base_params)
+        rng = np.random.default_rng(12)
+        state = SystemState(F_backlog=5)
+        prev = 0
+        for t in range(30):
+            step_sprint(t, state, cfg, p, rng)
+            assert state.F_completed >= prev
+            prev = state.F_completed
+
+
+class TestImplementationIsCappedByDemand:
+    """impl_agents + impl_human == impl (Eq. impl), so no bugs are injected for
+    features that were never implemented."""
+
+    def test_human_capacity_far_beyond_the_backlog(self, base_config, base_params):
+        """Cheap features + lots of humans: capacity dwarfs the tiny arrival stream."""
+        from dataclasses import replace
+        p = replace(base_params, h_feature=0.1, h_fix=0.1, f_fix=0.5,
+                    r_arrival=1.0, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=5, A_dev=base_config.A_dev, R=4,
+                                F_freeze=0, A_qa=base_config.A_qa)
+        rng = np.random.default_rng(13)
+        state = SystemState(F_backlog=0)
+        for t in range(25):
+            before_backlog = state.F_backlog
+            before_completed = state.F_completed
+            step_sprint(t, state, cfg, p, rng)
+            implemented = state.F_completed - before_completed
+            arrived = state.F_backlog - before_backlog + implemented
+            # Everything that arrived (plus the carried backlog) is implementable,
+            # and nothing beyond it can be claimed.
+            assert implemented <= before_backlog + arrived
+            assert state.F_backlog >= 0
+
+    def test_backlog_never_goes_negative_with_huge_agent_capacity(self, base_params):
+        from dataclasses import replace
+        from src.config import AGENT_ROLE_COUNT
+        p = replace(base_params, r_F=1000.0, r_arrival=1.0, h_feature=0.1,
+                    Gamma_doc=0.0)
+        A = [0] * AGENT_ROLE_COUNT
+        A[0] = 3
+        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=2, F_freeze=0)
+        rng = np.random.default_rng(14)
+        state = SystemState(F_backlog=2)
+        for t in range(20):
+            step_sprint(t, state, cfg, p, rng)
+            assert state.F_backlog >= 0
+
+
+class TestEscalationsScaleWithAgentWork:
+    """Eq. (qesc): esc_new ~ Poisson(rho_esc * (2 - delta_D) * W_agent), where
+    W_agent is the agent work completed this sprint, not the deployed headcount."""
+
+    def _cfg(self, n_impl=1, n_fix=0):
+        from src.config import AGENT_ROLE_COUNT
+        A = [0] * AGENT_ROLE_COUNT
+        A[0] = max(1, n_impl)
+        A[2] = n_fix
+        return TeamConfiguration(N=3, A_dev=tuple(A), R=8, F_freeze=0)
+
+    def test_no_agent_work_means_no_escalations(self, base_params):
+        """Idle agents raise nothing: with an empty backlog and no arrivals,
+        W_agent is zero however many agents are deployed."""
+        from dataclasses import replace
+        p = replace(base_params, r_arrival=0.0, f_arch_chg=0.0, rho_esc=0.9,
+                    r_bugs=0.0, Gamma_doc=0.0)
+        cfg = self._cfg(n_impl=5, n_fix=5)
+        rng = np.random.default_rng(15)
+        state = SystemState(F_backlog=0)
+        for t in range(30):
+            step_sprint(t, state, cfg, p, rng)
+        assert state.Q_esc == 0
+
+    def test_escalations_grow_with_the_arrival_rate(self, base_params):
+        """More work through the same team means more escalations."""
+        from dataclasses import replace
+
+        def total_escalations(r_arrival):
+            p = replace(base_params, r_arrival=r_arrival, rho_esc=0.5,
+                        f_arch_chg=0.0, r_bugs=0.0, H_escalation_time=1e6,
+                        Gamma_doc=0.0)
+            cfg = self._cfg(n_impl=1)
+            rng = np.random.default_rng(16)
+            state = SystemState(F_backlog=0)
+            for t in range(40):
+                step_sprint(t, state, cfg, p, rng)
+            return state.Q_esc   # esc_done is pinned to 0 by the huge esc_time
+
+        assert total_escalations(20.0) > total_escalations(2.0)
+
+    def test_debt_amplifies_the_escalation_rate(self, base_params):
+        """The (2 - delta_D) factor of Eq. (qesc).
+
+        Tested on the Poisson rate directly rather than on Q_esc: debt also throttles
+        throughput (so W_agent shrinks) and a growing Q_esc feeds back into D_esc, so
+        an end-state comparison would measure three coupled effects at once.  Agent
+        capacity is set far above demand so W_agent is identical in both runs.
+        """
+        from dataclasses import replace
+        from src.config import AGENT_ROLE_COUNT
+
+        class _RecordingRng:
+            """Delegates to a real Generator, recording every Poisson rate."""
+
+            def __init__(self, seed):
+                self._rng = np.random.default_rng(seed)
+                self.poisson_lams = []
+
+            def poisson(self, lam):
+                self.poisson_lams.append(lam)
+                return self._rng.poisson(lam)
+
+            def binomial(self, n, p):
+                return self._rng.binomial(n, p)
+
+        def escalation_rates(D_tech):
+            # r_F far above the arrival rate, so impl_agents saturates demand at both
+            # debt levels; no architecture work and no bugs, so W_agent == impl_agents.
+            p = replace(base_params, r_arrival=10.0, rho_esc=0.5, f_arch_chg=0.0,
+                        r_bugs=0.0, delta_min=0.25, delta_exp=1.0, r_F=1000.0,
+                        r_refactor=0.0, delta_impl=0.0, delta_fix=0.0,
+                        Gamma_doc=0.0, h_feature=1e6)   # humans implement nothing
+            A = [0] * AGENT_ROLE_COUNT
+            A[0] = 1
+            cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=8, F_freeze=0)
+            rng = _RecordingRng(17)
+            state = SystemState(F_backlog=0, D_tech=D_tech)
+            for t in range(5):
+                step_sprint(t, state, cfg, p, rng)
+            # Per sprint the Poisson draws are: arrivals, agent bugs, human bugs,
+            # arch change requests, escalations.  Take the last of each group of five.
+            return rng.poisson_lams[4::5]
+
+        clean, indebted = escalation_rates(0.0), escalation_rates(1.0)
+        assert len(clean) == len(indebted) == 5
+        for c, d in zip(clean, indebted):
+            assert c > 0, "the clean run must actually be doing work"
+            # Same W_agent in both runs, so the amplifier alone drives the gap up.
+            assert d > c
+            # At D_tech = 1 the effective debt saturates, so delta_D is exactly
+            # delta_min = 0.25 and the rate is rho_esc * 1.75 * W_agent with W_agent
+            # a whole number of completed work items.
+            W_agent = d / (0.5 * 1.75)
+            assert W_agent == pytest.approx(round(W_agent))
+
+    def test_human_fixes_do_not_raise_escalations(self, base_params):
+        """W_agent counts agent work only — a developer does not escalate to themselves."""
+        from dataclasses import replace
+        from src.config import AGENT_ROLE_COUNT
+        p = replace(base_params, r_arrival=0.0, f_arch_chg=0.0, rho_esc=0.9,
+                    r_bugs=0.0, h_fix=0.1, f_fix=1.0, H_escalation_time=1e6,
+                    Gamma_doc=0.0)
+        A = [0] * AGENT_ROLE_COUNT
+        A[0] = 1
+        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=100, F_freeze=0)
+        rng = np.random.default_rng(18)
+        # Seed a large production bug queue that only humans can drain (no fix agents).
+        state = SystemState(F_backlog=0, B_rel_min=500)
+        for t in range(30):
+            step_sprint(t, state, cfg, p, rng)
+        assert state.B_rel_min < 500, "humans must actually be fixing bugs"
+        assert state.Q_esc == 0

@@ -208,10 +208,10 @@ queue. The work conducted by the Feature Implementation and Bug Fixing Agents in
 The \textit{Refactoring Agent} improves the internal quality of the system autonomously and reduces technical debt.
 From a conceptual perspective, the \textit{Architecture Agent} is responsible for high-stakes structural changes that require human review, while the \textit{Refactoring Agent} is responsible for low-stakes internal improvements that can be executed autonomously without review. 
 
-The detection roles (k = 5,\ldots,7) inspect
+The review roles (k = 5,6) inspect
 every code change synchronously in the same sprint as injection. The \textit{Code Review
-Agent} detects all kinds of defects but gets less effective if there is more code to review. The \textit{Security Audit Agent} can only detect security defects and allows the modeling of more expensive agents for this high-stakes role; it degrades with the review volume and with technical debt in the same way as the Code Review Agent. These two agents run autonously, i.e., the human developers do not need to supervise them and detected issues are automatically added to the bug queues. 
-The \textit{Test Development Agent} builds up a continuously growing test suite, which helps detect bugs.
+Agent} detects all kinds of defects but gets less effective if there is more code to review. The \textit{Security Audit Agent} can only detect security defects and allows the modeling of more expensive agents for this high-stakes role; it degrades with the review volume and with technical debt in the same way as the Code Review Agent. These two agents run autonomously, i.e., the human developers do not need to supervise them and detected issues are automatically added to the bug queues.
+The \textit{Test Development Agent} (k = 7) builds up a continuously growing test suite, which helps detect bugs.
 
 Finally, there is one \emph{support role} (k = 8): the \textit{Developer Documentation Agent} creates documentation to aid human developers, which in turn reduces the
 per-agent monitoring overhead that consumes human capacity by reducing the cognitive load
@@ -362,12 +362,12 @@ $F_\mathrm{completed}(t)$   & Cumulative features shipped            & $\mathbb{
 $B_\mathrm{hid,min}(t)$     & Hidden minor bugs in the current release cycle           & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
 $B_\mathrm{hid,maj}(t)$     & Hidden major bugs in the current release cycle          & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
 $B_\mathrm{hid,sec}(t)$     & Hidden security bugs in the current release cycle        & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
-$B_\mathrm{kno,min}(t)$     & Known minor bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
-$B_\mathrm{kno,maj}(t)$     & Known major bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$  & 5, 8, 10 \\[2pt]
-$B_\mathrm{kno,sec}(t)$     & Known security bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$ & 5, 8, 10 \\[2pt]
-$B_\mathrm{rel,min}(t)$     & Open in-production minor bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
-$B_\mathrm{rel,maj}(t)$     & Open in-production major bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
-$B_\mathrm{rel,sec}(t)$     & Open in-production security bugs requiring repair           & $\mathbb{N}_{\geq 0}$  & 8, 10 \\[2pt]
+$B_\mathrm{kno,min}(t)$     & Known minor bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$  & 5, 7, 10 \\[2pt]
+$B_\mathrm{kno,maj}(t)$     & Known major bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$  & 5, 7, 10 \\[2pt]
+$B_\mathrm{kno,sec}(t)$     & Known security bugs queued for repair in the current release cycle & $\mathbb{N}_{\geq 0}$ & 5, 7, 10 \\[2pt]
+$B_\mathrm{rel,min}(t)$     & Open in-production minor bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 7, 10 \\[2pt]
+$B_\mathrm{rel,maj}(t)$     & Open in-production major bugs requiring repair              & $\mathbb{N}_{\geq 0}$  & 7, 10 \\[2pt]
+$B_\mathrm{rel,sec}(t)$     & Open in-production security bugs requiring repair           & $\mathbb{N}_{\geq 0}$  & 7, 10 \\[2pt]
 $B_\mathrm{esc,min}(t)$     & Cumulative minor bugs escaped              & $\mathbb{N}_{\geq 0}$  & 10 \\[2pt]
 $B_\mathrm{esc,maj}(t)$     & Cumulative major bugs escaped               & $\mathbb{N}_{\geq 0}$  & 10 \\[2pt]
 $B_\mathrm{esc,sec}(t)$     & Cumulative security bugs escaped            & $\mathbb{N}_{\geq 0}$  & 10 \\[2pt]
@@ -376,7 +376,7 @@ $D_\mathrm{tech}(t)$                      & Technical debt level                
 $Q_\mathrm{rev}(t)$         & Architecture review queue length                                                              & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
 $Q_\mathrm{arch}(t)$        & Architecture change-request queue awaiting agent resolution  & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
 $Q_\mathrm{arch,impl}(t)$   & Approved architecture proposals awaiting implementation    & $\mathbb{N}_{\geq 0}$  & 6 \\[2pt]
-$Q_\mathrm{esc}(t)$         & Escalation queue length                     & $\mathbb{N}_{\geq 0}$  & 7 \\[2pt]
+$Q_\mathrm{esc}(t)$         & Escalation queue length                     & $\mathbb{N}_{\geq 0}$  & 8 \\[2pt]
 \midrule
 $N_\mathrm{test}(t)$        & Cumulative tests written     & $\mathbb{R}_{\geq 0}$  & 4 \\[2pt]
 $N_\mathrm{doc}(t)$         & Cumulative documentation items written; non-decreasing & $\mathbb{R}_{\geq 0}$  & 9 \\
@@ -402,7 +402,7 @@ The parameters codify the assumptions about the underlying software development 
 Symbol & Description & Domain & Step \\
 \midrule
 $H_\mathrm{capacity}$           & Gross time budget per FTE per sprint                                          & $\mathbb{R}_{>0}$     & 1 \\[2pt]
-$H_\mathrm{mon.overhead}$       & Monitoring hours consumed per supervised agent                       & $\mathbb{R}_{>0}$     & 1 \\[2pt]
+$H_\mathrm{mon,overhead}$       & Monitoring hours consumed per supervised agent                       & $\mathbb{R}_{>0}$     & 1 \\[2pt]
 $H_\mathrm{review\_time}$       & Hours consumed per architecture proposal reviewed                 & $\mathbb{R}_{>0}$     & 1 \\[2pt]
 $H_\mathrm{esc\_time}$          & Hours consumed per escalation handled                             & $\mathbb{R}_{>0}$     & 1 \\[2pt]
 $h_\mathrm{feature}$            & Human hours required to implement one feature                     & $\mathbb{R}_{>0}$     & 1 \\[2pt]
@@ -427,7 +427,7 @@ $r_\mathrm{arch,chg}$  & Architecture change requests resolved per Architecture 
 $r_\mathrm{refactor}$  & Debt reduction per Refactoring Agent per sprint        & $\mathbb{R}_{>0}$  & 9 \\[2pt]
 $r_\mathrm{test}$      & Tests written per agent per sprint                    & $\mathbb{R}_{>0}$  & 4 \\[2pt]
 $r_\mathrm{doc}$       & Documentation items written per agent per sprint    & $\mathbb{R}_{>0}$  & 9 \\[2pt]
-$r_\mathrm{fix}$       & Bugs fixed per Bug Fixing Agent per sprint            & $\mathbb{R}_{>0}$  & 8 \\
+$r_\mathrm{fix}$       & Bugs fixed per Bug Fixing Agent per sprint            & $\mathbb{R}_{>0}$  & 7 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -478,7 +478,7 @@ $\delta_\mathrm{exp}$           & Shape exponent of the debt amplifier $\delta_D
 $f_\mathrm{arch,chg}$  & Fraction of implemented features that generate an architecture change request & $[0,1]$            & 6 \\[2pt]
 $\delta_\mathrm{impl}$          & Additive debt increase per feature implemented        & $\mathbb{R}_{>0}$     & 9 \\[2pt]
 $\delta_\mathrm{fix}$           & Additive debt increase per bug repaired               & $\mathbb{R}_{\geq 0}$ & 9 \\[2pt]
-$\rho_\mathrm{esc}$             & Per-agent escalation arrival rate; Poisson rate                                     & $\mathbb{R}_{\geq 0}$ & 7 \\[2pt]
+$\rho_\mathrm{esc}$             & Escalation probability per completed agent work item                                     & $\mathbb{R}_{\geq 0}$ & 8 \\[2pt]
 $\Gamma_\mathrm{doc}$           & Maximum fractional reduction of monitoring overhead at full documentation coverage & $[0,1]$ & 1 \\
 \bottomrule
 \end{tabularx}
@@ -512,7 +512,6 @@ fixed dependency order.
 % TODO: Figure 3 -- data-flow diagram of the 10-step transition
 
 \subsubsection*{Step 1 --- Human Capacity Allocation}
-\label{sec:transition:prelim}
 
 The priority-ordered time budget of the developers is
 resolved as a five-stage cascade, each stage consuming time that is remaining from the previous stage. First, communication overhead between the developers reduces capacity to
@@ -526,14 +525,14 @@ the staffing level. $\lceil N \rceil$ is the smallest
 headcount that can supply $N$ FTE. Since $n_\mathrm{sup}(t)$ is the number of active supervised agents, each FTE supervises
 $\frac{n_\mathrm{sup}(t)}{N}$ agents, consuming $\frac{n_\mathrm{sup}(t)}{N} \cdot H_\mathrm{mon,eff}(t)$ hours of monitoring effort. The per-agent monitoring effort is reduced by the documentation coverage $\mathrm{doc\_cov}(t-1)$ (from the previous sprint) and the reduction is calibrated by $\Gamma_\mathrm{doc}$
 \begin{equation}
-  H_\mathrm{mon,eff}(t) = H_\mathrm{mon.overhead}\,
+  H_\mathrm{mon,eff}(t) = H_\mathrm{mon,overhead}\,
     \bigl(1 - \Gamma_\mathrm{doc}\,\mathrm{doc\_cov}(t-1)\bigr),
   \label{eq:hmoneff}
 \end{equation}
 leaving post-monitoring capacity
 \begin{equation}
-  H_\mathrm{after\_mon}(t) = H_\mathrm{net} -
-    \frac{n_\mathrm{sup}(t)}{N}\,H_\mathrm{mon,eff}(t).
+  H_\mathrm{after\_mon}(t) = \max\!\Bigl(0,\; H_\mathrm{net} -
+    \frac{n_\mathrm{sup}(t)}{N}\,H_\mathrm{mon,eff}(t)\Bigr).
   \label{eq:hafter_mon}
 \end{equation}
 We assume $\Gamma_\mathrm{doc} \leq 1$, so that documentation reduces, but never inverts, the monitoring effort.
@@ -585,11 +584,11 @@ all of $H_\mathrm{after\_esc}(t)$ is redirected to bug fixing:
 Both activities are debt-independent: $h_\mathrm{feature}$ and $h_\mathrm{fix}$ are fixed
 costs regardless of the current debt level $D_\mathrm{tech}(t-1)$. While not fully realistic, this assumption simplifies the model and assumes that human effort includes dealing with possibly existing debt-related complexity. 
 
-$H_\mathrm{after\_mon}(t)$ can be negative if monitoring overhead exceeds $H_\mathrm{net}$.
-Configurations for which this is unavoidable cannot perform any productive human work regardless of the scenario-parameter draws. We therefore define a feasibility criterion that is checked for the development composition $\mathbf{A}_\mathrm{dev}$ before running the simulation:
+$H_\mathrm{after\_mon}(t)$ is driven to zero if monitoring overhead exceeds $H_\mathrm{net}$.
+Configurations for which this is unavoidable cannot perform any productive human work regardless of the scenario-parameter draws. We therefore define a feasibility criterion that is checked before running the simulation for the development composition $\mathbf{A}_\mathrm{dev}$, and for the QA composition $\mathbf{A}_\mathrm{qa}$ when $F_\mathrm{freeze} \geq 1$:
 \begin{align}
   H_\mathrm{net} = H_\mathrm{capacity} - c_\mathrm{comm}\lceil N-1 \rceil &\geq 0 \\
-  \frac{\sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\mathrm{dev},k}}{N}\,H_\mathrm{mon.overhead}\,
+  \frac{\sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\cdot,k}}{N}\,H_\mathrm{mon,overhead}\,
     (1 - \Gamma_\mathrm{doc}) &< H_\mathrm{net}.
   \label{eq:feas_monitoring}
 \end{align}
@@ -637,7 +636,7 @@ The \emph{debt amplifier}
 is a single function of the combined debt, parameterised by a floor
 $\delta_\mathrm{min} \in (0,1)$ that describes the highest negative impact the debt can have and shape exponent $\delta_\mathrm{exp} > 0$ that controls the rate of decay.
 It equals~1 at zero combined debt and decays to $\delta_\mathrm{min}$ at
-$D_\mathrm{eff} = 1$. This debt multiplier will be used in subsequent steps to reduce feature implementation speed, increase bug injection, reduce code review quality, and increase the rate at which agents require escalations. 
+$D_\mathrm{eff} = 1$. This debt multiplier will be used in subsequent steps to reduce feature implementation speed, increase bug injection, reduce code review quality, slow bug fixing, and increase the rate at which agents require escalations.
 
 \subsubsection*{Step 3 --- Feature Arrival and Implementation}
 In every sprint, new features arrive to the backlog according to
@@ -649,12 +648,17 @@ growing the backlog at the beginning of the step. Because arrivals are added bef
 
 Available agent capacity is first consumed by approved architecture proposals
 $Q_\mathrm{arch,impl}(t-1)$ pending implementation, with remaining capacity applied
-to the feature backlog:
+to the feature backlog. Writing
+$\mathrm{demand}(t) = F_\mathrm{backlog}(t-1) + \mathrm{arrivals}(t)$ for the features
+available for implementation, the human developers are served first and the agents
+implement what remains. The rational for this is that the human salary has to be paid so their capacity should be used first.
 \begin{align}
   \mathrm{arch\_impl}(t) &= \min\!\Bigl(Q_\mathrm{arch,impl}(t-1),\;
     \bigl\lfloor r_F\,\delta_D\,a_1\bigr\rfloor\Bigr),
   \label{eq:arch_impl} \\
-  \mathrm{impl\_agents}(t) &= \min\!\Bigl(F_\mathrm{backlog}(t-1) + \mathrm{arrivals}(t),\;
+  \mathrm{impl\_human}'(t) &= \min\!\bigl(\mathrm{impl\_human}(t),\;\mathrm{demand}(t)\bigr),
+  \label{eq:impl_human_capped} \\
+  \mathrm{impl\_agents}(t) &= \min\!\Bigl(\mathrm{demand}(t) - \mathrm{impl\_human}'(t),\;
     \bigl\lfloor r_F\,\delta_D\,a_1\bigr\rfloor - \mathrm{arch\_impl}(t)\Bigr).
   \label{eq:impl_agents}
 \end{align}
@@ -664,8 +668,8 @@ architecture work rather than user-visible feature delivery. The feature impleme
 Total user-feature implementation per sprint is capped at the available backlog to
 prevent over-counting features:
 \begin{equation}
-  \mathrm{impl}(t) = \min\!\bigl(\mathrm{impl\_agents}(t) + \mathrm{impl\_human}(t),\;
-    F_\mathrm{backlog}(t-1) + \mathrm{arrivals}(t)\bigr),
+  \mathrm{impl}(t) = \mathrm{impl\_agents}(t) + \mathrm{impl\_human}'(t)
+    \;\leq\; \mathrm{demand}(t),
   \label{eq:impl}
 \end{equation}
 and the state variables are updated as:
@@ -704,7 +708,7 @@ then summed:
     \mathrm{Poisson}\!\bigl(\mathrm{impl\_agents}(t)\cdot r_\mathrm{bugs,eff}(t)\bigr),
     \nonumber \\
   B_\mathrm{human}(t)  &\sim
-    \mathrm{Poisson}\!\bigl(\mathrm{impl\_human}(t)\cdot r_\mathrm{bugs,eff}(t)
+    \mathrm{Poisson}\!\bigl(\mathrm{impl\_human}'(t)\cdot r_\mathrm{bugs,eff}(t)
       \cdot r_\mathrm{bugs,human}\bigr),
     \nonumber \\
   B_\mathrm{inj}(t)    &= B_\mathrm{agents}(t) + B_\mathrm{human}(t),
@@ -730,14 +734,14 @@ where $\theta_\mathrm{min} = 1 - \theta_\mathrm{maj} - \theta_\mathrm{sec}$.
 Detection proceeds in three sequential stages that model a workflow where first an existing test suite is run against code
 changes (simulating a CI pipeline), then code review is conducted, and finally a security audit is performed by a specialist agent. 
 
-The test suite detect bugs at rate
+The test suite detects bugs at rate
 \begin{equation}
   p_\mathrm{test}(t) = \min\!\bigl(1,\; d_\mathrm{test}\,\mathrm{cov\_test}(t)\bigr),
   \label{eq:p_test}
 \end{equation}
 where $\mathrm{cov\_test}(t)$ is given by Eq.~\eqref{eq:coverage}. 
 
-Within our model, we assume that both agents invest effort that is reasonable to review a single feature in depth. If more features need to be reviewed, the per-feature review effectiveness is reduced. We model this through a degradation function $\Phi$, which computes through the relation of the number of features and the number of agents. We use a logarithmic transformation, to model this as dimishing return:
+Within our model, we assume that both agents invest effort that is reasonable to review a single feature in depth. If more features need to be reviewed, the per-feature review effectiveness is reduced. We model this through a degradation function $\Phi$ of the number of features relative to the number of agents. We use a logarithmic transformation to model this as diminishing returns:
 \begin{equation}
   \Phi(v, a) =
   \begin{cases}
@@ -778,7 +782,7 @@ The known and hidden queues are incremented accordingly:
   B_\mathrm{hid,sec}(t) &= B_\mathrm{hid,sec}(t-1) + B_\mathrm{sec}(t) - T_\mathrm{sec}(t) - C_\mathrm{sec}(t) - A_\mathrm{sec}(t).
     \nonumber
 \end{align}
-Note that $B_\mathrm{kno,x}(t)$ is an intermediate value at this step, which will be decreased by the bug fixing conducted in Step~8. 
+Note that $B_\mathrm{kno,x}(t)$ is an intermediate value at this step, which will be decreased by the bug fixing conducted in Step~7. 
 
 \subsubsection*{Step 6 --- Architecture Queues}
 This step propagates architecture work through three queues $Q_\mathrm{arch}$, $Q_\mathrm{rev}$, and $Q_\mathrm{arch,impl}$ in causal order. First, we determine how many new architecture change requests are generated by the features implemented this sprint.
@@ -812,18 +816,7 @@ into the \emph{architecture implementation queue} $Q_\mathrm{arch,impl}$, enabli
   \label{eq:Q_arch_impl}
 \end{equation}
 
-\subsubsection*{Step 7 --- Escalation Queue}
-Each of the $n_\mathrm{sup}(t)$ deployed supervised agents raises a human escalation with per-agent rate
-$\rho_\mathrm{esc}$, so new arrivals each sprint are
-$\mathrm{esc\_new}(t) \sim \mathrm{Poisson}(n_\mathrm{sup}(t)\,\rho_\mathrm{esc})$. The queue is then updated taking
-the capacity for human escalation resolution $\mathrm{esc\_done}(t)$ into account:
-\begin{equation}
-  Q_\mathrm{esc}(t) = \max\!\bigl(0,\;
-    Q_\mathrm{esc}(t-1) + \mathrm{esc\_new}(t) - \mathrm{esc\_done}(t)\bigr),
-  \label{eq:qesc}
-\end{equation}
-
-\subsubsection*{Step 8 --- Bug Fixing}
+\subsubsection*{Step 7 --- Bug Fixing}
 Bug fixing proceeds in two phases using the same six priority tiers
 ($B_\mathrm{rel,sec} \to B_\mathrm{kno,sec} \to B_\mathrm{rel,maj} \to
 B_\mathrm{kno,maj} \to B_\mathrm{rel,min} \to B_\mathrm{kno,min}$):
@@ -874,6 +867,28 @@ queues are not written by any earlier step in this sprint.  The $B_\mathrm{kno,x
 rows use index $t$ as a reminder that their right-hand side values
 were already updated by Step~5.
 
+\subsubsection*{Step 8 --- Escalation Queue}
+Agents raise human escalations per completed work item at rate $\rho_\mathrm{esc}$.
+The work the supervised agents completed this sprint is
+\begin{equation}
+  W_\mathrm{agent}(t) = \mathrm{impl\_agents}(t) + \mathrm{arch\_chg\_done}(t)
+    + \mathrm{fixes\_agent}(t),
+  \label{eq:w_agent}
+\end{equation}
+where $\mathrm{fixes\_agent}(t) = \sum_{i=1}^{6} n^A_i(t)$ is the agent share of the
+repairs of Step~7. Human work is excluded, since a developer does not escalate to
+themselves, as are the two background services, which file findings rather than
+escalating. New arrivals each sprint are then
+$\mathrm{esc\_new}(t) \sim \mathrm{Poisson}\bigl(\rho_\mathrm{esc}\,(2-\delta_D)\,W_\mathrm{agent}(t)\bigr)$,
+where the factor $(2 - \delta_D)$ increases the escalation rate as debt accumulates, as
+it does for bug injection in Eq.~\eqref{eq:r_bugs_eff}. The queue is then updated taking
+the capacity for human escalation resolution $\mathrm{esc\_done}(t)$ into account:
+\begin{equation}
+  Q_\mathrm{esc}(t) = \max\!\bigl(0,\;
+    Q_\mathrm{esc}(t-1) + \mathrm{esc\_new}(t) - \mathrm{esc\_done}(t)\bigr),
+  \label{eq:qesc}
+\end{equation}
+
 \subsubsection*{Step 9 --- General Maintenance}
 Subsequent to the feature implementation, testing, and bug fixing steps, the general maintenance
 agents perform their work. They do not provide direct utilitarian value in the form of features delivered or bugs fixed, but instead provide indirect value by slowing the accumulation of technical debt and by improving the documentation, which reduces the cognitive load of the human developers when supervising agents.
@@ -891,7 +906,7 @@ bug fixing each \emph{increase} debt, while refactoring conducted by the Refacto
   \label{eq:debt_update}
 \end{split}
 \end{equation}
-where $\mathrm{fixes\_total}(t) = \sum_{i=1}^{6} n_i(t)$ is the total number of bugs fixed across all priority tiers in Step~8.
+where $\mathrm{fixes\_total}(t) = \sum_{i=1}^{6} n_i(t)$ is the total number of bugs fixed across all priority tiers in Step~7.
 
 The second activity is documentation written by the Developer Documentation Agent which grows the cumulative
 document count:
@@ -919,7 +934,7 @@ and to the in-production repair queue. Afterwards, the hidden and known queues a
   \label{eq:release_update}
 \end{align}
 The $B_\mathrm{rel,x}$ rows use the unindexed $t$ form on the right because the
-release queue was already updated by Step~8 (bug fixing) within this sprint;
+release queue was already updated by Step~7 (bug fixing) within this sprint;
 similarly $B_\mathrm{kno,x}(t)$ on the right is the post-fixing value from
 Steps~5 and~8. When $t \bmod R \neq 0$ no release fires and all updates are skipped.
 
@@ -978,11 +993,11 @@ The human personnel cost is the salary of the human developers. The parameter $c
 Each agent of role $k$ incurs a token cost $c_{\mathrm{token},k}$ per unit of
 work produced $r_k$, e.g., per feature added, bug fixed, or test written. Thus, the costs are
 computed with respect to throughput rates, rather than with a fixed rate per sprint.
-The rational for this is practical: if we would charge a flat per-sprint fee for each agent, 
+The rationale for this is practical: if we would charge a flat per-sprint fee for each agent, 
 this would either assume that the costs are the same, regardless of the throughput or we would
 need to model these costs as a function of the throughput. By modeling the costs, we decouple these
-two aspects and allow independent settings of throughout and costs. 
-We reusing the rates already introduced for the sprint
+two aspects and allow independent settings of throughput and costs. 
+We reuse the rates already introduced for the sprint
 transition function where feasible (Table~\ref{tab:params:pipeline}), i.e., $r_1 = r_F$,
 $r_2 = r_\mathrm{arch,chg}$, $r_3 = r_\mathrm{fix}$, $r_4 = r_\mathrm{refactor}$,
 $r_7 = r_\mathrm{test}$, and $r_8 = r_\mathrm{doc}$. The Code Review and Security Audit Agents ($k=5,6$) have no
@@ -1075,7 +1090,7 @@ Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \em
 % TODO: Check if exhaustive search is possible
 
 Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible. For a fixed staffing level $N$, the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} admits at most
-$B_\mathrm{sup} = \bigl\lceil N\,H_\mathrm{net}\,/\,\bigl(H_\mathrm{mon.overhead}(1-\Gamma_\mathrm{doc})\bigr)\bigr\rceil - 1$
+$B_\mathrm{sup} = \bigl\lceil N\,H_\mathrm{net}\,/\,\bigl(H_\mathrm{mon,overhead}(1-\Gamma_\mathrm{doc})\bigr)\bigr\rceil - 1$
 supervised agents, and the number of non-negative
 integer compositions of $B_\mathrm{sup}$ into the six supervised roles, $\binom{B_\mathrm{sup}+5}{5}$, is already
 $\approx\!53\,000$ for $B_\mathrm{sup} = 20$ and $\approx\!1.2$ million for $B_\mathrm{sup} = 40$.
@@ -1092,7 +1107,7 @@ release cadence $R \in \mathcal{R}$, and the feature-freeze length $F_\mathrm{fr
 The sets $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{freeze}$ are
 explicit finite sets. This allows both the definition of ranges and of non-contiguous values, e.g., $\mathcal{N} = \{0.5, 1, 2\}$.
 
-Once $N \in \mathcal{N}$ is fixed, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricture by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations \eqref{eq:impl_agents} and \eqref{eq:impl}. The architecture work, bug fixing, refactoring, test development, and documentation are also bounded by the inflow of work that reaches them (see EQs.~\eqref{eq:arch_chg_done}, \eqref{eq:r_bugs_eff}, \eqref{eq:debt_update}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). This gives us the following fixed-point upper bounds on the work that can reach each supervised role in one development sprint, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
+Once $N \in \mathcal{N}$ is fixed, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricted by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations~\eqref{eq:impl_agents} and \eqref{eq:impl}, the architecture work, bug fixing, refactoring, test development, and documentation are also bounded by the inflow of work that reaches them (see Eqs.~\eqref{eq:arch_chg_done}, \eqref{eq:r_bugs_eff}, \eqref{eq:debt_update}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). This gives us the following fixed-point upper bounds on the work that can reach each supervised role in one development sprint, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
 \begin{align}
   W_1 &= (1 + f_\mathrm{arch,chg})\,r_\mathrm{arrival}, &
   W_2 &= f_\mathrm{arch,chg}\,r_\mathrm{arrival}, \nonumber\\
@@ -1124,7 +1139,7 @@ This gives us constraints
   \qquad k \in \mathcal{K}_\mathrm{sup}.
   \label{eq:sat_bound}
 \end{equation}
-where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinuish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:mosp}, this defines the region that the search strategies explore:
+where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:mosp}, this defines the region that the search strategies explore:
 \begin{equation}
   \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{F} \;:\;
     a_{\mathrm{dev},k} \leq u_k \;\wedge\;
@@ -1225,7 +1240,7 @@ At the conclusion of the generation loop, the CI-aware Pareto frontier is comput
 \subsection{Scenarios}
 \label{sec:setup:scenarios}
 
-There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level developers, or seniors resulting in different capabilitites and salaries. 
+There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level developers, or seniors resulting in different capabilities and salaries. 
 Since the groups are orthogonal, we can freely combine all five groups into a diverse set of scenarios. 
 
 \subsubsection{Human developer parameters}
@@ -1233,13 +1248,13 @@ Since the groups are orthogonal, we can freely combine all five groups into a di
 The scenario parameters for human developers are summarized in Table~\ref{tab:scenario:human}.
 We assume that a full-time developer works a 40-hour week, i.e., $H_\mathrm{capacity}$ is stated per FTE and a staffing level of $N=0.25$ corresponds to a ten-hour week. We assume that the communication overhead is one hour per team member. We further assume that humans spend equal time bug fixing and implementing features within the time not required for other tasks. The salaries are estimated based on average salaries reported by Indeed~\citep{indeed2026salaries}. We round low, average and high salaries to the next \$50k, to account for the employer overhead costs.
 
-While there is no data yet on how much time developers require to monitor agents, early results indicate that there is a fairly low interruption frequency~\citep{baumann2026swechat}, so we set the monitoring overhead at a modest 2.5 hours per week, i.e., 30 minutes per day. The work capacity $H_\mathrm{capacity}$, the communication overhead $c_\mathrm{comm}$, the monitoring overhead $H_\mathrm{mon.overhead}$, and the bug-fixing share $f_\mathrm{fix}$ are independent of developer skill and are therefore the same across all three tiers. There are also no estimates yet how much time developers require to resolve an agent escalation. It is reasonable to assume that these are non-trivial problems that require developers to get involved with the code base, so we assume that the time required is similar to that required to implement a feature (estimate see below).
+While there is no data yet on how much time developers require to monitor agents, early results indicate that there is a fairly low interruption frequency~\citep{baumann2026swechat}, so we set the monitoring overhead at a modest 2.5 hours per week, i.e., 30 minutes per day. The work capacity $H_\mathrm{capacity}$, the communication overhead $c_\mathrm{comm}$, the monitoring overhead $H_\mathrm{mon,overhead}$, and the bug-fixing share $f_\mathrm{fix}$ are independent of developer skill and are therefore the same across all three tiers. There are also no estimates yet how much time developers require to resolve an agent escalation. It is reasonable to assume that these are non-trivial problems that require developers to get involved with the code base, so we assume that the time required is similar to that required to implement a feature (estimate see below).
 
 We use the review of architectural decision records (ADRs) to ground the architecture-review time within our model. Amazon estimates 10--15 minutes to read the document~\citep{amazonArchitecturalDecision}. The process is assumed to be iterative and done by multiple developers. Assuming that updating the ADR based on comments requires 45 minutes, one iteration would require 1 hour. With 4 iterations, this would require a total of 4 hours, which we use for the medium tier. We assume that less capable developers require twice as long and highly capable developers are twice as fast, resulting in 8 hours for the low tier, and 2 hours for the high tier.
 
 To have a comparable baseline for human effort, we assume the time required to solve SWE-bench Verified coding tasks, which are designed to be representative of real-world coding tasks by basing them on issues reported in open-source repositories~\citep{openai2026swebenchverified,jimenez2024swe}. We use METR's estimate for the human baseline of the time required to solve substantial issues within the 1--4 hour time bucket of the benchmark, which estimates the time at 2 hours~\citep{kwa2026measuringaiabilitycomplete}. Since this seems reasonable, we use this for the medium tier. We use the pattern that less capable developers require twice as long as the medium tier and highly capable developers are twice as fast, resulting in 4 hours for the low tier, and 1 hour for the high tier. Since METR found that the $<15$ minute time bucket underestimates the time required to solve tasks, we instead use the 15 to 60 minute time bucket to estimate the time required to fix bugs in a similar manner, i.e., 30 minutes for the medium tier, 60 minutes for the low tier, and 15 minutes for the high tier.
 
-As per our modeling assumptions, the rate that humans introduce bugs is based on the agentic bug introduction rate using a multiplicative factor, such that a value of 1 means equal behavior and values less than one mean that humans introduce fewer bugs than agents. \cite{coderabbit2025aicode} reports that AI introduces issues at 1.7 times the rate of humans. Since this number is at the time of writing one year, we use this model as baseline for the high tier, i.e., the most capable humans. Assuming progress by later models that improved performance in SWE-bench Verified (and other benchmarks). Since junior developers are frequently compared to AI agents~\cite{kumar2025ai}, we use a factor of 1 for the low tier. We use the mid-point, i.e., 1.35 for the medium tier. This results in a bug introduction rate factors of $\frac{1}{1.7}=0.58$ for the high tier, $\frac{1}{1.35}=0.74$ for the medium tier, and 1 for the low tier.
+As per our modeling assumptions, the rate that humans introduce bugs is based on the agentic bug introduction rate using a multiplicative factor, such that a value of 1 means equal behavior and values less than one mean that humans introduce fewer bugs than agents. \cite{coderabbit2025aicode} reports that AI introduces issues at 1.7 times the rate of humans. Since this number is one year old at the time of writing, we use it as the baseline for the high tier, i.e., the most capable humans, assuming progress by later models that improved performance in SWE-bench Verified and other benchmarks. Since junior developers are frequently compared to AI agents~\cite{kumar2025ai}, we use a factor of 1 for the low tier. We use the mid-point, i.e., 1.35 for the medium tier. This results in a bug introduction rate factors of $\frac{1}{1.7}=0.58$ for the high tier, $\frac{1}{1.35}=0.74$ for the medium tier, and 1 for the low tier.
 
 \begin{table}[t]
 \caption{Human developer parameters. Low represents a junior developer, medium a mid-level developer, and high a senior developer.}
@@ -1251,7 +1266,7 @@ Symbol & Low & Medium & High & Source \\
 \midrule
 $H_\mathrm{capacity}$         & 40.0 & 40.0 & 40.0 & One 40h work-week per FTE. \\[2pt]
 $c_\mathrm{comm}$             & 1.0  & 1.0  & 1.0  & Assumed. \\[2pt]
-$H_\mathrm{mon.overhead}$     & 2.5  & 2.5  & 2.5  & Assumed based on \cite{baumann2026swechat}. \\[2pt]
+$H_\mathrm{mon,overhead}$     & 2.5  & 2.5  & 2.5  & Assumed based on \cite{baumann2026swechat}. \\[2pt]
 $H_\mathrm{esc\_time}$        & 4.0  & 2.0  & 1.0  & Assumed to be similar to feature implementation time. \\[2pt]
 $H_\mathrm{review\_time}$     & 8.0  & 4.0  & 2.0  & Extrapolated from \cite{amazonArchitecturalDecision}. \\[2pt]
 $h_\mathrm{feature}$          & 4.0  & 2.0  & 1.0  & Based on SWE-bench Verified, 1--4h bucket \citep{openai2026swebenchverified,kwa2026measuringaiabilitycomplete}. \\[2pt]
@@ -1267,7 +1282,7 @@ $c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salari
 
 To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
 
-To understand how often issues affect architecture, we use data from \cite{shahbazian2018toward}, who used automated methods to determine whether the change triggered by an issue caused architectural changes. Depending on the method used, the proportion ranged from 13\% of issues to 26\% of issues. Since an automated approach was used, that possibly overestimates the differences based on purely structural changes, we therefore use the lower bound of 13\%. We derive the data for the distribution of the severity of bugs from data collected by \cite{ohira2015highimpact}. They distinguish between critical, blocker, and major issues (which we map to major bugs), and minor and trivial issues (which we map to minor bugs). Orthogonally, they determine which of these bugs are security related, which we use to infer the ratio of security bugs. We exclude one of the collected projects (Ambari) for the estimation of the ratio of major bugs, since it did not mark issues as minor.
+To understand how often issues affect architecture, we use data from \cite{shahbazian2018toward}, who used automated methods to determine whether the change triggered by an issue caused architectural changes. Depending on the method used, the proportion ranged from 13\% of issues to 26\% of issues. Since the automated approach possibly overestimates the proportion by counting purely structural changes, we use the lower bound of 13\%. We derive the data for the distribution of the severity of bugs from data collected by \cite{ohira2015highimpact}. They distinguish between critical, blocker, and major issues (which we map to major bugs), and minor and trivial issues (which we map to minor bugs). Orthogonally, they determine which of these bugs are security related, which we use to infer the ratio of security bugs. We exclude one of the collected projects (Ambari) for the estimation of the ratio of major bugs, since it did not mark issues as minor.
 These numbers are independent of the number of issues per week and therefore the same across all three tiers.
 
 \begin{table}[t]
@@ -1328,7 +1343,7 @@ We estimate the agentic bug introduction rate based on the SWE-bench Verified be
 
 We use CyberBench~\cite{liu2024cyberbench} to estimate the security bug detection rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for the detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that are not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude~5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026swebench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available; we therefore estimate that the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e., the SWE-bench scores reduced by 0.2.
 
-We use SWE-Review~\citep{wang2026swe} to estimate how good language models are at code review. Within this benchmark, Claude Opus 4.6 was able to correctly judge pull requests for between 75\% and 89\% of the cases. We use these as low and high tier respectively and use the mid-point 0.82 for the medium tier. To estimate the ceiling of what testing can achieve, we use research from \cite{SCHWARTZ2018106} as foundation: they fond that even for highly covered projects, 46\% of mutants could not be detected by the test suite. We use this a medium estimate, and assume that less capable agents are worse at testing, while more capable agents are better, resulting in a low tier of 40\% and a high tier of 52\%.
+We use SWE-Review~\citep{wang2026swe} to estimate how good language models are at code review. Within this benchmark, Claude Opus 4.6 was able to correctly judge pull requests for between 75\% and 89\% of the cases. We use these as low and high tier respectively and use the mid-point 0.82 for the medium tier. To estimate the ceiling of what testing can achieve, we use research from \cite{SCHWARTZ2018106} as foundation: they found that even for highly covered projects, 46\% of mutants could not be detected by the test suite, giving a ceiling of 0.54, which we use as the medium estimate. We assume that less capable agents are worse at testing, while more capable agents are better, resulting in a low tier of 48\% and a high tier of 60\%.
 
 Finally, we estimate the escalation rate based on telemetry data from \cite{baumann2026swechat}: in their study, the agents escalated between 1\% and 3\% of the time, which we use as the high and low tier respectively, since less capable agents are expected to escalate more often. We use the mid-point 0.02 for the medium tier.
 
@@ -1371,7 +1386,7 @@ Role & Parameter & Low & Medium & High & Source \\
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
   & $r_\mathrm{test}$      & 747  & 747  & 747  & Same as bug fixing \\
   & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
-  & $c_\mathrm{test,ceil}$ & 0.40  & 0.46  & 0.52  & \cite{SCHWARTZ2018106} \\
+  & $c_\mathrm{test,ceil}$ & 0.48  & 0.54  & 0.60  & \cite{SCHWARTZ2018106} \\
 \midrule
 \multirow{2}{2.4cm}{8 -- Dev.\ Documentation}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
@@ -1418,11 +1433,11 @@ $\omega_\mathrm{sec}$ &    480   &  6{,}700 & 480{,}000 & Breach/incident cost e
 
 \paragraph{Scenario grid.}
 Since we have five orthogonal aspects, each with three levels, we have a total of $3^5 = 243$ scenarios. We solve each of these problems twice, once with uniform random search and once with evolutionary search (Section~\ref{sec:model:search}), which yields 486 searches in total.
-All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two frontiers is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ an empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is choosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
+All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two frontiers is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
 
 The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range in quarter-FTE steps from a single developer investing one day per week up to a small five-person team. Larger teams do not make sense, since this is not supported by the feature arrival speed. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones.
 
-The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many supervised agents a staffing level can carry: with $H_\mathrm{mon.overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a full-time developer's net capacity at roughly 16, 24, and 27 supervised agents \emph{per FTE}, respectively.
+The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many supervised agents a staffing level can carry: with $H_\mathrm{mon,overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a full-time developer's net capacity at roughly 16, 24, and 27 supervised agents \emph{per FTE}, respectively.
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. 
 
