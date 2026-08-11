@@ -1110,13 +1110,7 @@ Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \em
 
 % TODO: Check if exhaustive search is possible
 
-Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible. For a fixed staffing level $N$, the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} admits at most
-$B_\mathrm{sup} = \bigl\lceil N\,H_\mathrm{net}\,/\,\bigl(H_\mathrm{mon,overhead}(1-\Gamma_\mathrm{doc})\bigr)\bigr\rceil - 1$
-supervised agents, and the number of non-negative
-integer compositions of $B_\mathrm{sup}$ into the six supervised roles, $\binom{B_\mathrm{sup}+5}{5}$, is already
-$\approx\!53\,000$ for $B_\mathrm{sup} = 20$ and $\approx\!1.2$ million for $B_\mathrm{sup} = 40$.
-Across all choices of $N$, $R$, $F_\mathrm{freeze}$, and separate development
-and QA compositions the space is several orders of magnitude larger still. Moreover, the counts of the two background detection services are not bounded by $B_\mathrm{sup}$ (Section~\ref{sec:model:team}), which makes the configuration space countably infinite, so exhaustive enumeration is ruled out by construction rather than merely being impractical.
+Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible. The number combinations of unsupervised roles alone -- assuming we allow for up 99 review agents and 99 security audit agents -- is already $100^2 = 10\,000$. All additional factors -- the human staffing level, the release cadence, the feature-freeze length, and the separate development and QA compositions -- multiply this number further making the overall computation infeasible. 
 
 We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configurations using two different approaches. Within both approaches, we first define a general search range for the parameters. \emph{Uniform random sampling} is our simple baseline strategy that randomly selects configurations uniformly from this search range. \emph{Evolutionary search} is a more sophisticated strategy that also starts with a uniform random sampling, but then looks for better configurations through evolutionary search.
 
