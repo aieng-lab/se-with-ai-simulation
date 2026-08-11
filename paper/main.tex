@@ -682,9 +682,12 @@ and the state variables are updated as:
 
 \subsubsection*{Step 4 --- Test Suite Update}
 The Test Development Agent grows the
-cumulative test count before bug detection runs:
+cumulative test count before bug detection runs, up to the coverage ceiling of
+Eq.~\eqref{eq:coverage}, beyond which further tests no longer raise
+$\mathrm{cov\_test}$:
 \begin{equation}
-  N_\mathrm{test}(t) = N_\mathrm{test}(t-1) + r_\mathrm{test}\,a_7.
+  N_\mathrm{test}(t) = \min\!\bigl(N_\mathrm{test}(t-1) + r_\mathrm{test}\,a_7,\;
+    c_\mathrm{test,ceil}\,F_\mathrm{completed}(t)\bigr).
   \label{eq:ntest_update}
 \end{equation}
 Because this step executes before bug injection and detection (Step~5), the new
@@ -909,9 +912,11 @@ bug fixing each \emph{increase} debt, while refactoring conducted by the Refacto
 where $\mathrm{fixes\_total}(t) = \sum_{i=1}^{6} n_i(t)$ is the total number of bugs fixed across all priority tiers in Step~7.
 
 The second activity is documentation written by the Developer Documentation Agent which grows the cumulative
-document count:
+document count, up to one document per completed feature, i.e., the point at which
+Eq.~\eqref{eq:doc_cov} is capped:
 \begin{equation}
-  N_\mathrm{doc}(t) = N_\mathrm{doc}(t-1) + r_\mathrm{doc}\,a_8.
+  N_\mathrm{doc}(t) = \min\!\bigl(N_\mathrm{doc}(t-1) + r_\mathrm{doc}\,a_8,\;
+    F_\mathrm{completed}(t)\bigr).
   \label{eq:ndoc_update}
 \end{equation}
 This increases the documentation coverage $\mathrm{doc\_cov}$ in the next
@@ -1030,8 +1035,8 @@ $k$ & Role & $u_k(t)$ \\
 4 & Refactoring & technical debt actually removed by Eq.~\eqref{eq:debt_update}, bounded by $r_\mathrm{refactor}\,a_{\cdot,4}$ \\[2pt]
 5 & Code Review & $a_{\cdot,5}$ \\[2pt]
 6 & Security Audit & $a_{\cdot,6}$ \\[2pt]
-7 & Test Development & $r_\mathrm{test}\,a_{\cdot,7}$ \\[2pt]
-8 & Dev.\ Documentation & $r_\mathrm{doc}\,a_{\cdot,8}$ \\
+7 & Test Development & $N_\mathrm{test}(t) - N_\mathrm{test}(t-1)$ \\[2pt]
+8 & Dev.\ Documentation & $N_\mathrm{doc}(t) - N_\mathrm{doc}(t-1)$ \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1320,7 +1325,8 @@ $\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact}. \\
 
 The debt dynamics parameters are summarized in Table~\ref{tab:scenario:debt}. There is a limited amount of literature on the impact of documentation and the studies are typically conducted with small sets of developers, limiting their ability to find significant effects. \cite{dzidek2008uml} found an increase in maintenance time of 40\% when no UML documentation was made available based on a group of 20 developers. In a recent eye tracking experiment using 12 (mostly junior) developers, \cite{abdelsalam2026comments} found an increase in program comprehension time of up to 34\% based on code comments, but this effect depended on the complexity of the code and comprehension time was even reduced for simpler code snippets. Based on these studies, we set the low tier to 0\% (no effect due to lack of significance of results), the medium tier to 34\% (the maximum effect found by \cite{abdelsalam2026comments}), and the high tier to 40\% (the effect found by \cite{dzidek2008uml}).
 
-We estimate the addition of technical debt based on data from \cite{he2026cursordebt}, who found that AI-assisted coding increases code complexity and static analysis warnings. We note that this is particular to AI-assisted development as the technical debt otherwise seems to be decreasing over time \cite{trautsch2020longitudinal}. Since the average treatment effect found that AI-assisted development leads to 28\% more lines, but 30\% more static analysis warnings, we assume that the debt increases by at least 2\% for every feature added. Since \cite{he2026cursordebt} also found that the complexity increases by 41\% due to the use of AI, we assume that the upper bound for the debt-increase is 13\% per feature added. We therefore set the low tier to 2\%, the medium tier to 6\% and the high tier to 13\% per feature added. Since \cite{trautsch2023automated} found that there is no detectable difference between the static analysis warnings added by bug fixing commits and other commits, we use the same values for the debt increase due to bug fixing.
+We estimate the addition of technical debt based on data from \cite{he2026cursordebt}, who found that AI-assisted coding increases code complexity and static analysis warnings. We note that this is particular to AI-assisted development as the technical debt otherwise seems to be decreasing over time \cite{trautsch2020longitudinal}. Since the average treatment effect found that AI-assisted development leads to 28\% more lines, but 30\% more static analysis warnings, we assume that the debt increases by at least 2\% for every feature added. Since \cite{he2026cursordebt} also found that the complexity increases by 41\% due to the use of AI, we assume that the upper bound for the debt-increase is 13\% per feature added. We therefore set the low tier to 2\%, the medium tier to 6\% and the high tier to 13\% per feature added. Since \cite{trautsch2023automated} found that there is no detectable difference between the static analysis warnings added by bug fixing commits and other commits, we use the same values for the debt increase due to bug fixing. 
+% We note that at the refactoring throughput $r_\mathrm{refactor}$ of Table~\ref{tab:scenario:agents} a single Refactoring Agent removes more debt per sprint than any of our scenarios accumulates, so $a_{\cdot,4} \geq 1$ holds $D_\mathrm{tech}$ at zero and $\delta_\mathrm{impl}$ and $\delta_\mathrm{fix}$ only bind while the role is unstaffed.
 
 We set the values for the debt amplifier floor $\delta_\mathrm{min}$, i.e., the fraction of the nominal throughput that is retained at maximal debt, based on a developer survey from \cite{besker2018technical}. They found that developers spend on average 23\% of their time dealing with technical debt with a standard deviation of 17\%. We interpret this share $s$ of lost time as the slow-down at maximal debt and hence set $\delta_\mathrm{min} = 1 - s$. We therefore set the low value at $0.94$ (i.e., a slow-down of 6\%, one standard deviation below the average), the medium value at $0.77$ (a slow-down of 23\%, the average), and the high value at $0.60$ (i.e., a slow-down of 40\%, one standard deviation above the average). The work \cite{martini2027interest} found that technical debt can be contagious, which supports a non-linear effect of the technical debt. Since there is no data on how strong this non-linearity is, we assume a slightly super-linear effect with $\delta_\mathrm{exp} = 1.5$ across all scenarios.
 
@@ -1514,6 +1520,9 @@ We analyze separately by the three Pareto objectives
 \section{Discussion}
 \label{sec:discussion}
 % ============================================================
+% TODO limitation: the Refactoring Agent is a binary control. At r_refactor = 747 one
+% agent clears every scenario's per-sprint debt inflow, so a_.,4 >= 1 pins D_tech to
+% zero and delta_impl/delta_fix only act when the role is unstaffed (see Sec. 4.1).
 
 
 

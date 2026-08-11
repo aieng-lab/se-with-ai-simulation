@@ -270,11 +270,29 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
   for k=7, documents for k=8). `run_configuration` accumulates it over the horizon and
   `simulation.cost_components(config, params, T, actions)` returns
   `C_agents = Σ_k actions_k · c_token,k`. An agent that no work reaches costs nothing.
-  Only roles 1–4 changed with this: k=5,6 were already flat per sprint (`r_k = 1`) and
-  k=7,8 always produce their full nominal output, so their bills are identical to the
-  old nominal-rate formula. Consequence to keep in mind: **cost no longer disciplines
-  over-provisioning of roles 1–4** — the saturation bound `u_k` and the human-capacity
-  gate are what bound them.
+  Only k=5,6 are exempt: they have no discrete unit of output, so they stay a flat
+  subscription per deployed instance per sprint (`r_k = 1`). Consequence to keep in
+  mind: **cost no longer disciplines over-provisioning of roles 1–4** — the saturation
+  bound `u_k` and the human-capacity gate are what bound them.
+- **The test and documentation agents are capped at the coverage they can still buy**:
+  `step_sprint` writes `min(r_test·a_7, c_test_ceil·F_completed − N_test)` tests and
+  `min(r_doc·a_8, F_completed − N_doc)` documents, and bills exactly that increment.
+  The cap sits precisely where the outer `min` of Eq. (coverage)/(doc_cov) already
+  clipped, so `cov_test` and `doc_cov` are **unchanged** wherever the role is staffed in
+  both phases — only the bill moves, by ~100×: at medium tiers k=7 was 77,688 tests
+  (97.5 % of the whole agent bill) and is now ~666. The two coverages differ from the
+  old behaviour only when a role is staffed in one phase but not the other *and*
+  `F_completed` is large enough that one sprint of `r_test` cannot refill the deficit
+  (project-high, late in the horizon). `saturation_bounds` is untouched: `u_7 = u_8 = 1`
+  was already the bound, and the transition now realises it — a second test agent writes
+  nothing, bills nothing, and still consumes monitoring.
+- **The Refactoring Agent is a binary control, by measurement not by design**: at
+  `r_refactor = 747` against a debt inflow of `δ_impl·r_arrival + δ_fix·W_3 ≈ 0.75`/sprint
+  at medium tiers, `a_·,4 ≥ 1` holds `D_tech` at 0 every sprint and `a_·,4 = 0` ratchets
+  it to 1 in two sprints. So `δ_impl` and `δ_fix` are inert on any configuration that
+  staffs the role — do not read a §5 debt result as a result about the debt *inflow*
+  parameters. Recorded in §4.1 and flagged as a limitation in §6; deliberately not fixed
+  in the model.
 - **The human/agent cost split is recorded, not reconstructed**: because `C_agents` now
   depends on the realised trajectory, no fixed `C_human/C_total` ratio recovers it from
   `cost`. `ReplicationResult` carries `cost_human`, `cost_agent` and the per-role

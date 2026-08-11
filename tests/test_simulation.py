@@ -121,7 +121,7 @@ class TestCostAccounting:
         assert rep.cost_human == pytest.approx(0.0)
 
     def test_idle_agents_are_free(self, base_params):
-        """With no work arriving, roles 1-4 bill nothing; 5-8 keep their fixed output."""
+        """With no work arriving, every role but the two flat services bills nothing."""
         from src.config import AGENT_ROLE_COUNT
         params = dataclasses.replace(
             base_params, c_salary=0.0, r_arrival=0.0, f_arch_chg=0.0,
@@ -135,15 +135,13 @@ class TestCostAccounting:
 
         # k=1..4 idle: no features arrive, so nothing is implemented, no change
         # requests are raised, no bugs are injected, and no debt accrues to remove.
-        assert rep.actions[0] == pytest.approx(0.0)
-        assert rep.actions[1] == pytest.approx(0.0)
-        assert rep.actions[2] == pytest.approx(0.0)
-        assert rep.actions[3] == pytest.approx(0.0)
-        # k=5,6 are flat per deployed instance per sprint; k=7,8 always write output.
+        # k=7,8 are idle too: with no completed features there is no coverage to buy,
+        # so both caps are zero.
+        for k in (0, 1, 2, 3, 6, 7):
+            assert rep.actions[k] == pytest.approx(0.0)
+        # k=5,6 are flat per deployed instance per sprint.
         assert rep.actions[4] == pytest.approx(s.T)
         assert rep.actions[5] == pytest.approx(s.T)
-        assert rep.actions[6] == pytest.approx(params.r_test * s.T)
-        assert rep.actions[7] == pytest.approx(params.r_doc * s.T)
 
     def test_saturated_demand_reproduces_the_nominal_bill(self, base_params):
         """Regression anchor: when every agent is busy, usage billing meets the
@@ -167,6 +165,8 @@ class TestCostAccounting:
         nominal_impl = int(params.r_F * 1.0 * config.A_dev[0]) * s.T
         assert rep.actions[0] == pytest.approx(nominal_impl)
         assert rep.actions[4] == pytest.approx(config.A_dev[4] * s.T)
+        # Features complete fast enough here that the coverage cap never binds, so the
+        # test agent also runs at its nominal rate.
         assert rep.actions[6] == pytest.approx(params.r_test * config.A_dev[6] * s.T)
 
     def test_architecture_implementation_bills_five_features(self, base_params):
@@ -194,6 +194,50 @@ class TestCostAccounting:
         assert implemented == 3
         assert actions.units[0] == pytest.approx(ARCH_IMPL_COST_UNITS * implemented)
         assert ARCH_IMPL_COST_UNITS == 5.0
+
+    def test_test_and_doc_output_is_capped_at_the_coverage_demand(self, base_params):
+        """Eqs. (ntest_update)/(ndoc_update): neither role writes past its ceiling.
+
+        Also pins the billing identity for the two capped roles: the total work billed
+        is exactly the cumulative count the transition wrote.
+        """
+        from src.config import AGENT_ROLE_COUNT
+        # r_test/r_doc far above the coverage demand, so the cap is what binds.
+        params = dataclasses.replace(base_params, r_test=500.0, r_doc=500.0)
+        config = TeamConfiguration(
+            N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
+        )
+        s = SimulationHorizon(T=10, K=1, master_seed=4)
+        trace = run_configuration(config, s, params, capture_traces=True)
+        rep = trace.replications[0]
+
+        for snap in trace.traces[0].snapshots:
+            assert snap.N_test <= params.c_test_ceil * snap.F_completed + 1e-9
+            assert snap.N_doc <= snap.F_completed + 1e-9
+
+        last = trace.traces[0].snapshots[-1]
+        assert rep.actions[6] == pytest.approx(last.N_test)
+        assert rep.actions[7] == pytest.approx(last.N_doc)
+        # The cap really bit — otherwise this test would prove nothing.
+        assert last.N_test < params.r_test * s.T
+
+    def test_capped_output_still_reaches_full_coverage(self, base_params):
+        """The cap is exactly where Eq. (coverage) already clipped, so it costs nothing.
+
+        With the role staffed in every sprint the agent refills the deficit each sprint,
+        so coverage sits at its ceiling and documentation coverage at 1.
+        """
+        params = dataclasses.replace(base_params, r_test=500.0, r_doc=500.0)
+        config = TeamConfiguration(
+            N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
+        )
+        s = SimulationHorizon(T=10, K=1, master_seed=4)
+        trace = run_configuration(config, s, params, capture_traces=True)
+
+        for snap in trace.traces[0].snapshots:
+            if snap.F_completed > 0:
+                assert snap.N_test == pytest.approx(params.c_test_ceil * snap.F_completed)
+                assert snap.N_doc == pytest.approx(snap.F_completed)
 
     def test_cost_split_sums_to_cost(self, base_config, base_params):
         params = dataclasses.replace(base_params, c_salary=120_000.0)

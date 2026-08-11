@@ -169,7 +169,12 @@ def step_sprint(
     # ------------------------------------------------------------------
     # Test suite update (before detection so new tests count this sprint)
     # ------------------------------------------------------------------
-    state.N_test += params.r_test * A_active[6]   # Test Development Agent (k=7, index 6)
+    # Beyond c_test_ceil * F_completed no further test raises cov_test, so the
+    # Test Development Agent (k=7, index 6) has no work there and is not billed for
+    # it.  The max(0, .) guards an initial state loaded above the cap.
+    test_cap = params.c_test_ceil * state.F_completed
+    tests_written = max(0.0, min(params.r_test * A_active[6], test_cap - state.N_test))
+    state.N_test += tests_written
 
     # ------------------------------------------------------------------
     # Bug injection + detection (Test → CR → SA; all synchronous)
@@ -308,7 +313,12 @@ def step_sprint(
     refactor_applied = min(1.0, D_raw) - D_new
     state.D_tech = D_new
 
-    state.N_doc += params.r_doc * A_active[7]   # Developer Documentation Agent (k=8)
+    # Documentation coverage is capped at 1, i.e. one document per completed feature;
+    # beyond that the Developer Documentation Agent (k=8, index 7) has no work, exactly
+    # as for the test suite above.
+    doc_cap = float(state.F_completed)
+    docs_written = max(0.0, min(params.r_doc * A_active[7], doc_cap - state.N_doc))
+    state.N_doc += docs_written
 
     # ------------------------------------------------------------------
     # Release event
@@ -331,10 +341,10 @@ def step_sprint(
     # ------------------------------------------------------------------
     # Billable work completed this sprint, by role (paper Eq. cost_agents)
     # ------------------------------------------------------------------
-    # Roles 1-4 are demand-driven and idle when no work reaches them.  The two
-    # background services have no discrete unit of output, so they are charged per
-    # deployed instance per sprint (r_5 = r_6 = 1).  Roles 7-8 always produce their
-    # full nominal output, so their bill is unchanged by the switch to usage.
+    # Every role except the two background services is demand-driven and idle when no
+    # work reaches it: roles 1-4 through the queues they drain, roles 7-8 through the
+    # coverage caps above.  The background services have no discrete unit of output, so
+    # they are charged per deployed instance per sprint (r_5 = r_6 = 1).
     return SprintActions(units=(
         # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each
         float(impl_agents + ARCH_IMPL_COST_UNITS * arch_impl_done),
@@ -343,7 +353,7 @@ def step_sprint(
         float(refactor_applied),               # k=4 technical debt removed
         float(A_active[4]),                    # k=5 deployed review instances
         float(A_active[5]),                    # k=6 deployed audit instances
-        params.r_test * A_active[6],           # k=7 tests written
-        params.r_doc * A_active[7],            # k=8 documentation items written
+        tests_written,                         # k=7 tests written
+        docs_written,                          # k=8 documentation items written
     ))
 
