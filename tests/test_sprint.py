@@ -256,6 +256,40 @@ class TestFractionalStaffingLevel:
         assert b.F_completed < a.F_completed
 
 
+class TestHumanBudgetResidualRounding:
+    """The review/escalation residuals must never go negative through float rounding.
+
+    With N = 0.75 and two supervised agents the fixture parameters put
+    `H_after_rev = 13.333333333333332` and `H_after_rev * N / H_escalation_time` at
+    exactly 5.0 after rounding, so the floor serves one more escalation than the budget
+    strictly pays for and the unclamped residual lands at -1.8e-15.  A negative residual
+    is not a rounding-sized error downstream: both consumers take its floor, so it costs
+    a whole item.
+    """
+
+    N = 0.75
+    #: a_1 = a_3 = 1, i.e. n_sup = 2 — the count the arithmetic above depends on.
+    CFG = TeamConfiguration(N=0.75, A_dev=_A(k1=1, k3=1), R=4, F_freeze=0)
+    #: Q_rev = 4 caps rev_done below the capacity floor; Q_esc = 5 does not cap esc_done.
+    STATE = dict(F_backlog=20, Q_rev=4, Q_esc=5)
+
+    def test_negative_residual_does_not_reach_the_poisson_rate(self, base_params):
+        """impl_human = floor(negative) = -1 is an invalid Poisson rate and raises."""
+        state = SystemState(**self.STATE)
+        step_sprint(0, state, self.CFG, base_params, np.random.default_rng(7))
+        assert state.F_completed >= 0
+
+    def test_negative_residual_does_not_invent_bugs(self, base_params):
+        """fix_human_budget = floor(negative) = -1 drains -1 bugs, i.e. adds one.
+
+        Every bug queue starts empty and t = 0 is not a release sprint, so the released
+        queues can only grow if a negative budget runs the drain backwards.
+        """
+        state = SystemState(**self.STATE)
+        step_sprint(0, state, self.CFG, base_params, np.random.default_rng(7))
+        assert (state.B_rel_min, state.B_rel_maj, state.B_rel_sec) == (0, 0, 0)
+
+
 class TestVolumeFactor:
     """The log-linear degradation in change volume per detection agent."""
 

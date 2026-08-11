@@ -130,13 +130,21 @@ def step_sprint(
     agents_per_fte = n_supervised / config.N
     H_after_mon = max(0.0, H_net - agents_per_fte * H_mon_eff)
 
-    # Architecture reviews served this sprint (eq. rev_done, H_after_rev)
+    # Architecture reviews served this sprint (eq. rev_done, H_after_rev).
+    # The residuals are clamped at 0: mathematically they cannot be negative, since the
+    # floor bounds the served item count by the budget, but `k * H_x_time / N` is not
+    # exactly the quantity that was floored and can exceed the budget by an ulp — with
+    # H_after_mon = 40, N = 0.75, H_review_time = 4, Q_rev = 5 and H_escalation_time = 2
+    # the escalation residual lands at -1.8e-15.  That is not a rounding-sized error
+    # downstream, because both consumers take its floor and so lose a whole item:
+    # `impl_human = -1` (an invalid Poisson rate, which raises) and
+    # `fix_human_budget = -1` (a negative drain, which puts bugs *back* into the queues).
     rev_done = min(math.floor(H_after_mon * config.N / params.H_review_time), state.Q_rev)
-    H_after_rev = H_after_mon - rev_done * params.H_review_time / config.N
+    H_after_rev = max(0.0, H_after_mon - rev_done * params.H_review_time / config.N)
 
     # Escalations served this sprint (eq. esc_done, H_after_esc)
     esc_done = min(math.floor(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
-    H_after_esc = H_after_rev - esc_done * params.H_escalation_time / config.N
+    H_after_esc = max(0.0, H_after_rev - esc_done * params.H_escalation_time / config.N)
 
     # f_fix fraction of H_after_esc goes to bug fixing; (1-f_fix) to feature coding.
     # During feature freeze, the coding fraction is redirected to bug fixing as well.
