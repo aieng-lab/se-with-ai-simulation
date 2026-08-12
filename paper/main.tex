@@ -1049,26 +1049,19 @@ Using the feasible configurations that satisfy the throughput constraint, we def
 \label{sec:model:selection}
 
 Every configuration is scored by a mean over $K$ Monte Carlo replications. The objective above only consider the mean, but not yet the confidence of the estimates. We therefore do not report the minimiser alone. Let $\mathbf{c}$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraintwhose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is statistically significantly different at the 95\% confidence level. We define the \emph{indistinguishable set} as
-  \bar{v}_{\mathbf{c}} \ge \bar{v}_{\mathbf{c}'},\quad
+\begin{equation}
   \mathcal{T}^\star = \bigl\{\mathbf{c} \;:\; \bar{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
     \;\wedge\; [C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}] \cap [C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}] \neq \emptyset \bigr\},
-The uncertainty-aware extension of this rule is that $\mathbf{c}$ is considered to dominate $\mathbf{c}'$ only if it also satisfies the second part of the rule, which is that $\mathbf{c}$ is \emph{CI-significantly better} than $\mathbf{c}'$ on at least one objective, established by at least one non-overlapping confidence interval:
-\end{equation}
-  q^+_{\mathbf{c}} < q^-_{\mathbf{c}'}
-  \quad\text{or}\quad
-  c^+_{\mathbf{c}} < c^-_{\mathbf{c}'}.
-  \label{eq:ci-sig}
+  \label{eq:topset}
 \end{equation}
 
-Using these two rules, we define a CI-aware dominance relation: $\mathbf{c}$ \emph{CI-dominates} $\mathbf{c}'$ iff $\mathbf{c}$ point-dominates $\mathbf{c}'$ and $\mathbf{c}$ is CI-significantly better than $\mathbf{c}'$ on at least one objective. The Pareto frontier is then defined as the set of configurations that are not CI-dominated by any other configuration in the feasible set. 
-
-Two configurations whose confidence intervals overlap on all three objectives are statistically indistinguishable, and the rule above retains both. There are cases where this applies, but one team has less than or equal headcount in all roles. We therefore add a parsimony tie-break, to remove the larger teams from the frontier. We say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff the two share the same $(N, R, F_\mathrm{freeze})$, satisfy $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ for all $k$ with at least one strict inequality, and neither is CI-significantly better than the other on any objective. 
+Two configurations in $\mathcal{T}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{T}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{T}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{T}^\star$ before it is reported.
 
 % ---- 3.11 ----
-\subsection{Search Strategies for Pareto-Optimal Configurations}
+\subsection{Search Strategies}
 \label{sec:model:search}
 
-Exhaustive search of the configuration space for the Pareto frontier of optimal process and team configurations is impossible, because the counts of the two background services are unbounded (Section~\ref{sec:model:team}). Even under an arbitrary cap of 99 agents per service, the four background counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$, $a_{\mathrm{qa},5}$, and $a_{\mathrm{qa},6}$ alone already give $100^4 = 10^8$ combinations, which the human staffing level, the release cadence, the feature-freeze length, and the supervised parts of both compositions multiply further.
+Exhaustive search of the configuration space for the optimal process and team configuration is impossible, because the counts of the two background services are unbounded (Section~\ref{sec:model:team}). Even under an arbitrary cap of 99 agents per service, the four background counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$, $a_{\mathrm{qa},5}$, and $a_{\mathrm{qa},6}$ alone already give $100^4 = 10^8$ combinations, which the human staffing level, the release cadence, the feature-freeze length, and the supervised parts of both compositions multiply further.
 
 We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configurations using two different approaches. Within both approaches, we first define a general search range for the parameters. \emph{Uniform random sampling} is our simple baseline strategy that randomly selects configurations uniformly from this search range. \emph{Evolutionary search} is a more sophisticated strategy that also starts with a uniform random sampling, but then looks for better configurations through evolutionary search.
 
