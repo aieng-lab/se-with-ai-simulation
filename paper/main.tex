@@ -141,7 +141,7 @@ horizon is $T$. The simulation configuration is defined by the team composition 
 $\mathbf{c} = (N, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$. The parameters
 $N$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Section~\ref{sec:model:roles}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 21-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
 
-We can derive metrics that describe the utility of a team configuration using three objectives (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, the $quality$ as the average number of escaped bugs per completed feature, and the $cost$ as the average cost incurred per completed feature. By exploring different team and process configurations $\mathbf{c}$, we get a multi-objective search problem with the goal to identify optimal configurations with different trade-offs between the objectives (Section~\ref{sec:model:mosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the objectives (Section~\ref{sec:model:mc}). The outcomes for different configurations form a Pareto frontier that characterises the trade-offs between the objectives and provides practical guidance on how to compose mixed AI-human teams for software development (Section~\ref{sec:model:pareto}). Since the search space is combinatorial and high-dimensional, we further describe different search strategies to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
+We derive the metrics that describe how well a team configuration performs from the terminal state(Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We require that a configuration keeps up with the work the project generates while minimizing costs to formualte this as search problem (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe different search strategies to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
 
 % TODO - figure with the overall model structure: team composition parameters, scenario parameters, state vector, transition steps, and objective calculations.
 
@@ -934,36 +934,27 @@ The value is defined under the assumption that more features developed mean that
 
 \subsubsection{Quality costs}
 
-The quality of software is a second main criterion for end users: if the software is buggy, it will not be useful regardless of the number of features it has. We approximate quality by the average number of bugs that escaped to production per feature delivered, computed as
+The quality of software is a second main criterion for end users: if the software is buggy, it will not be useful regardless of the number of features it has. Poor quality is not free, a bug that escapes to production causes an outage, a breach, or at the very least engineering effort to repair it after the fact. Therefore, we express quality as the cost that the escaped bugs cause once they affect real users, which is computed as a weighted sum of the escaped bugs of each type:
 \begin{equation}
   C_\mathrm{quality} = \omega_\mathrm{min}\,B_\mathrm{esc,min}(T)
           + \omega_\mathrm{maj}\,B_\mathrm{esc,maj}(T)
           + \omega_\mathrm{sec}\,B_\mathrm{esc,sec}(T),
+  \label{eq:obj_Q}
 \end{equation}
 where $\omega_\mathrm{min} \leq \omega_\mathrm{maj} \leq \omega_\mathrm{sec}$
-are severity weights and the numerator covers all bugs that reached production
+are the expected costs of a single escaped minor, major, and security bug. The bug counts cover everything that reached production
 — both bugs that were never detected and bugs that were detected but not fixed
 before their release deadline.
-$\mathit{quality}$ measures the severity-weighted escaped-bug count per feature
-delivered and is \emph{minimised}.
 
-
-\subsubsection{Cost per feature}
-
-The cost drivers are the human personnel costs and the agent API costs. We approximate the cost per feature delivered by the total cost incurred across the development cycle divided by the number of features delivered:
-\begin{equation}
-  \mathit{cost} = \frac{C_\mathrm{human} + C_\mathrm{agents}}
-                       {\max\!\bigl(1,\,F_\mathrm{completed}(T)\bigr)},
-  \label{eq:obj_CF}
-\end{equation}
-The $\mathit{cost}$ is \emph{minimised}.
-
+\subsubsection{Human personnel costs}
 
 The human personnel cost is the salary of the human developers. The parameter $c_\mathrm{salary}$ represents the annual fully-loaded salary of a human developer, defined for a period of 52 sprints (one sprint per week). The total human cost is computed by multiplying the number of developers $N$ by their salary, pro-rated over the $T$-sprint horizon:
 \begin{equation}
   C_\mathrm{human} = N\,c_\mathrm{salary} \cdot \frac{T}{52}.
   \label{eq:cost_human}
 \end{equation}
+
+\subsubsection{Agent costs}
 
 Each agent of role $k$ incurs a token cost $c_{\mathrm{token},k}$ per unit of
 work produced $r_k$, e.g., per feature added, bug fixed, or test written. Thus, the costs are
@@ -1015,22 +1006,28 @@ $k$ & Role & $u_k(t)$ \\
 \subsection{Monte Carlo Protocol}
 \label{sec:model:mc}
 
-A feasible configuration $\mathbf{c}$ (cf.\ Section~\ref{sec:model:mosp}) is evaluated by running $K$
+A feasible configuration $\mathbf{c}$ (cf.\ Section~\ref{sec:model:sosp}) is evaluated by running $K$
 independent Monte Carlo replications. At $t = 0$ all components of $S(0)$ must be initialised. We use fixed values to define the initial state of the system, e.g., zero features in the backlog and zero bugs in all queues.
 These values define the state of the project when the first agentic development sprint
 starts. They are fixed experiment constants that are
 specified as part of the experiment design (see Section~\ref{sec:setup}). The
 sprint transition $\mathcal{T}$ is then applied $T$ times, yielding terminal state
 $S(T)$. The outcome of each simulation run is randomized by the actions within the sprint transition, which are driven by the stochastic processes, e.g., the Poisson feature arrivals and the Binomial bug detection draws.
-The three Pareto objectives $(value_k, quality_k, cost_k)$ for each replication $k=1,\ldots,K$ are then computed from $S(T)$.
-
-The objectives are aggregated across the $K$ replications to obtain point estimates and uncertainty quantification for each configuration. Point estimates are simply the averages across replications, i.e., the configuration performance is
-summarised by the sample means $(\bar{value}, \bar{quality}, \bar{cost})$. The uncertainty is
+The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$, $C_\mathrm{human}$, and $C_{\mathrm{agents},k}$ for each replication $k=1,\ldots,K$ are then computed from $S(T)$. We combine the cost drivers into the per-replication cost per feature
+\begin{equation}
+  C_k = \frac{C_{\mathrm{quality},k} + C_\mathrm{human} + C_{\mathrm{agents},k}}
+             {F_{\mathrm{completed},k}(T)}
+  \label{eq:cost_rep}
+\end{equation}
+\emph{within} each replication, i.e., every replication is charged for the bugs it let through and for the agent work it actually consumed, and is credited with the features it actually delivered. Note that $C_\mathrm{human}$ carries no replication index, because it depends only on the staffing level $N$ and is therefore deterministic. 
+The uncertainty is
 quantified with 95\% percentile bootstrap confidence intervals (CIs):
-$B = 1\,000$ bootstrap resamples of size $K$ (with replacement) are drawn from
-the empirical replication distribution, and the 2.5th and 97.5th percentiles of
-the bootstrap mean distribution give the interval endpoints. We use the bootstrap confidence intervals as a conservative decision rule for comparing configurations: only when the intervals of two configurations do not overlap do we treat their difference as statistically significant. Non-overlap of two 95\% confidence intervals is a stricter criterion than a hypothesis test at the 5\% level, so this rule errs on the side of treating configurations as equivalent.
 
+% ---- 3.9 ---- Search Problem
+\subsection{Search Problem}
+\label{sec:model:sosp}
+\subsection{Search Problem}
+\label{sec:model:sosp}
 
 % ---- 3.9 ----
 \subsection{Multi-Objective Search Problem}
