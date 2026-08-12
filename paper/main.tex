@@ -48,8 +48,8 @@ University of Passau, Passau, Germany.
 TODO: write abstract.
 \end{abstract}
 
-\keywords{AI agents \and software process simulation \and multi-objective optimization
-\and technical debt \and Pareto frontier \and team composition}
+\keywords{AI agents \and software process simulation \and simulation-based optimization
+\and technical debt \and cost of software quality \and team composition}
 
 
 % ============================================================
@@ -63,43 +63,13 @@ TODO: write abstract.
 Agentic AI systems based on Large Language Models (LLMs) -- hereafter refered to as agents -- have been shown to have strong capabilties in software engineering tasks, including code generation~\citep{TODO}, code review~\citep{TODO}, bug fixing~\citep{TODO}, and test generation~\citep{TODO}. This led to a rapid adoption of these agents in software development teams~\cite{TODO}. Recently, the uncritical adoption and unrestricted use of these agents is being roled back, not least due to the spiraling costs~\citep{TODO}. Such problems are not unexpected with new technology, where we are still trying to understand all implications. Nevertheless, this raises the question is Jensen Huang's general estimate that developers should consume at least half of their salary in agent tokens is reasonable, or whether there are better ways to compose human and agent workforces. This is the central research question of this work:
 
 \begin{description}
-  \item[RQ] How should software development teams compose their human and agent workforce to achieve the best trade-off between value, quality, and cost?
+  \item[RQ] How should software development teams compose their human and agent workforce to deliver the work a project demands at the lowest total cost, counting the cost of the developers, the cost of the agents, and the cost of the defects that reach production?
 \end{description}
 
 To answer this question, we develop a simulation model of mixed AI-human software development teams. The core assumption of our process is that the human is still owning the code, takes responsibility for the quality, and guides the key design decisions. Agents support the human by implementing features, fixing bugs, and providing quality assurance, while also draining resources from the human developers because they require supervision. We simulate the development as a stochastic process that evolves over multiple sprints, where each sprint represents a fixed-duration development iteration. Within each sprint, human developers and agents implement features and fix bugs. Agents may fail at this task which escalates the responsibility for addressing an issue to the human developers. The new bugs, that are introduced through the development, can be detected by agents that review code, audit for security issues, and generate tests.
 Through these activities, new bugs are introduced, which agents can detect by providing tests or reviewing code. Large changes to the architecture require the sign-of by the human developers. 
 
-The model is based on a discrete-time stochastic dynamical system that simulates the evolution of a software project over multiple sprints. The state of the project is represented by a 21-dimensional vector that tracks features, bugs, technical debt, and human capacity. The model incorporates eight specialist AI agent roles and one human developer role, each with specific functions and interactions. The simulation allows for different team compositions and process parameters, enabling the exploration of trade-offs between value, quality, and cost.
-
-% ============================================================
-%
-% CONTENT OUTLINE
-%
-% [Motivation / opening hook]
-% - Software development teams increasingly mix human developers with autonomous AI
-%   agents (coding assistants, automated reviewers, test generators, etc.).
-% - The central practical question: how many agents of each type should be deployed,
-%   and how many human developers are needed to supervise them?
-% - No principled quantitative framework currently exists to answer this question;
-%   practitioners rely on intuition or ad-hoc experiments.
-%
-% [Core tension]
-% - More agents raise throughput but also raise coordination cost, review load,
-%   technical debt pressure -- objectives conflict and cannot
-%   be optimized in isolation.
-% - Human developers are a bottleneck resource: span-of-control M (agents per human)
-%   is bounded by human capacity, review quality degradation, and escalation load.
-%
-% [Research questions]
-% - RQ1: What agent compositions are Pareto-optimal under realistic
-%        sprint dynamics?
-% - RQ2: How do degradation effects shift the Pareto frontier relative to a simplified
-%        no-degradation baseline?
-%
-% [Contributions -- four bullet points]
-% 1. Formal state-space model of AI-human sprint dynamics
-% 3. Monte Carlo + evolutionary Pareto search
-% 4. Empirical results across parameterised scenarios
+The model is based on a discrete-time stochastic dynamical system that simulates the evolution of a software project over multiple sprints. The state of the project is represented by a 21-dimensional vector that tracks features, bugs, technical debt, and human capacity. The model incorporates eight specialist AI agent roles and one human developer role, each with specific functions and interactions. The simulation allows for different team compositions and process parameters. Since the salaries of the developers, the token costs of the agents, and the damage caused by defects that escape to production are all measurable in money, we can express what a team costs as a single figure, and search for the team that delivers the project's work at the lowest cost per feature.
 
 % ============================================================
 \section{Background and Related Work}
@@ -139,19 +109,22 @@ The model is based on a discrete-time stochastic dynamical system that simulates
 %   per-sprint cost model used here.
 
 % ---- 2.3 ----
-\subsection{Multi-Objective Optimisation in Software Engineering}
+\subsection{Search-Based Optimisation of Software Processes}
 \label{sec:related:moea}
 %
 % - SBSE (search-based SE) for team and project planning: staffing optimisation,
 %   sprint planning, release planning under uncertainty.
-% - Pareto-based formulations in SE: NSGA-II/III applied to test prioritisation,
-%   configuration optimisation, architecture selection.
-% - Key distinction: our feasibility pre-filter (six stability conditions at prior
+% - Cost-of-quality literature: framing defects as a monetary cost rather than as a
+%   separate objective, and the cost-of-quality accounting it comes from.
+% - Simulation-based optimisation / ranking-and-selection: selecting a best system
+%   when each evaluation is a noisy Monte Carlo estimate (Gupta subset selection,
+%   multiple comparisons with the best).
+% - Key distinction: our feasibility pre-filter (human-capacity condition at prior
 %   means) dramatically prunes the search space before any simulation, a technique
 %   not present in prior SBSE team-composition work.
-% - Motivate random + evolutionary hybrid search as appropriate for discrete,
-%   high-dimensional, partially infeasible composition spaces.
-% - Hypervolume indicator as convergence metric (Zitzler \& Thiele 1998).
+% - Motivate evolutionary search + greedy neighbourhood descent as appropriate for
+%   discrete, high-dimensional, partially infeasible composition spaces where no
+%   gradient is available.
 
 
 % ============================================================
@@ -947,28 +920,25 @@ Steps~5 and~8. When $t \bmod R \neq 0$ no release fires and all updates are skip
 \subsection{Objective Functions}
 \label{sec:model:objectives}
 
-The model is designed to evaluate the Pareto trade-offs between three key objectives: value, quality, and costs. These objectives are computed at the end of the $T$-sprint simulation horizon and effectively aggregate performance across the entire development cycle. The main criteria are the value approximated by the number of features that were developed, the quality approximated by the number of bugs that escaped to production, and the total cost incurred by the development process. 
+The model evaluates a configuration through four quantities that are computed from the terminal state $S(T)$ and therefore aggregate performance across the entire development cycle: the \emph{value} delivered by implementing features, and the three cost drivers of the development process, namely the cost of the bugs that escape to production, the cost of the human developers, and the cost of the agents. 
 
 \subsubsection{Value}
 
 The value is defined under the assumption that more features developed mean that the software product is of higher value to its end users. Therefore, we approximate the value produced by the development process by the average throughput of features delivered per sprint, computed as
 
 \begin{equation}
-  \mathit{value} = \frac{F_\mathrm{completed}(T)}{T},
+  \mathit{value} = \frac{F_\mathrm{completed}(T)}{T}.
   \label{eq:obj_V}
 \end{equation}
 
-The $\mathit{value}$ should be \emph{maximised}. Thus, the goal is to develop as many features as possible within each sprint on average.
 
-\subsubsection{Quality}
+\subsubsection{Quality costs}
 
 The quality of software is a second main criterion for end users: if the software is buggy, it will not be useful regardless of the number of features it has. We approximate quality by the average number of bugs that escaped to production per feature delivered, computed as
 \begin{equation}
-  \mathit{quality} = \frac{\omega_\mathrm{min}\,B_\mathrm{esc,min}(T)
+  C_\mathrm{quality} = \omega_\mathrm{min}\,B_\mathrm{esc,min}(T)
           + \omega_\mathrm{maj}\,B_\mathrm{esc,maj}(T)
-          + \omega_\mathrm{sec}\,B_\mathrm{esc,sec}(T)}
-         {\max\!\bigl(1,\,F_\mathrm{completed}(T)\bigr)},
-  \label{eq:obj_Q}
+          + \omega_\mathrm{sec}\,B_\mathrm{esc,sec}(T),
 \end{equation}
 where $\omega_\mathrm{min} \leq \omega_\mathrm{maj} \leq \omega_\mathrm{sec}$
 are severity weights and the numerator covers all bugs that reached production
