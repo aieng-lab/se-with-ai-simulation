@@ -1019,55 +1019,41 @@ The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$
              {F_{\mathrm{completed},k}(T)}
   \label{eq:cost_rep}
 \end{equation}
-\emph{within} each replication, i.e., every replication is charged for the bugs it let through and for the agent work it actually consumed, and is credited with the features it actually delivered. Note that $C_\mathrm{human}$ carries no replication index, because it depends only on the staffing level $N$ and is therefore deterministic. 
-The uncertainty is
-quantified with 95\% percentile bootstrap confidence intervals (CIs):
+\emph{within} each replication, i.e., every replication is charged for the bugs it let through and for the agent work it actually consumed, and is credited with the features it actually delivered. Note that $C_\mathrm{human}$ carries no replication index, because it depends only on the staffing level $N$ and is therefore deterministic. We use the mean of these values as estimator for the expected costs $C$. The uncertainty is
+quantified with 95\% percentile bootstrap confidence intervals (CIs).
 
 % ---- 3.9 ---- Search Problem
 \subsection{Search Problem}
 \label{sec:model:sosp}
-\subsection{Search Problem}
-\label{sec:model:sosp}
 
-% ---- 3.9 ----
-\subsection{Multi-Objective Search Problem}
-\label{sec:model:mosp}
-
-The feasible set $\mathcal{F}$ is defined as the set of all configurations
+We first define the feasible set $\mathcal{F}$ as the set of all configurations
 $\mathbf{c} = (N,\,\mathbf{A}_\mathrm{dev},\,\mathbf{A}_\mathrm{qa},\,R,\,F_\mathrm{freeze})$
 satisfying the structural constraints of Section~\ref{sec:model:team} and the
 human-capacity feasibility condition of Eq.~\eqref{eq:feas_monitoring}.
-The goal is to find a configuration in $\mathcal{F}$ that maximises $\mathit{value}$
-while minimising $\mathit{quality}$ and $\mathit{cost}$:
+
+What a development team is asked to do is to deliver the work the project demands, as cheaply as possible. We model this as a throughput constraint together with a cost objective. The throughput constraint states that the team must keep up with the incoming work: features arrive at a rate of $r_\mathrm{arrival}$ per sprint and cannot be implemented faster than they arrive, so $r_\mathrm{arrival}$ is the expected maximum attainable value. To account for uncertainty of the Poisson arrival of features, we allow a tolerance $\epsilon$ per sprint:
 \begin{equation}
-  \min_{\mathbf{c}\,\in\,\mathcal{F}}\;(\mathit{quality},\,\mathit{cost}),\quad
-  \max_{\mathbf{c}\,\in\,\mathcal{F}}\;\mathit{value}.
-  \label{eq:pareto}
+  \mathit{value} \;\geq\; (1-\epsilon)\,r_\mathrm{arrival}.
+  \label{eq:throughput_constraint}
 \end{equation}
-Because the three objectives conflict — more agents raise $\mathit{value}$ but also
-raise $\mathit{cost}$; stricter testing lowers $\mathit{quality}$ but consumes
-agent capacity that could raise $\mathit{value}$ — no single configuration is
-optimal on all three, and the solution is a Pareto frontier rather than a single point.
+
+Using the feasible configurations that satisfy the throughput constraint, we define our search problem as the minimisation of the expected cost per feature delivered (Eq.~\eqref{eq:cost_rep}), i.e., 
+\begin{equation}
+  \min_{\mathbf{c}\,\in\,\mathcal{F}: \mathit{value} \,\geq\, (1-\epsilon)\,r_\mathrm{arrival}}\; C.
+  \label{eq:objective}
+\end{equation}
 
 
 % ---- 3.10 ----
-\subsection{CI-aware Pareto frontier}
-\label{sec:model:pareto}
+\subsection{Selection under Monte Carlo noise}
+\label{sec:model:selection}
 
-To account for the uncertainty of the software development process and the resulting Monte Carlo noise in the objective estimates, we establish the Pareto frontier with a CI-aware dominance rule.
-The rule consists of two parts. The first is the commonly-used point-dominance relation, i.e., $\mathbf{c}$ \emph{point-dominates} $\mathbf{c}'$, iff
-\begin{equation}
+Every configuration is scored by a mean over $K$ Monte Carlo replications. The objective above only consider the mean, but not yet the confidence of the estimates. We therefore do not report the minimiser alone. Let $\mathbf{c}$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraintwhose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is statistically significantly different at the 95\% confidence level. We define the \emph{indistinguishable set} as
   \bar{v}_{\mathbf{c}} \ge \bar{v}_{\mathbf{c}'},\quad
-  \bar{q}_{\mathbf{c}} \le \bar{q}_{\mathbf{c}'},\quad
-  \bar{c}_{\mathbf{c}} \le \bar{c}_{\mathbf{c}'},
-  \label{eq:point-dom}
-\end{equation}
-with at least one strict inequality.
-
+  \mathcal{T}^\star = \bigl\{\mathbf{c} \;:\; \bar{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
+    \;\wedge\; [C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}] \cap [C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}] \neq \emptyset \bigr\},
 The uncertainty-aware extension of this rule is that $\mathbf{c}$ is considered to dominate $\mathbf{c}'$ only if it also satisfies the second part of the rule, which is that $\mathbf{c}$ is \emph{CI-significantly better} than $\mathbf{c}'$ on at least one objective, established by at least one non-overlapping confidence interval:
-\begin{equation}
-  v^-_{\mathbf{c}} > v^+_{\mathbf{c}'}
-  \quad\text{or}\quad
+\end{equation}
   q^+_{\mathbf{c}} < q^-_{\mathbf{c}'}
   \quad\text{or}\quad
   c^+_{\mathbf{c}} < c^-_{\mathbf{c}'}.
