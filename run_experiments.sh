@@ -2,8 +2,9 @@
 #
 # Run the full experiment campaign of paper Section 4.2.
 #
-# 243 scenarios (5 orthogonal parameter groups x 3 tiers) are each solved twice, once
-# with uniform random and once with evolutionary search, giving 486 searches of 10,000
+# 324 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
+# tier for project) are each solved twice, once
+# with uniform random and once with evolutionary search, giving 648 searches of 10,000
 # candidate evaluations each.  Jobs are independent, so they run in parallel and the
 # simulator itself is single-threaded — but throughput does NOT scale to the core count.
 # Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
@@ -19,7 +20,7 @@
 # Throughput is flat from 4 workers on, so raising $JOBS beyond that does not finish the
 # campaign any sooner — it only stretches each individual search (and since a search
 # writes nothing until it completes, that is lost work if the run is interrupted).
-# Hence the default of 4.  Expect roughly 250 core-hours in total.
+# Hence the default of 4.  Expect roughly 330 core-hours in total.
 #
 # Prerequisite:  .venv/bin/python scripts/generate_search_configs.py
 #

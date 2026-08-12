@@ -1,0 +1,9 @@
+{
+  "description": "Project dynamics parameters, very high tier (1000 issues per week — an extreme-velocity stress tier beyond the collected data, since two FTE already manage the high tier). See paper/main.tex tab:scenario:project. Only r_arrival varies by tier; the bug severity split and architecture-change fraction are tier-independent.",
+  "project": {
+    "r_arrival": 1000.0,
+    "f_arch_chg": 0.13,
+    "theta_maj": 0.44,
+    "theta_sec": 0.07
+  }
+}

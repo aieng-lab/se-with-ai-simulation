@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Generate the 243 scenario search configurations of paper §4.2.
+"""Generate the 324 scenario search configurations of paper §4.2.
 
 The five orthogonal scenario groups (paper §4.1) each come in a low / medium / high
-tier, so combining them freely yields 3^5 = 243 scenarios.  Every generated file is
-`config/search_default.json` with its five `scenario` entries repointed at one tier
-combination; the search range, budget, horizon, and seed are inherited unchanged so
-that all 243 searches share the experimental setup.
+tier, and `project` carries a fourth "very high" tier, so combining them freely
+yields 3^4 * 4 = 324 scenarios.  Every generated file is `config/search_default.json`
+with its five `scenario` entries repointed at one tier combination; the search range,
+budget, horizon, and seed are inherited unchanged so that all 324 searches share the
+experimental setup.
 
 Each scenario is solved twice — once with random and once with evolutionary search —
-via the `optimize --strategy` override, so 243 files cover all 486 searches.
+via the `optimize --strategy` override, so 324 files cover all 648 searches.
 
 Usage
 -----
@@ -20,7 +21,6 @@ Usage
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import sys
 from pathlib import Path
@@ -28,20 +28,15 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from src.config import SCENARIO_GROUPS, SCENARIO_TIERS   # noqa: E402
+from src.config import (   # noqa: E402
+    SCENARIO_GROUPS,
+    scenario_id,
+    scenario_tier_combinations,
+    scenario_tiers,
+)
 
 DEFAULT_TEMPLATE = "config/search_default.json"
 DEFAULT_OUT_DIR = "config/search"
-
-
-def scenario_id(tiers: tuple[str, ...]) -> str:
-    """Compact label of a tier combination, e.g. ``h-l_p-m_d-h_a-l_b-m``.
-
-    One ``<group initial>-<tier initial>`` token per group, in SCENARIO_GROUPS order.
-    The group initials are distinct (human, project, debt, agent, bugimpact), so the
-    label is unambiguous and round-trips to the tier tuple.
-    """
-    return "_".join(f"{group[0]}-{tier[0]}" for group, tier in zip(SCENARIO_GROUPS, tiers))
 
 
 def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
@@ -82,7 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written = 0
-    for tiers in itertools.product(SCENARIO_TIERS, repeat=len(SCENARIO_GROUPS)):
+    combinations = scenario_tier_combinations()
+    for tiers in combinations:
         config = build_config(template, tiers)
         path = out_dir / f"search_{config['scenario_id']}.json"
         if path.exists() and not args.force:
@@ -91,9 +87,10 @@ def main(argv: list[str] | None = None) -> int:
         path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         written += 1
 
-    expected = len(SCENARIO_TIERS) ** len(SCENARIO_GROUPS)
+    expected = len(combinations)
+    shape = " x ".join(str(len(scenario_tiers(g))) for g in SCENARIO_GROUPS)
     print(f"Wrote {written} search configurations to {out_dir}/ "
-          f"({len(SCENARIO_TIERS)}^{len(SCENARIO_GROUPS)} = {expected} scenarios, "
+          f"({shape} = {expected} scenarios, "
           f"{2 * expected} searches with both strategies)")
     print(f"Template: {args.template}")
     return 0

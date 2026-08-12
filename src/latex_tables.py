@@ -23,19 +23,24 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import AGENT_ROLE_ABBREV, AGENT_ROLE_COUNT, SCENARIO_GROUPS
+from .config import (
+    AGENT_ROLE_ABBREV,
+    AGENT_ROLE_COUNT,
+    SCENARIO_GROUPS,
+    TIER_INITIALS,
+)
 
 #: Two-letter column heads for the eight agent roles, in k = 1..8 order.  The full
 #: `AGENT_ROLE_ABBREV` labels ("Refactor", "Security") are far too wide for sixteen
 #: adjacent numeric columns, so the caption carries the legend instead.
 ROLE_HEADS: tuple[str, ...] = ("Ft", "De", "BF", "Rf", "Rv", "Se", "Te", "Do")
 
-_TIER_INITIAL = {"low": "L", "medium": "M", "high": "H"}
+_TIER_INITIAL = {tier: initial.upper() for tier, initial in TIER_INITIALS.items()}
 
 _DEFAULT_CAPTION = (
     "Configuration with the lowest quality$\\times$cost index on each scenario's "
     "throughput-filtered Pareto front.  The scenario code gives the tier "
-    "(L/M/H) of the "
+    "(L/M/H, and V for the very high project tier) of the "
     + ", ".join(SCENARIO_GROUPS)
     + " groups in that order.  Agent columns are the per-role counts of "
     "$A_\\mathrm{dev}$ and $A_\\mathrm{qa}$: "

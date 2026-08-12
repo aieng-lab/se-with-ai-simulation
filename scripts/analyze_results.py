@@ -209,7 +209,7 @@ def _write_plots(filtered, df, plots_dir: Path, args) -> None:
         )
         save_figure(fig, plots_dir, f"quality_vs_cost_by_{group}", args.format)
 
-    # The 3×3 matrix separates all five groups at once, so it is drawn one strategy at
+    # The tier matrix separates all five groups at once, so it is drawn one strategy at
     # a time: random and evolutionary differ by an order of magnitude in point count.
     # Its ratio variant shares the layout and the channel assignment, so the two figures
     # read the same way.
@@ -369,11 +369,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Output image format (default: pdf)")
     parser.add_argument("--per-scenario", action="store_true",
                         help="Also write one quality-vs-cost figure per (scenario, strategy); "
-                             "up to 486 files")
+                             "up to 648 files")
 
     matrix = parser.add_argument_group(
         "quality/cost matrix figures",
-        "Two 3×3 grids separating all five scenario groups at once, both drawing the "
+        "Two tier grids separating all five scenario groups at once, both drawing the "
         "combined quality×cost index on y: against cost, and against position along "
         "the front.  Each of the five channel options must name a different group; "
         "both figures share the channel assignment and are written once per strategy.",

@@ -408,3 +408,54 @@ class TestAggregateConfigResult:
         a1 = aggregate_config_result(cr, master_seed=42)
         a2 = aggregate_config_result(cr, master_seed=42)
         assert a1.value_ci == a2.value_ci
+
+    def test_contribution_counts_are_averaged(self, base_config):
+        """The four who-did-what counters aggregate as plain means, without CIs."""
+        reps = (
+            ReplicationResult(value=1.0, quality=0.1, cost=10.0, impl_human=10.0,
+                              impl_agents=90.0, fixes_human=2.0, fixes_agent=8.0),
+            ReplicationResult(value=1.0, quality=0.1, cost=10.0, impl_human=20.0,
+                              impl_agents=80.0, fixes_human=4.0, fixes_agent=6.0),
+        )
+        agg = aggregate_config_result(
+            ConfigResult(config=base_config, replications=reps), master_seed=0)
+        assert agg.impl_human_mean == pytest.approx(15.0)
+        assert agg.impl_agents_mean == pytest.approx(85.0)
+        assert agg.fixes_human_mean == pytest.approx(3.0)
+        assert agg.fixes_agent_mean == pytest.approx(7.0)
+
+    def test_contribution_counts_default_to_zero(self, base_config):
+        """Replications built without them (as most of this module's helpers do)."""
+        cr = _config_result([2.0, 4.0], [0.1, 0.3], [500.0, 1500.0], base_config)
+        agg = aggregate_config_result(cr, master_seed=0)
+        assert agg.impl_human_mean == 0.0
+        assert agg.fixes_agent_mean == 0.0
+
+
+class TestContributionCountsAreInvisibleToDominance:
+    """§3.10 stays three-objective: the reported counts must not sway the frontier."""
+
+    def test_frontier_ignores_the_contribution_counts(self):
+        import dataclasses
+        points = [_obj(5.0, 0.1, 100.0), _obj(4.0, 0.2, 200.0), _obj(4.5, 0.15, 150.0)]
+        baseline = pareto_frontier(points)
+
+        # Same objectives, wildly different contribution splits.
+        loaded = [
+            dataclasses.replace(points[0], impl_human_mean=1000.0,
+                                fixes_human_mean=500.0),
+            dataclasses.replace(points[1], impl_agents_mean=1000.0,
+                                fixes_agent_mean=500.0),
+            dataclasses.replace(points[2], impl_human_mean=7.0, impl_agents_mean=3.0),
+        ]
+        assert pareto_frontier(loaded) == baseline
+
+    def test_ci_significance_ignores_the_contribution_counts(self):
+        import dataclasses
+        b = _obj(V=5, Q=0.1, CF=100, ci_w=0.2)
+        w = _obj(V=4, Q=0.2, CF=200, ci_w=0.2)
+        assert _ci_significantly_better(b, w)
+        assert _ci_significantly_better(
+            dataclasses.replace(b, impl_human_mean=0.0, impl_agents_mean=1e6),
+            dataclasses.replace(w, impl_human_mean=1e6, impl_agents_mean=0.0),
+        )

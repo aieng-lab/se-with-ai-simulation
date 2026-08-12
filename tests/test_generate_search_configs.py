@@ -1,15 +1,14 @@
-"""Tests for scripts/generate_search_configs.py — the 243-scenario grid of paper §4.2."""
+"""Tests for scripts/generate_search_configs.py — the 324-scenario grid of paper §4.2."""
 
 from __future__ import annotations
 
 import importlib.util
-import itertools
 import json
 from pathlib import Path
 
 import pytest
 
-from src.config import SCENARIO_GROUPS, SCENARIO_TIERS
+from src.config import SCENARIO_GROUPS, scenario_tier_combinations
 from src.io import load_search_config
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "generate_search_configs.py"
@@ -40,14 +39,21 @@ class TestScenarioId:
             "h-l_p-m_d-h_a-l_b-m"
 
     def test_ids_are_unique_across_the_whole_grid(self, script):
-        ids = {script.scenario_id(t)
-               for t in itertools.product(SCENARIO_TIERS, repeat=len(SCENARIO_GROUPS))}
-        assert len(ids) == len(SCENARIO_TIERS) ** len(SCENARIO_GROUPS) == 243
+        combos = scenario_tier_combinations()
+        ids = {script.scenario_id(t) for t in combos}
+        # 3^4 * 4: only `project` carries the fourth "very high" tier.
+        assert len(ids) == len(combos) == 324
+
+    def test_the_very_high_project_tier_gets_its_own_initial(self, script):
+        assert script.scenario_id(("low", "veryhigh", "high", "low", "medium")) == \
+            "h-l_p-v_d-h_a-l_b-m"
 
 
 class TestGeneratedGrid:
     def test_writes_one_config_per_tier_combination(self, generated):
-        assert len(list(generated.glob("search_*.json"))) == 243
+        assert len(list(generated.glob("search_*.json"))) == 324
+        # One quarter of them are the very high project tier.
+        assert len(list(generated.glob("search_*_p-v_*.json"))) == 81
 
     def test_every_config_loads_and_keeps_the_shared_setup(self, generated):
         reference = load_search_config("config/search_default.json")
@@ -76,7 +82,7 @@ class TestGeneratedGrid:
             )
             assert combo not in combos, f"{combo} generated twice"
             combos.add(combo)
-        assert combos == set(itertools.product(SCENARIO_TIERS, repeat=len(SCENARIO_GROUPS)))
+        assert combos == set(scenario_tier_combinations())
 
     def test_filename_matches_the_scenario_id_inside(self, generated):
         for path in generated.glob("search_*.json"):

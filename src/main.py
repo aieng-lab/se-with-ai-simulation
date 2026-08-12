@@ -21,7 +21,7 @@ Search for optimal team compositions:
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
         --samples none --progress-every 500 --out results/one_scenario
 
-Run all 243 scenarios of paper Section 4.2 with both strategies:
+Run all 324 scenarios of paper Section 4.2 with both strategies:
     ./run_experiments.sh          (see its --help; generate the configs first with
                                    scripts/generate_search_configs.py)
 
@@ -316,6 +316,10 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
                 "value_ci": list(agg.value_ci), "quality_ci": list(agg.quality_ci), "cost_ci": list(agg.cost_ci),
                 "cost_human_mean": agg.cost_human_mean, "cost_agent_mean": agg.cost_agent_mean,
                 "actions_mean": list(agg.actions_mean),
+                "impl_human_mean": agg.impl_human_mean,
+                "impl_agents_mean": agg.impl_agents_mean,
+                "fixes_human_mean": agg.fixes_human_mean,
+                "fixes_agent_mean": agg.fixes_agent_mean,
             }
             for key, cfg, agg in aggs
         },

@@ -245,3 +245,48 @@ class TestCostAccounting:
         for rep in run_configuration(base_config, s, params).replications:
             assert rep.cost_human + rep.cost_agent == pytest.approx(rep.cost)
             assert rep.cost_human > 0 and rep.cost_agent >= 0
+
+
+class TestContributionAccounting:
+    """The horizon totals of who did the work (see SprintActions)."""
+
+    @pytest.mark.parametrize("r_arrival, h_feature", [(2.0, 8.0), (20.0, 2.0)])
+    def test_the_implementation_split_accounts_for_every_feature(
+        self, base_config, base_params, r_arrival, h_feature
+    ):
+        """impl_human + impl_agents == F_completed(T) == value * T, exactly."""
+        params = dataclasses.replace(base_params, r_arrival=r_arrival,
+                                     h_feature=h_feature)
+        s = SimulationHorizon(T=12, K=3, master_seed=7)
+        result = run_configuration(base_config, s, params)
+        for rep in result.replications:
+            assert rep.impl_human + rep.impl_agents == pytest.approx(rep.value * s.T)
+
+    def test_bug_fixing_split_matches_the_billed_agent_unit(self, base_config, base_params):
+        s = SimulationHorizon(T=12, K=3, master_seed=8)
+        for rep in run_configuration(base_config, s, base_params).replications:
+            assert rep.fixes_agent == pytest.approx(rep.actions[2])
+            assert rep.fixes_human >= 0.0
+
+    def test_implemented_proposals_are_recoverable_from_the_billed_unit(
+        self, base_config, base_params
+    ):
+        """(u_1 - impl_agents) / ARCH_IMPL_COST_UNITS is a whole number of proposals."""
+        from src.sprint import ARCH_IMPL_COST_UNITS
+        # f_arch_chg > 0 so proposals actually flow through the review queue.
+        params = dataclasses.replace(base_params, f_arch_chg=0.5, r_arrival=6.0)
+        config = TeamConfiguration(
+            N=2, A_dev=(2, 1, 0, 0, 1, 0, 0, 0), R=4, F_freeze=0,
+        )
+        s = SimulationHorizon(T=16, K=3, master_seed=9)
+        for rep in run_configuration(config, s, params).replications:
+            arch_impl = (rep.actions[0] - rep.impl_agents) / ARCH_IMPL_COST_UNITS
+            assert arch_impl >= 0.0
+            assert arch_impl == pytest.approx(round(arch_impl))
+
+    def test_replications_keep_distinct_trace_labels(self, base_config, base_params):
+        """Regression: the per-role accumulator used to shadow the replication index,
+        so every ReplicationTrace was labelled with the last role instead of its k."""
+        s = SimulationHorizon(T=4, K=3, master_seed=12)
+        trace = run_configuration(base_config, s, base_params, capture_traces=True)
+        assert {tr.k for tr in trace.traces} == set(range(s.K))

@@ -63,8 +63,9 @@ import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
+    ALL_SCENARIO_TIERS,
     SCENARIO_GROUPS,
-    SCENARIO_TIERS,
+    TIER_INITIALS,
     TeamConfiguration,
     supervised_agent_count,
 )
@@ -88,8 +89,7 @@ DEFAULT_THROUGHPUT_THRESHOLD = 0.98
 #: against — total, human developers only, agents only.
 RATIO_COST_FIELDS: tuple[str, ...] = ("cost_mean", "cost_human_mean", "cost_agent_mean")
 
-_TIER_INITIALS = {"low": "l", "medium": "m", "high": "h"}
-_INITIAL_TO_TIER = {v: k for k, v in _TIER_INITIALS.items()}
+_INITIAL_TO_TIER = {v: k for k, v in TIER_INITIALS.items()}
 
 #: Control variables the deviation-pattern breakdown groups by, alongside the
 #: five tier columns.
@@ -123,7 +123,7 @@ def scenario_params_for_id(
     """Rebuild the `ScenarioParameters` a scenario id stands for.
 
     Reads ``<config_dir>/<group>_<tier>.json`` for the five groups.  Cached, so
-    the 243 scenarios cost at most 243 loads regardless of frontier size.
+    the 324 scenarios cost at most 324 loads regardless of frontier size.
     """
     tiers = tiers_from_scenario_id(scenario_id)
     return load_scenario_params({
@@ -179,7 +179,11 @@ def _objective_row(
     # The recorded human/agent cost split and the per-role work counts postdate the
     # usage-based cost model; searches written before it carry neither, and
     # add_derived_columns falls back to the deterministic reconstruction for them.
-    for name in ("cost_human_mean", "cost_agent_mean"):
+    # The four contribution counts postdate the §4.2 campaign and have no fallback —
+    # they are unreconstructable from the per-role counts, so they are simply absent.
+    for name in ("cost_human_mean", "cost_agent_mean",
+                 "impl_human_mean", "impl_agents_mean",
+                 "fixes_human_mean", "fixes_agent_mean"):
         if name in obj:
             row[name] = obj[name]
     for k, units in enumerate(obj.get("actions_mean", ()), start=1):
@@ -577,6 +581,8 @@ def add_derived_columns(df: pd.DataFrame, config_dir: str = "config") -> pd.Data
         T_dev, T_qa, C_human, C_agents, C_total, agent_cost_share
         cost_human_mean / cost_agent_mean (+ CI bounds)
         quality_cost_ratio, quality_cost_index, n_sup_dev, n_sup_qa
+        human_feature_share / human_fix_share, where the campaign recorded the
+        human/agent contribution counts (absent for pre-counter campaigns)
     """
     if df.empty:
         return df.copy()
@@ -650,6 +656,16 @@ def add_derived_columns(df: pd.DataFrame, config_dir: str = "config") -> pd.Data
     out["value_ratio_ci_hi"] = out["value_ci_hi"] / out["r_arrival"]
     out["value_deficit"] = 1.0 - out["value_ratio"]
 
+    # Who did the work, where the simulator recorded it.  Unlike the cost split there is
+    # no reconstruction for campaigns predating the counters, so the shares are added
+    # only when their inputs are present rather than warned about and faked.
+    if {"impl_human_mean", "impl_agents_mean"} <= set(out.columns):
+        features = (out["impl_human_mean"] + out["impl_agents_mean"]).replace(0.0, np.nan)
+        out["human_feature_share"] = out["impl_human_mean"] / features
+    if {"fixes_human_mean", "fixes_agent_mean"} <= set(out.columns):
+        fixes = (out["fixes_human_mean"] + out["fixes_agent_mean"]).replace(0.0, np.nan)
+        out["human_fix_share"] = out["fixes_human_mean"] / fixes
+
     # Two scalar views of the quality/cost pair: the ratio fixes the position along
     # the front, the product ranks points by goodness.  See rank_frontier and
     # add_quality_cost_index.
@@ -713,7 +729,8 @@ def value_deviation_patterns(
         n_points, n_throughput_limited, frac_throughput_limited,
         median_deficit, max_deficit, spearman_rho
 
-    Factors are the five scenario tiers (levels low/medium/high, ordered) and the
+    Factors are the five scenario tiers (levels low/medium/high, plus veryhigh for
+    `project`, ordered) and the
     control variables in `CONTROL_FACTORS`.  `spearman_rho` is the rank
     correlation between `value_deficit` and the factor across the *whole* table
     and is therefore repeated on every level of a numeric factor; it is NaN for
@@ -735,7 +752,7 @@ def value_deviation_patterns(
     for factor in factors:
         if factor in tier_factors:
             # Ordered tier index makes the rank correlation meaningful.
-            numeric = work[factor].map({t: i for i, t in enumerate(SCENARIO_TIERS)})
+            numeric = work[factor].map({t: i for i, t in enumerate(ALL_SCENARIO_TIERS)})
         else:
             numeric = pd.to_numeric(work[factor], errors="coerce")
         rho = _spearman(numeric, work["value_deficit"])
@@ -902,9 +919,9 @@ def index_optimum(
     is interior for 484 of the 486 fronts — so this names the configuration sitting
     at that knee: the best combined quality/cost point the search found.
 
-    `by` defaults to `FRONT_KEYS`, one row per front (486 on the campaign).  Pass
+    `by` defaults to `FRONT_KEYS`, one row per front (648 on the campaign).  Pass
     ``("scenario_id",)`` to pool the search strategies and get one row per scenario
-    (243), which is what the §5 table reports.  All columns of the winning row are
+    (324), which is what the §5 table reports.  All columns of the winning row are
     kept, so the caller still has the strategy, the config key and the full
     configuration.
 

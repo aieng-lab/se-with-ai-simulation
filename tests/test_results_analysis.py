@@ -110,6 +110,10 @@ def test_tiers_from_scenario_id_round_trip():
     }
 
 
+def test_tiers_from_scenario_id_reads_the_very_high_project_tier():
+    assert tiers_from_scenario_id("h-l_p-v_d-h_a-l_b-m")["project"] == "veryhigh"
+
+
 @pytest.mark.parametrize("bad", [
     "h-l_p-m_d-h_a-l",          # too few tokens
     "h-l_p-m_d-h_a-l_b-m_x-l",  # too many tokens
@@ -141,12 +145,17 @@ def test_scenario_params_for_id_is_cached():
 
 def _row(scenario_id, strategy, key, *, N=1, R=4, F_freeze=0,
          value, quality, cost, T=104, a_dev_1=1, ci_width=0.0,
-         agent_share=0.25, legacy=False):
+         agent_share=0.25, legacy=False, contributions=None):
     """One flat-table row.
 
     `agent_share` sets the recorded human/agent cost split that the simulator now
     persists; `legacy=True` omits those columns, reproducing a campaign written before
     the usage-based cost model so the fallback path can be tested.
+
+    `contributions` adds the four who-did-what counters as
+    ``(impl_human, impl_agents, fixes_human, fixes_agent)``.  They are omitted by
+    default, which reproduces the §4.2 campaign — written before those counters existed
+    — so the "no shares without inputs" path stays covered.
     """
     tiers = tiers_from_scenario_id(scenario_id)
     row = {"scenario_id": scenario_id, "strategy": strategy, "config_key": key,
@@ -162,6 +171,9 @@ def _row(scenario_id, strategy, key, *, N=1, R=4, F_freeze=0,
     if not legacy:
         row["cost_agent_mean"] = cost * agent_share
         row["cost_human_mean"] = cost * (1.0 - agent_share)
+    if contributions is not None:
+        row["impl_human_mean"], row["impl_agents_mean"] = contributions[:2]
+        row["fixes_human_mean"], row["fixes_agent_mean"] = contributions[2:]
     return row
 
 
@@ -250,6 +262,82 @@ def test_cost_split_falls_back_for_pre_usage_model_campaigns():
     assert row["cost_human_mean"] == pytest.approx(
         row["cost_mean"] * C_human / (C_human + C_agents)
     )
+
+
+def _summary_pair(objective_extras: dict) -> tuple[dict, dict]:
+    """A minimal (manifest, search_summary) pair holding one candidate."""
+    key = "N1_R4_00001"
+    objectives = {
+        "N": 1.0, "R": 4, "F_freeze": 0,
+        "A_dev": [1] + [0] * (AGENT_ROLE_COUNT - 1),
+        "A_qa": [0] * AGENT_ROLE_COUNT,
+        "value_mean": 12.0, "quality_mean": 100.0, "cost_mean": 1000.0,
+        "value_ci": [12.0, 12.0], "quality_ci": [100.0, 100.0],
+        "cost_ci": [1000.0, 1000.0],
+        **objective_extras,
+    }
+    manifest = {"configs": {key: {"F_freeze": 0, "A_qa": [0] * AGENT_ROLE_COUNT}}}
+    return manifest, {"pareto_frontier": [key], "objectives": {key: objectives}}
+
+
+def test_flat_table_carries_the_contribution_counts():
+    """The four counters reach the flat table when search_summary.json has them."""
+    manifest, summary = _summary_pair({
+        "impl_human_mean": 300.0, "impl_agents_mean": 900.0,
+        "fixes_human_mean": 5.0, "fixes_agent_mean": 15.0,
+    })
+    row = frontier_rows("h-m_p-m_d-m_a-m_b-m", "random", manifest, summary)[0]
+    assert row["impl_human_mean"] == 300.0
+    assert row["impl_agents_mean"] == 900.0
+    assert row["fixes_human_mean"] == 5.0
+    assert row["fixes_agent_mean"] == 15.0
+
+
+def test_flat_table_omits_the_contribution_counts_when_absent():
+    """A pre-counter search yields no such columns rather than zeros."""
+    manifest, summary = _summary_pair({})
+    row = frontier_rows("h-m_p-m_d-m_a-m_b-m", "random", manifest, summary)[0]
+    for name in ("impl_human_mean", "impl_agents_mean",
+                 "fixes_human_mean", "fixes_agent_mean"):
+        assert name not in row
+
+
+def test_contribution_shares_are_derived_when_recorded():
+    """human_feature_share / human_fix_share come from the recorded counters."""
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    df = pd.DataFrame([
+        _row(sid, "random", "mixed", value=12.0, quality=100.0, cost=1000.0,
+             contributions=(300.0, 900.0, 5.0, 15.0)),
+        _row(sid, "random", "human_only", value=12.0, quality=200.0, cost=500.0,
+             contributions=(1248.0, 0.0, 20.0, 0.0)),
+    ])
+    out = add_derived_columns(df, config_dir=str(_REPO_ROOT / "config"))
+
+    shares = out.set_index("config_key")
+    assert shares.loc["mixed", "human_feature_share"] == pytest.approx(0.25)
+    assert shares.loc["mixed", "human_fix_share"] == pytest.approx(0.25)
+    assert shares.loc["human_only", "human_feature_share"] == pytest.approx(1.0)
+    assert shares.loc["human_only", "human_fix_share"] == pytest.approx(1.0)
+
+
+def test_contribution_shares_absent_without_the_counters(synthetic_frontier):
+    """The §4.2 campaign predates the counters: no shares, no warning, no crash."""
+    assert "impl_human_mean" not in synthetic_frontier.columns
+    df = add_derived_columns(synthetic_frontier, config_dir=str(_REPO_ROOT / "config"))
+    assert "human_feature_share" not in df.columns
+    assert "human_fix_share" not in df.columns
+
+
+def test_no_fixes_leaves_the_fix_share_undefined():
+    """A team that repaired nothing has no share to report, rather than a 0/0."""
+    sid = "h-m_p-m_d-m_a-m_b-m"
+    df = pd.DataFrame([
+        _row(sid, "random", "clean", value=12.0, quality=0.0, cost=1000.0,
+             contributions=(1248.0, 0.0, 0.0, 0.0)),
+    ])
+    out = add_derived_columns(df, config_dir=str(_REPO_ROOT / "config"))
+    assert out["human_feature_share"].item() == pytest.approx(1.0)
+    assert pd.isna(out["human_fix_share"].item())
 
 
 def test_add_derived_columns_requires_T(synthetic_frontier):

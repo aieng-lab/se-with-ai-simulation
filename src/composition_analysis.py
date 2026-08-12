@@ -298,7 +298,7 @@ def composition_by_tier(df: "pd.DataFrame", phase: str) -> "pd.DataFrame":
     """Mean composition per scenario group tier, long-form, with grand-mean deviations.
 
     One row per (strategy, group, tier, quantity).  `deviation` is the value minus the
-    mean of that quantity over the three tiers of its group, which is what the heat map
+    mean of that quantity over the tiers of its group, which is what the heat map
     colours: it isolates the tier effect from the wildly different magnitudes of, say, a
     role share and an agent count.
     """

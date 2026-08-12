@@ -1,16 +1,56 @@
 """Tests for src/config.py — TeamConfiguration and SimulationHorizon validation."""
 
+from pathlib import Path
+
 import pytest
 
 from src.config import (
     AGENT_ROLE_COUNT,
     SearchConfiguration,
     SCENARIO_GROUPS,
+    SCENARIO_TIERS,
     SimulationHorizon,
     TeamConfiguration,
+    scenario_id,
+    scenario_tier_combinations,
+    scenario_tiers,
     supervised_agent_count,
 )
 from src.rng import _config_hash
+
+_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+
+
+class TestScenarioTierGrid:
+    """The §4.2 grid is not a cube: `project` carries a fourth tier."""
+
+    def test_project_has_the_extra_very_high_tier(self):
+        assert scenario_tiers("project") == ("low", "medium", "high", "veryhigh")
+
+    def test_every_other_group_has_the_three_base_tiers(self):
+        for group in SCENARIO_GROUPS:
+            if group != "project":
+                assert scenario_tiers(group) == SCENARIO_TIERS
+
+    def test_unknown_group_raises(self):
+        with pytest.raises(ValueError, match="unknown scenario group"):
+            scenario_tiers("nonsense")
+
+    def test_combination_count_is_the_per_group_product(self):
+        combos = scenario_tier_combinations()
+        assert len(combos) == len(set(combos)) == 3 ** 4 * 4 == 324
+
+    def test_scenario_ids_are_unique_over_the_grid(self):
+        assert len({scenario_id(t) for t in scenario_tier_combinations()}) == 324
+
+    def test_scenario_id_rejects_a_wrong_length_tuple(self):
+        with pytest.raises(ValueError, match="expected 5 tiers"):
+            scenario_id(("low", "medium"))
+
+    def test_every_group_tier_has_a_parameter_file(self):
+        for group in SCENARIO_GROUPS:
+            for tier in scenario_tiers(group):
+                assert (_CONFIG_DIR / f"{group}_{tier}.json").is_file()
 
 
 def _A(*pairs) -> tuple[int, ...]:

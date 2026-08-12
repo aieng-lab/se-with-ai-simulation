@@ -40,11 +40,17 @@ class AggregatedObjectives:
     quality_ci: tuple[float, float]
     cost_ci: tuple[float, float]
     # Reporting only — the §3.10 dominance relation stays three-objective and must not
-    # read these.  They are persisted because C_agents depends on the realised
-    # trajectory and can no longer be reconstructed from `cost_mean` by a fixed ratio.
+    # read any of the fields below.  The cost split is persisted because C_agents depends
+    # on the realised trajectory and can no longer be reconstructed from `cost_mean` by a
+    # fixed ratio; the four contribution counts because the human share of the work
+    # appears nowhere in `actions_mean` (see SprintActions).
     cost_human_mean: float = 0.0
     cost_agent_mean: float = 0.0
     actions_mean: tuple[float, ...] = ()
+    impl_human_mean: float = 0.0
+    impl_agents_mean: float = 0.0
+    fixes_human_mean: float = 0.0
+    fixes_agent_mean: float = 0.0
 
 
 def aggregate_config_result(
@@ -77,6 +83,12 @@ def aggregate_config_result(
         cost_human_mean=float(np.mean([r.cost_human for r in reps])),
         cost_agent_mean=float(np.mean([r.cost_agent for r in reps])),
         actions_mean=tuple(actions_arr.mean(axis=0)) if actions_arr is not None else (),
+        # No bootstrap CIs: these are reported counts, not objectives, so the `idx`
+        # resample above stays reserved for the three dimensions of §3.10.
+        impl_human_mean=float(np.mean([r.impl_human for r in reps])),
+        impl_agents_mean=float(np.mean([r.impl_agents for r in reps])),
+        fixes_human_mean=float(np.mean([r.fixes_human for r in reps])),
+        fixes_agent_mean=float(np.mean([r.fixes_agent for r in reps])),
         value_ci=(float(np.percentile(value_boot,     2.5)), float(np.percentile(value_boot,   97.5))),
         quality_ci=(float(np.percentile(quality_boot, 2.5)), float(np.percentile(quality_boot, 97.5))),
         cost_ci=(float(np.percentile(cost_boot,       2.5)), float(np.percentile(cost_boot,    97.5))),

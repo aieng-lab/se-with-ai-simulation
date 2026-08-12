@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Consolidate the 486 searches of paper §4.2 into two flat tables.
+"""Consolidate the 648 searches of paper §4.2 into two flat tables.
 
 Reads every ``<results-dir>/<scenario_id>/<strategy>/{manifest,search_summary}.json``
 written by ``python -m src.main optimize`` and emits:

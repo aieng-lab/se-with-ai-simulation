@@ -612,3 +612,106 @@ class TestEscalationsScaleWithAgentWork:
             step_sprint(t, state, cfg, p, rng)
         assert state.B_rel_min < 500, "humans must actually be fixing bugs"
         assert state.Q_esc == 0
+
+
+class TestContributionAccounting:
+    """SprintActions reports who did the work, alongside the billable `units` vector.
+
+    The human share appears in no entry of `units` (human cost is a headcount term), so
+    these four counters are the only record of it.
+    """
+
+    def test_implementation_split_accounts_for_every_feature(self, base_config, base_params):
+        """Eq. (impl): impl_human' + impl_agents is exactly what F_completed gained."""
+        p = dataclasses.replace(base_params, r_arrival=3.0, Gamma_doc=0.0)
+        rng = np.random.default_rng(21)
+        state = SystemState(F_backlog=40)
+        for t in range(20):
+            before = state.F_completed
+            actions = step_sprint(t, state, base_config, p, rng)
+            implemented = state.F_completed - before
+            assert actions.impl_human + actions.impl_agents == pytest.approx(implemented)
+
+    def test_demand_below_human_capacity_leaves_the_agents_nothing(self, base_params):
+        """Humans are served first (Eq. impl_human_capped), so a thin arrival stream
+        never reaches the implementation agent."""
+        # One feature per sprint, and a human budget far above it.
+        p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=0.1, f_fix=0.0,
+                                f_arch_chg=0.0, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0)
+        state = SystemState(F_backlog=1)
+        actions = step_sprint(0, state, cfg, p, np.random.default_rng(22))
+
+        assert actions.impl_human == pytest.approx(1.0)
+        assert actions.impl_agents == pytest.approx(0.0)
+
+    def test_no_human_coding_time_leaves_it_all_to_the_agents(self, base_params):
+        """With h_feature astronomically large the human budget floors to zero."""
+        p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=1e9, f_fix=0.0,
+                                f_arch_chg=0.0, delta_min=1.0, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0)
+        state = SystemState(F_backlog=50)
+        actions = step_sprint(0, state, cfg, p, np.random.default_rng(23))
+
+        assert actions.impl_human == pytest.approx(0.0)
+        # floor(r_F * 1.0 * 2) = 6 with the fixture's r_F = 3.
+        assert actions.impl_agents == pytest.approx(6.0)
+
+    def test_fixes_human_counts_the_human_drain(self, base_params):
+        """With no Bug Fixing Agent every repair is human, and none of it is billed."""
+        p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
+                                h_fix=1.0, f_fix=1.0, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), R=100, F_freeze=0)
+        state = SystemState(F_backlog=0, B_rel_min=500)
+        before = state.B_rel_min
+        actions = step_sprint(0, state, cfg, p, np.random.default_rng(24))
+        repaired = before - state.B_rel_min
+
+        assert repaired > 0
+        assert actions.fixes_human == pytest.approx(repaired)
+        assert actions.fixes_agent == pytest.approx(0.0)
+        assert actions.units[2] == pytest.approx(0.0)   # k=3 bills nothing
+
+    def test_fixes_agent_is_exactly_the_billed_bug_fixing_unit(self, base_params):
+        """fixes_agent duplicates u_3 by construction — pin that they cannot drift."""
+        p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
+                                f_fix=0.0, h_feature=1e9, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1, k3=2), R=100, F_freeze=0)
+        state = SystemState(F_backlog=0, B_rel_maj=200)
+        rng = np.random.default_rng(25)
+        for t in range(5):
+            actions = step_sprint(t, state, cfg, p, rng)
+            assert actions.fixes_agent > 0
+            assert actions.fixes_agent == pytest.approx(actions.units[2])
+
+    def test_feature_freeze_moves_humans_off_features_onto_bugs(self, base_params):
+        """Eq. (fixhuman_freeze): impl_human is zero in a freeze sprint, fixes are not."""
+        p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
+                                h_feature=0.1, h_fix=1.0, f_fix=0.0, Gamma_doc=0.0)
+        # R=2 with F_freeze=1 makes t=1 a freeze sprint and t=0 a development one.
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), A_qa=_A(k3=0), R=2, F_freeze=1)
+
+        dev_state = SystemState(F_backlog=10, B_rel_min=100)
+        dev = step_sprint(0, dev_state, cfg, p, np.random.default_rng(26))
+        # f_fix = 0 outside the freeze, so the humans code and fix nothing.
+        assert dev.impl_human > 0
+        assert dev.fixes_human == pytest.approx(0.0)
+
+        qa_state = SystemState(F_backlog=10, B_rel_min=100)
+        qa = step_sprint(1, qa_state, cfg, p, np.random.default_rng(26))
+        assert qa.impl_human == pytest.approx(0.0)
+        assert qa.fixes_human > 0
+
+    def test_implemented_proposals_are_recoverable_from_the_billed_unit(self, base_params):
+        """u_1 conflates agent features with proposals; impl_agents un-conflates it."""
+        from src.sprint import ARCH_IMPL_COST_UNITS
+        p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0,
+                                delta_min=1.0, h_feature=1e9, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=2, A_dev=_A(k1=1), R=8, F_freeze=0)
+        # Capacity is floor(r_F * 1.0 * 1) = 3: two proposals, then one backlog feature.
+        state = SystemState(F_backlog=5, Q_arch_impl=2)
+        actions = step_sprint(0, state, cfg, p, np.random.default_rng(27))
+
+        arch_impl = (actions.units[0] - actions.impl_agents) / ARCH_IMPL_COST_UNITS
+        assert arch_impl == pytest.approx(2.0)
+        assert actions.impl_agents == pytest.approx(1.0)

@@ -43,28 +43,32 @@ config/
     horizon_default.json      Monte Carlo protocol of §4.2: T=104, K=100, master_seed=42
     team_default.json         default team configuration (N, R, F_freeze, A_dev, A_qa)
     human_{low,medium,high}.json      scenario group: human developers (§4.1)
-    project_{low,medium,high}.json    scenario group: project dynamics
+    project_{low,medium,high,veryhigh}.json  scenario group: project dynamics
+                                      (veryhigh = the extreme-velocity tier, §4.1)
     debt_{low,medium,high}.json       scenario group: debt dynamics
     agent_{low,medium,high}.json      scenario group: agent costs and throughput
     bugimpact_{low,medium,high}.json  scenario group: bug impact
     search_default.json       search config template: §4.2 range (N in quarter-FTE steps,
                               R, F_freeze, sigma) and budget, all groups medium
-    search/search_<id>.json   the 243 generated scenario searches (§4.2); id = h-l_p-m_d-h_a-l_b-m
+    search/search_<id>.json   the 324 generated scenario searches (§4.2); id = h-l_p-v_d-h_a-l_b-m
     startstate_default.json   initial SystemState values (all-zero baseline)
 
 scripts/
-    generate_search_configs.py  write the 243 config/search/*.json from search_default.json
+    generate_search_configs.py  write the 324 config/search/*.json from search_default.json
     collect_results.py          consolidate a campaign into frontiers.csv + scenarios.csv
     analyze_results.py          the §5 results analysis: derived tables + figures
-run_experiments.sh      campaign driver: 486 searches in parallel, resumable (§4.2)
+run_experiments.sh      campaign driver: 648 searches in parallel, resumable (§4.2)
 
-tests/                  pytest suite (337 tests, ~50 s)
+tests/                  pytest suite (459 tests, ~2 min)
 results/                persisted sweep and campaign results (not committed).
-                        Everything under results/experiments and results/analysis is
-                        stale as of the removal of the span-of-control variable M:
-                        the search space, the RNG config hash and the sample-key
-                        format (N2_M3_R4_00042 -> N2_R4_00042) all changed, on top of
-                        the earlier FTE change. The campaign needs a full re-run.
+                        results/experiments holds a complete post-M re-run: 486/486
+                        searches over the 243 three-tier scenarios, plus frontiers.csv
+                        (55,441 frontier configurations) and scenarios.csv;
+                        results/analysis is the §5 output derived from it. Both predate
+                        the human/agent contribution counters *and* the very high project
+                        tier, so they carry no impl_/fixes_ columns, no
+                        human_feature_share and none of the 81 p-v scenarios — those need
+                        another re-run.
 ```
 
 ---
@@ -103,10 +107,10 @@ Useful `optimize` flags: `--samples {all,frontier,none}` controls which candidat
 `samples/<key>.json` (default `frontier`; `all` is ~12 KB × 10,000 per search), and
 `--progress-every N` throttles the progress lines (`0` silences them).
 
-**Run the full §4.2 campaign** (243 scenarios × 2 strategies = 486 searches, ~300 core-hours):
+**Run the full §4.2 campaign** (324 scenarios × 2 strategies = 648 searches, ~400 core-hours):
 ```bash
-python scripts/generate_search_configs.py     # once: writes the 243 config/search/*.json
-DRY_RUN=1 ./run_experiments.sh                # list the 486 jobs
+python scripts/generate_search_configs.py     # once: writes the 324 config/search/*.json
+DRY_RUN=1 ./run_experiments.sh                # list the 648 jobs
 LIMIT=2 ./run_experiments.sh                  # smoke test
 JOBS=14 ./run_experiments.sh                  # full run; re-invoke to resume
 python scripts/collect_results.py             # → frontiers.csv, scenarios.csv
@@ -141,9 +145,9 @@ Writes into `results/analysis/`. §5 splits into two objects, and the outputs fo
   `plots/ratio_percentile_matrix_<strategy>.*` (both below).
   `--per-scenario` additionally dumps one figure per search.
 - *The per-scenario optimum*: `index_optima.csv` and `tables/index_optima.tex` — the
-  lowest-`quality_cost_index` point of each scenario (243 rows; the index is U-shaped
+  lowest-`quality_cost_index` point of each scenario (324 rows; the index is U-shaped
   along a front, so this is the knee, not an end). `results_analysis.index_optimum`
-  finds it, defaulting to one row per *front* (486) and taking `by=("scenario_id",)`
+  finds it, defaulting to one row per *front* (648) and taking `by=("scenario_id",)`
   for the table.
 - *Team compositions on that front* (below): `composition_prevalence.csv`,
   `composition_by_front_position.csv`, `composition_by_tier.csv`,
@@ -154,9 +158,9 @@ Plus `headline_summary.json` with the numbers §5 quotes in prose.
 Frontiers are analysed **per (scenario, strategy)**. `--value-threshold` (default 0.99)
 classifies bullet-1 deviations; `--throughput-threshold` (default 0.98) is the §5 filter.
 
-The two **matrix figures** separate **all five scenario groups at once**: a 3×3 grid
-faceting one group's tiers on x and another's on y, with the remaining three as marker
-colour, shape and size. Because they draw every front point, they are written one
+The two **matrix figures** separate **all five scenario groups at once**: a grid
+faceting one group's tiers on x and another's on y (3×3, or 3×4 when `project` is one of
+the two), with the remaining three as marker colour, shape and size. Because they draw every front point, they are written one
 strategy at a time — random and evolutionary differ by an order of magnitude in point
 count. Channel assignment defaults to agent on x, human on y, debt as colour, project as
 shape, bugimpact as size, and is set by `--matrix-x`, `--matrix-y`, `--matrix-color`,
@@ -233,11 +237,11 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 - **`N` is a staffing level in FTE, not a headcount** (paper §3.1): `N ∈ ℝ_{>0}` and may be fractional — `N = 0.25` is one developer investing a day a week, the §4.2 range runs `{0.25, 0.50, …, 5.00}`. `net_capacity(H_capacity, c_comm, N) = H_capacity − c_comm·⌈N−1⌉` in `src/config.py` is the per-FTE budget after communication — the peer count follows the *headcount* `⌈N⌉`, since a half-time developer is still one person. `H_capacity` and `c_salary` are both per FTE. The float `N` is folded into `rng._config_hash` at 1/100 FTE resolution.
 - **Two 8-element composition vectors**: `A_dev` for development sprints and `A_qa` for feature-freeze (QA) sprints. Neither carries a structural cap on `n_sup` — `TeamConfiguration` deliberately does not check one, because the only collective limit needs the scenario parameters and therefore lives in `src/feasibility.py`. `A_dev` requires `a_dev,1 ≥ 1` (at least one Feature Implementation Agent). `A_qa` requires `a_qa,1 = a_qa,2 = 0` (no Feature Implementation or Architecture agents during freeze).
 - **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`.
-- **Supervised roles are additionally capped by throughput saturation** (§3.13.1): `search_configurations.saturation_bounds(params, sigma)` returns `u_k = ⌈σ·W_k/ρ_k⌉` per supervised role, where `W_k` is the steady-state work that reaches the role (all of it derived from `r_arrival`) and `ρ_k` the throughput one agent sustains, with the debt amplifier at its floor `delta_min`. `σ` (`SearchConfiguration.sigma`, default and §4.2 value 2) is the headroom for Poisson arrival peaks. Beyond `u_k` an agent simply has no work, so the search does not spend budget there. With the calibrated rates this bites hard: `u_k = 1` for every role in 18 of the 27 project×agent×debt combinations, `u_1 = 2` at the high project tier — so `u_k`, not the feasibility gate, is usually what keeps compositions small.
+- **Supervised roles are additionally capped by throughput saturation** (§3.13.1): `search_configurations.saturation_bounds(params, sigma)` returns `u_k = ⌈σ·W_k/ρ_k⌉` per supervised role, where `W_k` is the steady-state work that reaches the role (all of it derived from `r_arrival`) and `ρ_k` the throughput one agent sustains, with the debt amplifier at its floor `delta_min`. `σ` (`SearchConfiguration.sigma`, default and §4.2 value 2) is the headroom for Poisson arrival peaks. Beyond `u_k` an agent simply has no work, so the search does not spend budget there. With the calibrated rates this bites hard on the three data-grounded project tiers: `u_k = 1` for every role in 18 of the 36 project×agent×debt combinations, `u_1 = 2` at the high project tier — so there `u_k`, not the feasibility gate, is what keeps compositions small. The very high project tier (`r_arrival = 1000`) inverts that: `u = (14–22, 8, 1–2, 1, ·, ·, 2, 3)`, i.e. up to 38 supervised agents, and it is then the human-capacity gate that binds — nothing below `N = 1.5` can monitor a large draw, and ~15 % of random-search candidates are rejected as infeasible at medium human/debt tiers (0 % at the other project tiers).
 - **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` draws each supervised role independently and uniformly in `{0, …, u_k}` (`{1, …, u_1}` for the dev implementer) and/or mutates both vectors evolutionarily. Stars-and-bars composition sampling is gone. Every draw is structurally valid by construction, so `_random_draws` returns `TeamConfiguration`s directly — there is no discarded-draw path in the sampler.
 - **Feasibility pre-filter** runs before any simulation. One rejection path, recorded and skipped: the human-capacity condition of §3.6 Eq. (feas_monitoring) (`failed_step = 1`). It still **consumes one evaluation of the search budget** (§4.2), in both strategies, so `n_evaluated` is the budget spend and `n_simulated` the realised simulation count — both are written to `manifest.json`. Rejected candidates are reported, never silently redrawn. (The old `failed_step = 0` budget-overrun path went away with `M`.)
 - **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
-- **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, giving 3^5 = 243 scenarios. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score.
+- **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, but **the grid is not a cube**: `project` carries a fourth `veryhigh` tier (`r_arrival = 1000` issues/week, a deliberately unrealistic extreme-velocity stress case — the high tier at 75 is already managed by two FTE), giving 3^4 · 4 = 324 scenarios. Read the tiers through `config.scenario_tiers(group)` / `config.scenario_tier_combinations()` / `config.scenario_id(tiers)`, never `SCENARIO_TIERS` (the three base tiers) — anything iterating `SCENARIO_TIERS` per group silently drops the `p-v` scenarios. `ALL_SCENARIO_TIERS` is the plotting/ordinal order and `TIER_INITIALS` the `l`/`m`/`h`/`v` codes the scenario ids and the LaTeX scenario codes share. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
 - **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `frontier` — the `ConfigResult`s are buffered in memory and only frontier members are written, *after* `pareto_frontier` has run. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`.
 - **21-dimensional state vector**: features (2), bugs by type×stage (12), technical debt and human capacity queues (5), test infrastructure and documentation (2).
@@ -245,7 +249,9 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 - **The §5 filtered front is computed over all candidates, not the recorded frontier**: `search_summary.json` stores objectives *and* config fields for every simulated candidate, not just the frontier ones. `results_analysis.build_campaign` filters that full pool to `value >= 0.98·r_arrival` and runs a fresh two-objective pass. Restricting to the recorded three-objective frontier would be correct under *strict* dominance (a 2-D non-dominated point cannot be 3-D dominated) but loses points under the CI-aware rule of §3.10, because a candidate can be eliminated in 3-D on a *value* significance that no longer applies once value is dropped. The 2-D pass reuses `pareto.pareto_frontier` with the value dimension flattened to a constant — do not write a second dominance implementation. Note the resulting front is only monotone in (quality, cost) after dropping the CI-co-retained points; that is expected.
 - **Composition analysis normalises supervised and background roles differently, and
   weights fronts equally**: the two background services (k=5 Code Review, k=6 Security
-  Audit) are unbounded and reach counts of 77 on the front, so a stacked bar over all
+  Audit) are unbounded — `search_configurations.background_count_max` draws them from
+  `{0, …, ⌊r_arrival⌋}`, so 75 at the high project tier and 1,000 at the very high one —
+  and reach counts of 77 on the (pre-veryhigh) front, so a stacked bar over all
   eight roles gives them ~77 % of its width and flattens the six supervised roles into
   nothing. `src/composition_analysis.py` therefore reports supervised roles as a **share
   of `n_sup`** (where the signal is: the Feature Implementation share falls 0.81 → 0.26
@@ -327,6 +333,27 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
   `_legacy_cost_components` with a `RuntimeWarning` for campaign files written before this
   change. The two extra means are **reporting only** — the §3.10 dominance rule stays
   three-objective and must not read them.
+- **Who did the work is recorded separately from the bill**: the per-role `actions` vector
+  is agent-only by construction, so it cannot answer "who implemented what". `u_1`
+  conflates agent features with implemented proposals, and the human share appears in no
+  entry at all (human cost is the headcount term of Eq. (cost_human), independent of what
+  the humans produced). `SprintActions` therefore carries four extra scalars beside
+  `units` — `impl_human`, `impl_agents`, `fixes_human`, `fixes_agent`, the paper's
+  impl_human'(t) / impl_agents(t) / Σ n^H_i(t) / fixes_agent(t) of §3.6 — which
+  `run_configuration` sums over the horizon into `ReplicationResult`, `pareto` averages
+  into `AggregatedObjectives` (means only, **no bootstrap CIs**), and `main._cmd_search`
+  writes to `search_summary.json`; `results_analysis` carries them to the flat table and
+  derives `human_feature_share` / `human_fix_share`. Three things to keep in mind:
+  **(a)** `units` must never be lengthened to hold them — its length is hard-checked in
+  `SprintActions.__post_init__` and `simulation.cost_components`, and
+  `tests/test_simulation.py` pins `rep.cost == sum(rep.actions)/max(1, F_completed)`;
+  **(b)** `fixes_agent` deliberately duplicates `actions_3`, and `impl_agents`
+  un-conflates `actions_1` (`arch_impl = (actions_1 - impl_agents) / ARCH_IMPL_COST_UNITS`),
+  so no separate `arch_impl` field is needed; **(c)** unlike the cost split there is **no
+  reconstruction** for older campaigns — `add_derived_columns` adds the shares only when
+  the inputs are present, with no `RuntimeWarning` fallback. The invariant worth testing
+  against is `impl_human + impl_agents == F_completed(T) == value·T`, exact by Eq. (impl).
+  Like the cost split, all four are **reporting only** and invisible to §3.10.
 
 ---
 

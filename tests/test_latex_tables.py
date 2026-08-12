@@ -13,7 +13,12 @@ import itertools
 import pandas as pd
 import pytest
 
-from src.config import AGENT_ROLE_COUNT, SCENARIO_GROUPS, SCENARIO_TIERS
+from src.config import (
+    AGENT_ROLE_COUNT,
+    SCENARIO_GROUPS,
+    SCENARIO_TIERS,
+    scenario_tiers,
+)
 from src.latex_tables import (
     escape,
     format_number,
@@ -44,10 +49,10 @@ def _optimum_row(tiers: dict[str, str], i: int) -> dict:
 
 @pytest.fixture
 def optima() -> pd.DataFrame:
-    """One row for each of nine tier combinations, the rest of the groups medium."""
+    """One row per (human, project) tier pair, the rest of the groups medium."""
     rows = []
     for i, (human, project) in enumerate(
-        itertools.product(SCENARIO_TIERS, SCENARIO_TIERS)
+        itertools.product(SCENARIO_TIERS, scenario_tiers("project"))
     ):
         tiers = {group: "medium" for group in SCENARIO_GROUPS}
         tiers.update(human=human, project=project)
@@ -94,6 +99,13 @@ def test_scenario_code_uses_group_order(optima):
     tiers.update(human="low", bugimpact="high")
     row = pd.Series({f"tier_{g}": t for g, t in tiers.items()})
     assert scenario_code(row) == "LMMMH"
+
+
+def test_scenario_code_marks_the_very_high_project_tier(optima):
+    tiers = {group: "medium" for group in SCENARIO_GROUPS}
+    tiers.update(project="veryhigh")
+    row = pd.Series({f"tier_{g}": t for g, t in tiers.items()})
+    assert scenario_code(row) == "MVMMM"
 
 
 def test_cells_are_escaped():

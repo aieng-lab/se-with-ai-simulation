@@ -66,6 +66,43 @@ class TestSaveLoadResult:
         save_result(small_result, small_agg, path)
         assert path.exists()
 
+    def test_round_trip_keeps_the_reported_extras(self, tmp_path, small_result, small_agg):
+        """The cost split, the per-role work and the contribution counts all survive."""
+        path = tmp_path / "result.json"
+        save_result(small_result, small_agg, path)
+        loaded_result, loaded_agg = load_result(path)
+
+        for loaded, original in zip(loaded_result.replications, small_result.replications):
+            assert loaded.cost_human == pytest.approx(original.cost_human)
+            assert loaded.cost_agent == pytest.approx(original.cost_agent)
+            assert loaded.actions == pytest.approx(original.actions)
+            for field in ("impl_human", "impl_agents", "fixes_human", "fixes_agent"):
+                assert getattr(loaded, field) == pytest.approx(getattr(original, field))
+
+        for field in ("cost_human_mean", "cost_agent_mean", "impl_human_mean",
+                      "impl_agents_mean", "fixes_human_mean", "fixes_agent_mean"):
+            assert getattr(loaded_agg, field) == pytest.approx(getattr(small_agg, field))
+        assert loaded_agg.actions_mean == pytest.approx(small_agg.actions_mean)
+
+    def test_load_result_without_the_contribution_counts(self, tmp_path):
+        """Campaign files written before the counters existed still load, with zeros."""
+        import json
+        old = {"config": {"N": 1, "A_dev": [1] * 8, "R": 4, "F_freeze": 0,
+                          "A_qa": [0] * 8},
+               "replications": [{"value": 1.0, "quality": 2.0, "cost": 3.0}],
+               "aggregated": {"value_mean": 1.0, "quality_mean": 2.0, "cost_mean": 3.0,
+                              "value_ci": [1.0, 1.0], "quality_ci": [2.0, 2.0],
+                              "cost_ci": [3.0, 3.0]}}
+        p = tmp_path / "old.json"
+        p.write_text(json.dumps(old))
+        result, agg = load_result(p)
+
+        rep = result.replications[0]
+        assert (rep.impl_human, rep.impl_agents) == (0.0, 0.0)
+        assert (rep.fixes_human, rep.fixes_agent) == (0.0, 0.0)
+        assert agg.impl_human_mean == 0.0 and agg.fixes_agent_mean == 0.0
+        assert rep.value == pytest.approx(1.0)   # the objectives still come through
+
     def test_load_wrong_A_length_raises(self, tmp_path):
         import json
         bad = {"config": {"N": 1, "A_dev": [1] * 5, "R": 1},

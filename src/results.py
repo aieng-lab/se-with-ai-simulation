@@ -59,7 +59,9 @@ def save_result(
         "replications": [
             {"value": r.value, "quality": r.quality, "cost": r.cost,
              "cost_human": r.cost_human, "cost_agent": r.cost_agent,
-             "actions": list(r.actions)}
+             "actions": list(r.actions),
+             "impl_human": r.impl_human, "impl_agents": r.impl_agents,
+             "fixes_human": r.fixes_human, "fixes_agent": r.fixes_agent}
             for r in result.replications
         ],
         "aggregated": {
@@ -72,6 +74,10 @@ def save_result(
             "cost_human_mean": agg.cost_human_mean,
             "cost_agent_mean": agg.cost_agent_mean,
             "actions_mean": list(agg.actions_mean),
+            "impl_human_mean": agg.impl_human_mean,
+            "impl_agents_mean": agg.impl_agents_mean,
+            "fixes_human_mean": agg.fixes_human_mean,
+            "fixes_agent_mean": agg.fixes_agent_mean,
         },
     }
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -91,13 +97,18 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     config = TeamConfiguration(N=cfg["N"], A_dev=A_dev, R=cfg["R"],
                                F_freeze=F_freeze, A_qa=A_qa)
 
-    # The cost split and the action counts postdate the usage-based cost model; files
-    # written before it carry neither, so both default to empty rather than failing.
+    # The cost split and the action counts postdate the usage-based cost model, and the
+    # human/agent contribution counts postdate the §4.2 campaign; files written before
+    # either carry none of them, so all default rather than failing.
     replications = tuple(
         ReplicationResult(value=r["value"], quality=r["quality"], cost=r["cost"],
                           cost_human=r.get("cost_human", 0.0),
                           cost_agent=r.get("cost_agent", 0.0),
-                          actions=tuple(r.get("actions", ())))
+                          actions=tuple(r.get("actions", ())),
+                          impl_human=r.get("impl_human", 0.0),
+                          impl_agents=r.get("impl_agents", 0.0),
+                          fixes_human=r.get("fixes_human", 0.0),
+                          fixes_agent=r.get("fixes_agent", 0.0))
         for r in data["replications"]
     )
     result = ConfigResult(config=config, replications=replications)
@@ -113,6 +124,10 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
         cost_human_mean=ag.get("cost_human_mean", 0.0),
         cost_agent_mean=ag.get("cost_agent_mean", 0.0),
         actions_mean=tuple(ag.get("actions_mean", ())),
+        impl_human_mean=ag.get("impl_human_mean", 0.0),
+        impl_agents_mean=ag.get("impl_agents_mean", 0.0),
+        fixes_human_mean=ag.get("fixes_human_mean", 0.0),
+        fixes_agent_mean=ag.get("fixes_agent_mean", 0.0),
     )
     return result, agg
 

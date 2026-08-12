@@ -8,13 +8,12 @@ variant — a percentile computed per front) rather than just drawing a point cl
 
 from __future__ import annotations
 
-import itertools
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
-from src.config import SCENARIO_GROUPS, SCENARIO_TIERS
+from src.config import SCENARIO_GROUPS, scenario_tier_combinations, scenario_tiers
 from src.visualization import (
     plot_composition_archetypes,
     plot_composition_drift,
@@ -41,9 +40,9 @@ def _row(tiers: dict[str, str], quality: float, cost: float) -> dict:
 
 @pytest.fixture
 def synthetic_front() -> pd.DataFrame:
-    """Two points for every one of the 3^5 = 243 tier combinations."""
+    """Two points for every one of the 3^4 * 4 = 324 tier combinations."""
     rows = []
-    for i, combo in enumerate(itertools.product(SCENARIO_TIERS, repeat=len(SCENARIO_GROUPS))):
+    for i, combo in enumerate(scenario_tier_combinations()):
         tiers = dict(zip(SCENARIO_GROUPS, combo))
         rows.append(_row(tiers, quality=1.0 + i, cost=100.0 + i))
         rows.append(_row(tiers, quality=2.0 + i, cost=50.0 + i))
@@ -63,8 +62,9 @@ def test_matrix_default_layout(synthetic_front):
         left_column = [axes[3 * r].get_ylabel().splitlines()[0] for r in range(3)]
         assert left_column == ["human = low", "human = medium", "human = high"]
 
-        # Every cell holds 2 points × 27 combinations of the other three groups.
-        assert axes[0].get_title(loc="right") == "n = 54"
+        # Every cell holds 2 points × 36 combinations of the other three groups
+        # (debt 3 × project 4 × bugimpact 3).
+        assert axes[0].get_title(loc="right") == "n = 72"
 
         # x-labels only on the bottom row.
         assert axes[0].get_xlabel() == ""
@@ -91,6 +91,34 @@ def test_matrix_custom_channel_assignment(synthetic_front):
         axes = fig.get_axes()
         assert axes[0].get_title(loc="center") == "debt = low"
         assert axes[0].get_ylabel().startswith("bugimpact = low")
+    finally:
+        plt.close(fig)
+
+
+def test_matrix_facets_the_four_tier_project_group(synthetic_front):
+    """`project` has a fourth tier, so faceting on it widens the grid to 3×4."""
+    fig = plot_quality_cost_matrix(synthetic_front, x_group="project",
+                                   marker_group="agent")
+    try:
+        axes = fig.get_axes()
+        assert len(axes) == 12
+        assert [axes[i].get_title(loc="center") for i in range(4)] == [
+            "project = low", "project = medium", "project = high",
+            "project = veryhigh",
+        ]
+    finally:
+        plt.close(fig)
+
+
+def test_matrix_legends_follow_the_tiers_of_their_own_group(synthetic_front):
+    """The default marker channel is `project`, so its legend has four entries."""
+    fig = plot_quality_cost_matrix(synthetic_front)
+    try:
+        legends = {lg.get_title().get_text(): [t.get_text() for t in lg.get_texts()]
+                   for lg in fig.legends}
+        assert legends["project (shape)"] == ["low", "medium", "high", "veryhigh"]
+        assert legends["debt (colour)"] == ["low", "medium", "high"]
+        assert legends["bugimpact (size)"] == ["low", "medium", "high"]
     finally:
         plt.close(fig)
 
@@ -179,7 +207,7 @@ def test_save_figure_writes_file(synthetic_front, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_ratio_matrix_layout_and_scales(synthetic_front):
-    """Same 3×3 facets as the quality/cost matrix, but a linear percentage x-axis."""
+    """Same facets as the quality/cost matrix, but a linear percentage x-axis."""
     fig = plot_ratio_percentile_matrix(synthetic_front)
     try:
         axes = fig.get_axes()
@@ -281,7 +309,7 @@ def composition_front() -> pd.DataFrame:
     qa_rich = (0, 0, 2, 1, 7, 5, 1, 1)
 
     rows = []
-    for combo in itertools.product(SCENARIO_TIERS, repeat=len(SCENARIO_GROUPS)):
+    for combo in scenario_tier_combinations():
         tiers = dict(zip(SCENARIO_GROUPS, combo))
         rows.append(_composition_row(tiers, lean, qa_lean, quality=50.0, cost=100.0))
         rows.append(_composition_row(tiers, rich, qa_rich, quality=5.0, cost=900.0))
@@ -352,7 +380,7 @@ def test_tier_heatmap_has_one_row_per_tier(composition_front):
         axes = fig.get_axes()
         assert len(axes) == 3            # shares | background | controls
         rows = [t.get_text() for t in axes[0].get_yticklabels()]
-        assert len(rows) == len(SCENARIO_GROUPS) * len(SCENARIO_TIERS)
+        assert len(rows) == sum(len(scenario_tiers(g)) for g in SCENARIO_GROUPS) == 16
         assert rows[0] == "human · low"
         assert rows[-1] == "bugimpact · high"
         # Column blocks: 6 supervised roles, 2 background roles, the control variables.

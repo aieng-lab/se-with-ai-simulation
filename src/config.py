@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
 from typing import Optional
@@ -13,9 +14,65 @@ AGENT_ROLE_COUNT = 8
 # field exactly once.
 SCENARIO_GROUPS: tuple[str, ...] = ("human", "project", "debt", "agent", "bugimpact")
 
-# The three tiers each scenario group is defined at (paper §4.1).  Combining them
-# freely across the five groups yields the 3^5 = 243 scenarios of paper §4.2.
+# The three tiers every scenario group is defined at (paper §4.1).
 SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high")
+
+# `project` carries a fourth, extreme-velocity tier on top of those three
+# (r_arrival = 1000 issues/week, paper §4.1): the high tier is already managed by
+# two FTE, so it does not stress the simulation.  The tier grid is therefore *not*
+# a cube — combining the per-group tiers freely yields 3^4 * 4 = 324 scenarios
+# (paper §4.2).  Read tiers through `scenario_tiers` / `scenario_tier_combinations`
+# rather than assuming SCENARIO_TIERS applies to every group.
+SCENARIO_GROUP_TIERS: dict[str, tuple[str, ...]] = {
+    "human": SCENARIO_TIERS,
+    "project": SCENARIO_TIERS + ("veryhigh",),
+    "debt": SCENARIO_TIERS,
+    "agent": SCENARIO_TIERS,
+    "bugimpact": SCENARIO_TIERS,
+}
+
+# Every tier name in use anywhere, in canonical mild -> extreme order.  Plot legends
+# and ordinal encodings iterate this; a group that lacks a tier simply has no rows.
+ALL_SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high", "veryhigh")
+
+# One-letter tier code, used by the scenario ids (`p-v`) and the LaTeX scenario
+# codes (uppercased).  Distinct per tier, so a scenario id round-trips to its tiers.
+TIER_INITIALS: dict[str, str] = {
+    "low": "l", "medium": "m", "high": "h", "veryhigh": "v",
+}
+
+
+def scenario_tiers(group: str) -> tuple[str, ...]:
+    """The tiers `group` is defined at, in mild -> extreme order."""
+    try:
+        return SCENARIO_GROUP_TIERS[group]
+    except KeyError:
+        raise ValueError(f"unknown scenario group {group!r}") from None
+
+
+def scenario_tier_combinations() -> list[tuple[str, ...]]:
+    """Every tier combination of paper §4.2, one tuple per group in SCENARIO_GROUPS order.
+
+    The product of the *per-group* tiers, so 3^4 * 4 = 324 combinations rather than
+    3^5: only `project` carries the fourth tier.
+    """
+    return list(itertools.product(*(scenario_tiers(g) for g in SCENARIO_GROUPS)))
+
+
+def scenario_id(tiers: tuple[str, ...]) -> str:
+    """Compact label of a tier combination, e.g. ``h-l_p-v_d-h_a-l_b-m``.
+
+    One ``<group initial>-<tier initial>`` token per group, in SCENARIO_GROUPS order.
+    Both initial sets are distinct, so the label round-trips to the tier tuple
+    (`src.results_analysis.tiers_from_scenario_id`).
+    """
+    if len(tiers) != len(SCENARIO_GROUPS):
+        raise ValueError(f"expected {len(SCENARIO_GROUPS)} tiers, got {len(tiers)}")
+    return "_".join(
+        f"{group[0]}-{TIER_INITIALS[tier]}"
+        for group, tier in zip(SCENARIO_GROUPS, tiers)
+    )
+
 
 # Retention policy for the per-candidate result.json files a search writes:
 #   "all"      — one file per feasible candidate (10,000 per search at §4.2 scale)

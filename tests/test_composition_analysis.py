@@ -8,7 +8,6 @@ rather than points equally.  Both get a dedicated regression test below.
 
 from __future__ import annotations
 
-import itertools
 
 import numpy as np
 import pandas as pd
@@ -27,7 +26,7 @@ from src.composition_analysis import (
     role_prevalence,
     signature_label,
 )
-from src.config import SCENARIO_GROUPS, SCENARIO_TIERS
+from src.config import SCENARIO_GROUPS, scenario_tier_combinations, scenario_tiers
 
 
 def _row(
@@ -66,7 +65,7 @@ def synthetic_front() -> pd.DataFrame:
     qa_rich = (0, 0, 2, 1, 7, 5, 1, 1)
 
     rows = []
-    for combo in itertools.product(SCENARIO_TIERS, repeat=len(SCENARIO_GROUPS)):
+    for combo in scenario_tier_combinations():
         tiers = dict(zip(SCENARIO_GROUPS, combo))
         sid = "_".join(f"{g[0]}-{tiers[g][0]}" for g in SCENARIO_GROUPS)
         for strategy in ("random", "evolutionary"):
@@ -237,7 +236,7 @@ def test_front_position_bins_span_the_front(synthetic_front):
 def test_tier_table_covers_every_group_and_tier(synthetic_front):
     table = composition_by_tier(synthetic_front, "dev")
     assert set(table["group"]) == set(SCENARIO_GROUPS)
-    assert set(table["tier"]) == set(SCENARIO_TIERS)
+    assert set(table["tier"]) == {t for g in SCENARIO_GROUPS for t in scenario_tiers(g)}
     assert set(table["kind"]) == {"share", "background", "control"}
     # Deviations are taken against the group's own tier mean, so they cancel out.
     summed = table.groupby(["strategy", "group", "quantity"])["deviation"].sum()

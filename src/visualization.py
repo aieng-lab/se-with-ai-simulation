@@ -25,7 +25,7 @@ per-search `objectives` dicts.
                                  marker_group, color_group, cost_field, title) -> Figure
     plot_value_saturation(df, threshold, title)                  -> Figure
 
-The last two share `_draw_matrix`, which owns the 3×3 five-channel layout; they differ
+The last two share `_draw_matrix`, which owns the tier-grid five-channel layout; they differ
 only in the pair of columns they put on the axes.  Both put the combined
 `quality_cost_index` on y — the *product* of the two minimised objectives, since their
 ratio rises when cost improves and so cannot be read as a score.  The raw two-objective
@@ -74,7 +74,13 @@ from .composition_analysis import (
     composition_by_tier,
     phase_columns,
 )
-from .config import AGENT_ROLE_ABBREV, AGENT_ROLE_COUNT, SCENARIO_GROUPS
+from .config import (
+    AGENT_ROLE_ABBREV,
+    AGENT_ROLE_COUNT,
+    ALL_SCENARIO_TIERS,
+    SCENARIO_GROUPS,
+    scenario_tiers,
+)
 from .pareto import AggregatedObjectives, pareto_frontier
 from .results_analysis import add_front_position, add_quality_cost_index
 
@@ -537,36 +543,39 @@ _COST_PANELS: tuple[tuple[str, str], ...] = (
     ("cost_agent_mean", "agent cost / feature ($)"),
 )
 
-# Ordered so the legend reads low → medium → high rather than alphabetically.
-_TIER_ORDER = ("low", "medium", "high")
-_TIER_COLORS = {"low": cm.tab10(0), "medium": cm.tab10(1), "high": cm.tab10(3)}
+# Ordered so the legend reads low → medium → high → veryhigh rather than alphabetically.
+# Only `project` has the fourth tier; for every other group that entry simply goes unused.
+_TIER_ORDER = ALL_SCENARIO_TIERS
+_TIER_COLORS = {"low": cm.tab10(0), "medium": cm.tab10(1), "high": cm.tab10(3),
+                "veryhigh": cm.tab10(4)}
 
 # y-axis label shared by the two matrix figures: the product of the two minimised
 # objectives, both of which already carry a per-feature denominator.
 _INDEX_LABEL = "↓  quality × cost index (bugs · $ / feature²)"
 
-# Marker shape per tier, for the 3×3 matrix plot.  A cross, an open circle and a filled
-# triangle stay apart from each other even when overplotted at small sizes; three filled
-# shapes do not.
-_TIER_MARKERS = {"low": "x", "medium": "o", "high": "^"}
-_TIER_MARKER_FILLED = {"low": False, "medium": False, "high": True}
+# Marker shape per tier, for the matrix plots.  A cross, an open circle, a filled
+# triangle and a filled square stay apart from each other even when overplotted at small
+# sizes; four filled shapes do not.
+_TIER_MARKERS = {"low": "x", "medium": "o", "high": "^", "veryhigh": "s"}
+_TIER_MARKER_FILLED = {"low": False, "medium": False, "high": True, "veryhigh": True}
 
 # Marker area (pt²) per tier.  A 20× spread from low to high (~4.5× in marker width) so
 # the size channel survives the alpha blending of a dense front.
-_TIER_SIZES = {"low": 3.0, "medium": 16.0, "high": 60.0}
+_TIER_SIZES = {"low": 3.0, "medium": 16.0, "high": 60.0, "veryhigh": 150.0}
+
+
+def _tiers_present(df: "pd.DataFrame", column: str) -> list[str]:
+    """The tiers occurring in `column`, in mild→extreme order.
+
+    Only `project` reaches "veryhigh", and the campaign may be partial, so the count
+    varies per group and callers must not assume a fixed set.
+    """
+    return [tier for tier in _TIER_ORDER if (df[column] == tier).any()]
 
 
 def _tier_groups(df: "pd.DataFrame", column: str) -> "list[tuple[str, pd.DataFrame]]":
-    """(tier, subframe) pairs in low→medium→high order, skipping empty tiers.
-
-    The campaign may be partial, so a tier can be absent entirely; callers must
-    not assume all three are present.
-    """
-    return [
-        (tier, df[df[column] == tier])
-        for tier in _TIER_ORDER
-        if (df[column] == tier).any()
-    ]
+    """(tier, subframe) pairs in mild→extreme order, skipping empty tiers."""
+    return [(tier, df[df[column] == tier]) for tier in _tiers_present(df, column)]
 
 
 def _log_floor(df: "pd.DataFrame", column: str = "quality_mean") -> float | None:
@@ -756,7 +765,7 @@ def _draw_matrix(
     yscale: str = "log",
     y_floor: float | None = None,
 ) -> "Figure":
-    """The 3×3 five-channel grid, for any pair of columns.
+    """The five-channel tier grid, for any pair of columns.
 
     Shared by :func:`plot_quality_cost_matrix` and
     :func:`plot_ratio_percentile_matrix`: the facet layout, the colour/shape/size
@@ -769,6 +778,12 @@ def _draw_matrix(
     rows = _tier_groups(df, f"tier_{y_group}")
     if not columns or not rows:
         raise ValueError("no rows for any tier of the faceting groups")
+
+    # Per channel, only the tiers the data actually has: the groups differ in tier
+    # count (`project` has four), so a fixed list would print dead legend entries.
+    size_tiers = _tiers_present(df, f"tier_{size_group}")
+    marker_tiers = _tiers_present(df, f"tier_{marker_group}")
+    color_tiers = _tiers_present(df, f"tier_{color_group}")
 
     floor = y_floor
 
@@ -787,9 +802,9 @@ def _draw_matrix(
                 cell = y_sub[y_sub[f"tier_{x_group}"] == x_tier]
                 scale, alpha = _density_style(len(cell))
                 # Largest markers first, so the small ones are not buried under them.
-                for size_tier in reversed(_TIER_ORDER):
-                    for marker_tier in _TIER_ORDER:
-                        for color_tier in _TIER_ORDER:
+                for size_tier in reversed(size_tiers):
+                    for marker_tier in marker_tiers:
+                        for color_tier in color_tiers:
                             sub = cell[
                                 (cell[f"tier_{size_group}"] == size_tier)
                                 & (cell[f"tier_{marker_group}"] == marker_tier)
@@ -822,28 +837,32 @@ def _draw_matrix(
         legend_specs = (
             (color_group, [
                 Line2D([], [], linestyle="none", marker="o", markersize=6,
-                       color=_TIER_COLORS[t], label=t) for t in _TIER_ORDER
+                       color=_TIER_COLORS[t], label=t) for t in color_tiers
             ]),
             (marker_group, [
                 Line2D([], [], linestyle="none", marker=_TIER_MARKERS[t], markersize=7,
                        color="0.35", markeredgecolor="0.35", label=t,
                        markerfacecolor="0.35" if _TIER_MARKER_FILLED[t] else "none")
-                for t in _TIER_ORDER
+                for t in marker_tiers
             ]),
             (size_group, [
                 Line2D([], [], linestyle="none", marker="o", color="0.35", label=t,
                        markersize=float(np.sqrt(_TIER_SIZES[t])) * 1.5)
-                for t in _TIER_ORDER
+                for t in size_tiers
             ]),
         )
         fig.tight_layout(rect=(0.0, 0.0, 0.86, 1.0))
+        # Stack the three legends by their own height: a four-tier channel (project)
+        # needs one more row than a three-tier one, or the next legend rides over it.
+        anchor_y = 0.92
         for i, (group, handles) in enumerate(legend_specs):
             fig.legend(
                 handles=handles, loc="upper left", frameon=True, fontsize=8,
                 title=f"{group} (" + ("colour", "shape", "size")[i] + ")",
                 title_fontsize=8, labelspacing=0.9,
-                bbox_to_anchor=(0.875, 0.92 - 0.20 * i),
+                bbox_to_anchor=(0.875, anchor_y),
             )
+            anchor_y -= 0.065 + 0.045 * len(handles)
     return fig
 
 
@@ -859,7 +878,7 @@ def plot_quality_cost_matrix(
 ) -> "Figure":
     """The combined quality×cost index against cost, all five groups at once.
 
-    The 3×3 grid of panels facets the tiers of `x_group` (columns) against those of
+    The grid of panels facets the tiers of `x_group` (columns) against those of
     `y_group` (rows); within a panel the remaining three groups are encoded as marker
     colour, marker shape and marker size.  Every point of `df` is drawn, so pass the
     front of a *single* search strategy — mixing strategies mixes two point clouds with
@@ -907,7 +926,7 @@ def plot_ratio_percentile_matrix(
     cost_field: str = "cost_mean",
     title: str = "",
 ) -> "Figure":
-    """The quality×cost index against position along the front — same 3×3 grid.
+    """The quality×cost index against position along the front — same tier grid.
 
     A variant of :func:`plot_quality_cost_matrix` for the throughput-filtered front,
     where every point delivers the same number of features so the two remaining
@@ -1363,12 +1382,13 @@ def plot_composition_tier_heatmap(
 ) -> "Figure":
     """Which scenario conditions push which roles.
 
-    Rows are the fifteen scenario tiers (five groups × low/medium/high), grouped and
+    Rows are the sixteen scenario tiers (five groups × low/medium/high, plus the very
+    high project tier), grouped and
     separated; the three column blocks are the supervised shares, the background agent
     counts and the control variables.
 
     Cell **colour** is the deviation from the mean of that quantity over its own group's
-    three tiers, scaled by the largest absolute deviation in the column — so colour shows
+    tiers, scaled by the largest absolute deviation in the column — so colour shows
     the tier effect, comparably across quantities whose magnitudes differ by orders.
     Cell **text** is the actual value.  Pass a single strategy.
     """
@@ -1386,7 +1406,7 @@ def plot_composition_tier_heatmap(
         fig.suptitle(title or "Composition by scenario tier", fontsize=12, y=1.05)
         fig.text(
             0.5, 1.01,
-            "cell text = value   ·   colour = deviation from that group's three-tier "
+            "cell text = value   ·   colour = deviation from that group's own tier "
             "mean, scaled by the column's largest deviation (red above, blue below)",
             ha="center", va="top", fontsize=8, color="0.35",
         )
@@ -1405,7 +1425,7 @@ def plot_composition_tier_heatmap(
                 (list(bg_cols), "background agents"),
                 (list(CONTROL_COLUMNS), "team controls"),
             )
-            index = [(g, t) for g in SCENARIO_GROUPS for t in _TIER_ORDER]
+            index = [(g, t) for g in SCENARIO_GROUPS for t in scenario_tiers(g)]
             values = table.pivot_table(
                 index=["group", "tier"], columns="quantity",
                 values="value", aggfunc="mean", observed=True,
@@ -1421,6 +1441,7 @@ def plot_composition_tier_heatmap(
                     ax, values[columns], deviations[columns],
                     labels=[_quantity_label(c) for c in columns],
                     row_labels=[f"{g} · {t}" for g, t in index] if col == 0 else None,
+                    group_sizes=[len(scenario_tiers(g)) for g in SCENARIO_GROUPS],
                 )
                 ax.set_title(heading, fontsize=9, loc="left")
                 if col == 0:
@@ -1443,6 +1464,7 @@ def _tier_heatmap_block(
     deviations: "pd.DataFrame",
     labels: list[str],
     row_labels: list[str] | None,
+    group_sizes: list[int] | None = None,
 ) -> None:
     """One column block of the tier heat map, coloured by per-column scaled deviation."""
     raw = deviations.to_numpy(dtype=float)
@@ -1470,9 +1492,14 @@ def _tier_heatmap_block(
             colour = "white" if abs(normed[i, j]) > 0.62 else "black"
             ax.text(j, i, text, ha="center", va="center", fontsize=6, color=colour)
 
-    # Separate the five scenario groups; every group contributes three tier rows.
-    for boundary in range(3, len(values), 3):
-        ax.axhline(boundary - 0.5, color="black", linewidth=1.1)
+    # Separate the five scenario groups.  Groups contribute a different number of tier
+    # rows (`project` has four), so the boundaries are the running row counts.
+    sizes = group_sizes if group_sizes is not None else [3] * (len(values) // 3)
+    boundary = 0
+    for size in sizes[:-1]:
+        boundary += size
+        if 0 < boundary < len(values):
+            ax.axhline(boundary - 0.5, color="black", linewidth=1.1)
     ax.grid(False)
 
 

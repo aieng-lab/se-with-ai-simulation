@@ -45,17 +45,39 @@ ARCH_IMPL_COST_UNITS = 5.0
 
 @dataclass(frozen=True, slots=True)
 class SprintActions:
-    """Work units completed by each agent role in one sprint, indexed k=1..8.
+    """Work completed in one sprint: the billable agent vector plus who-did-what counts.
 
-    Each entry is denominated in the same unit as that role's throughput rate r_k
+    `units` holds the work units of each agent role, indexed k=1..8.  Each entry is
+    denominated in the same unit as that role's throughput rate r_k
     (features for k=1, change requests for k=2, bugs for k=3, debt for k=4, deployed
     instances for the flat-rate services k=5,6, tests for k=7, documents for k=8), so
     the agent cost of paper Eq. (cost_agents) is the plain inner product with
     `c_token`.  The state vector of §3.4 stays 21-dimensional: these counts are
     returned rather than stored.
+
+    The four scalars are *contribution accounting*, not billing — nothing reads them
+    for cost, and `units` stays the sole billable vector.  They exist because the
+    human/agent split of the work is otherwise unrecoverable downstream: `units[0]`
+    conflates agent features with implemented architecture proposals, and human work
+    appears in no entry at all (human cost is the headcount term of Eq. (cost_human),
+    independent of what the humans produced).  Paper symbols, all §3.6:
+
+        impl_human   impl_human'(t), Eq. (impl_human_capped) — features *delivered* by
+                     humans, i.e. after the demand cap, not the budget of Eq. (implhuman)
+        impl_agents  impl_agents(t), Eq. (impl_agents)
+        fixes_human  sum of the per-tier n^H_i(t) of Eq. (human_fixes)
+        fixes_agent  fixes_agent(t) — deliberately duplicates `units[2]`, so that the
+                     human/agent pair reads symmetrically at the call site
+
+    Recording `impl_agents` also un-conflates `units[0]`: the implemented proposals come
+    back as `(units[0] - impl_agents) / ARCH_IMPL_COST_UNITS`.
     """
 
     units: tuple[float, ...]
+    impl_human: float = 0.0
+    impl_agents: float = 0.0
+    fixes_human: float = 0.0
+    fixes_agent: float = 0.0
 
     def __post_init__(self) -> None:
         if len(self.units) != AGENT_ROLE_COUNT:
@@ -286,9 +308,11 @@ def step_sprint(
     # the debt update below that is driven by all repairs regardless of who made them.
     fixes_agent = (rel_fixes_min + rel_fixes_maj + rel_fixes_sec
                  + fixes_min     + fixes_maj     + fixes_sec)
-    total_fixes = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
-                 + h_fixes_min    + h_fixes_maj    + h_fixes_sec
-                 + fixes_agent)
+    # Sum^6_i n^H_i(t) of Eq. (human_fixes), written out rather than derived as
+    # total_fixes - fixes_agent so that it mirrors the agent sum above.
+    fixes_human = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
+                 + h_fixes_min    + h_fixes_maj    + h_fixes_sec)
+    total_fixes = fixes_human + fixes_agent
 
     # ------------------------------------------------------------------
     # Escalation queue update
@@ -353,15 +377,22 @@ def step_sprint(
     # work reaches it: roles 1-4 through the queues they drain, roles 7-8 through the
     # coverage caps above.  The background services have no discrete unit of output, so
     # they are charged per deployed instance per sprint (r_5 = r_6 = 1).
-    return SprintActions(units=(
-        # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each
-        float(impl_agents + ARCH_IMPL_COST_UNITS * arch_impl_done),
-        float(arch_chg_done),                  # k=2 change requests resolved
-        float(fixes_agent),                    # k=3 bugs repaired by agents
-        float(refactor_applied),               # k=4 technical debt removed
-        float(A_active[4]),                    # k=5 deployed review instances
-        float(A_active[5]),                    # k=6 deployed audit instances
-        tests_written,                         # k=7 tests written
-        docs_written,                          # k=8 documentation items written
-    ))
+    return SprintActions(
+        units=(
+            # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each
+            float(impl_agents + ARCH_IMPL_COST_UNITS * arch_impl_done),
+            float(arch_chg_done),                  # k=2 change requests resolved
+            float(fixes_agent),                    # k=3 bugs repaired by agents
+            float(refactor_applied),               # k=4 technical debt removed
+            float(A_active[4]),                    # k=5 deployed review instances
+            float(A_active[5]),                    # k=6 deployed audit instances
+            tests_written,                         # k=7 tests written
+            docs_written,                          # k=8 documentation items written
+        ),
+        # Contribution accounting, not billed — see the class docstring.
+        impl_human=float(impl_human),
+        impl_agents=float(impl_agents),
+        fixes_human=float(fixes_human),
+        fixes_agent=float(fixes_agent),
+    )
 

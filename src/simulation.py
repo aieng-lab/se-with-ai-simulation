@@ -32,6 +32,14 @@ class ReplicationResult:
     # Kept so the analysis can tell a role that worked from one that was merely
     # deployed; `cost_agent` is its inner product with c_token.
     actions: tuple[float, ...] = ()
+    # Who did the work, summed over the horizon: features delivered and bugs repaired,
+    # split by human developers and agents (see SprintActions for the paper symbols).
+    # Reporting only — not billable, and invisible to the §3.10 dominance relation.
+    # `impl_human + impl_agents == F_completed(T)` exactly, by Eq. (impl).
+    impl_human: float = 0.0
+    impl_agents: float = 0.0
+    fixes_human: float = 0.0
+    fixes_agent: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +180,7 @@ def _run_replication(
     # ------------------------------------------------------------------
     state = dataclasses.replace(initial_state) if initial_state is not None else SystemState()
 
-    snapshots: list[SprintSnapshot] = [] if capture_traces else []  # type: ignore[assignment]
+    snapshots: list[SprintSnapshot] = []
 
     # ------------------------------------------------------------------
     # Sprint loop
@@ -180,11 +188,19 @@ def _run_replication(
     # Work completed per role over the horizon; the agent bill is its inner product
     # with c_token (Eq. cost_agents).
     actions = [0.0] * AGENT_ROLE_COUNT
+    # The human/agent contribution split over the same horizon (reporting only).
+    impl_human = impl_agents = fixes_human = fixes_agent = 0.0
 
     for t in range(settings.T):
         sprint_actions = step_sprint(t, state, config, params, rng)
-        for k in range(AGENT_ROLE_COUNT):
-            actions[k] += sprint_actions.units[k]
+        # NB: not `k` — that is the replication index, and shadowing it here used to
+        # label every ReplicationTrace with the last role index instead.
+        for role in range(AGENT_ROLE_COUNT):
+            actions[role] += sprint_actions.units[role]
+        impl_human  += sprint_actions.impl_human
+        impl_agents += sprint_actions.impl_agents
+        fixes_human += sprint_actions.fixes_human
+        fixes_agent += sprint_actions.fixes_agent
 
         # Optional trace capture (after all state updates)
         if capture_traces:
@@ -234,6 +250,10 @@ def _run_replication(
         cost_human=C_human / denom,
         cost_agent=C_agents / denom,
         actions=tuple(actions),
+        impl_human=impl_human,
+        impl_agents=impl_agents,
+        fixes_human=fixes_human,
+        fixes_agent=fixes_agent,
     )
 
     trace = ReplicationTrace(k=k, result=result, snapshots=tuple(snapshots)) if capture_traces else None
