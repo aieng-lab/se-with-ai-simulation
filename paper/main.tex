@@ -1305,7 +1305,7 @@ $c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salari
 
 \subsubsection{Project dynamics parameters}
 
-To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
+To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. Moreover, since two FTE developers could already manage the highest throughput, this does not stress the simulation to assess extreme-velocity scenarios. Therefore, we add a very high tier as well, that has 1000 issues per week. While this might be unrealistically high, this will show if and how such extreme scales could be managed by a single team. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
 
 To understand how often issues affect architecture, we use data from \cite{shahbazian2018toward}, who used automated methods to determine whether the change triggered by an issue caused architectural changes. Depending on the method used, the proportion ranged from 13\% of issues to 26\% of issues. Since the automated approach possibly overestimates the proportion by counting purely structural changes, we use the lower bound of 13\%. We derive the data for the distribution of the severity of bugs from data collected by \cite{ohira2015highimpact}. They distinguish between critical, blocker, and major issues (which we map to major bugs), and minor and trivial issues (which we map to minor bugs). Orthogonally, they determine which of these bugs are security related, which we use to infer the ratio of security bugs. We exclude one of the collected projects (Ambari) for the estimation of the ratio of major bugs, since it did not mark issues as minor.
 These numbers are independent of the number of issues per week and therefore the same across all three tiers.
@@ -1314,14 +1314,14 @@ These numbers are independent of the number of issues per week and therefore the
 \caption{Project dynamics parameters guiding the feature arrival and bug severity distributions.}
 \label{tab:scenario:project}
 \footnotesize
-\begin{tabularx}{\linewidth}{p{1.8cm}rrrX}
+\begin{tabularx}{\linewidth}{p{1.8cm}rrrrX}
 \toprule
-Symbol & Low & Medium & High & Source \\
+Symbol & Low & Medium & High & Very High & Source \\
 \midrule
-$r_\mathrm{arrival}$  & 3  & 12  & 75  & Collected data. \\[2pt]
-$f_\mathrm{arch,chg}$  & 0.13  & 0.13  & 0.13  & \cite{shahbazian2018toward}. \\[2pt]
-$\theta_\mathrm{maj}$ & 0.44 & 0.44 & 0.44 & \cite{ohira2015highimpact}. \\[2pt]
-$\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact}. \\
+$r_\mathrm{arrival}$  & 3  & 12  & 75  & 1000 & Collected data. \\[2pt]
+$f_\mathrm{arch,chg}$  & 0.13  & 0.13  & 0.13  & 0.13 & \cite{shahbazian2018toward}. \\[2pt]
+$\theta_\mathrm{maj}$ & 0.44 & 0.44 & 0.44 & 0.44 & \cite{ohira2015highimpact}. \\[2pt]
+$\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact}. \\
 \bottomrule
 \end{tabularx}
 \end{table}
