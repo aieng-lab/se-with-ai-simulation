@@ -5,7 +5,7 @@ The five orthogonal scenario groups (paper §4.1) each come in a low / medium / 
 tier, and `project` carries a fourth "very high" tier, so combining them freely
 yields 3^4 * 4 = 324 scenarios.  Every generated file is `config/search_default.json`
 with its five `scenario` entries repointed at one tier combination; the search range,
-budget, horizon, and seed are inherited unchanged so that all 324 searches share the
+budgets, horizon, and seed are inherited unchanged so that all 324 searches share the
 experimental setup.
 
 Each scenario is solved twice — once with evolutionary search and once with greedy

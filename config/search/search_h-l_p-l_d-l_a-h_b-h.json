@@ -42,7 +42,7 @@
     "n_generations": 90,
     "n_offspring": 100,
     "n_elite": 100,
-    "n_starts": 5,
+    "n_starts": 20,
     "samples": "best",
     "seed": 42
   }

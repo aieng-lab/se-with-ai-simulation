@@ -156,10 +156,13 @@ class TestSearchConfigurationValidation:
         with pytest.raises(ValueError, match="n_elite must be >= 1"):
             self._cfg(n_elite=0)
 
-    def test_more_restarts_than_budget_raises(self):
-        """Each restart gets budget // n_starts evaluations, so it needs at least one."""
-        with pytest.raises(ValueError, match="n_starts must be in"):
-            self._cfg(budget=4, n_starts=5)
+    def test_non_positive_restart_count_raises(self):
+        with pytest.raises(ValueError, match="n_starts must be >= 1"):
+            self._cfg(n_starts=0)
+
+    def test_restarts_are_not_bounded_by_the_budget(self):
+        """The descent runs every restart to convergence, so `budget` does not cap it."""
+        assert self._cfg(budget=4, n_starts=20).n_starts == 20
 
 
 class TestBackgroundServiceBudget:

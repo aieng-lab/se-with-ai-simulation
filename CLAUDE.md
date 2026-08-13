@@ -47,7 +47,8 @@ config/
     agent_{low,medium,high}.json      scenario group: agent costs and throughput
     bugimpact_{low,medium,high}.json  scenario group: dollar cost of an escaped bug
     search_default.json       search config template: §4.2 range (N, R, F_freeze, sigma,
-                              epsilon) and budget, all groups medium
+                              epsilon), the evolutionary budget and the descent restart
+                              count, all groups medium
     search/search_<id>.json   the 324 generated scenario searches (§4.2); id = h-l_p-v_d-h_a-l_b-m
     startstate_default.json   initial SystemState values (all-zero baseline)
 
@@ -99,7 +100,7 @@ python -m src.main analyze results/my_run/result.json
 python -m src.main optimize config/search_default.json --out results/search_default
 ```
 
-**Run greedy neighbourhood descent:**
+**Run greedy neighbourhood descent** (§4.2: 20 restarts, each to a local optimum; no budget):
 ```bash
 python -m src.main optimize config/search_default.json \
     --out results/search_default_descent --strategy descent
@@ -109,7 +110,8 @@ Useful `optimize` flags: `--samples {all,best,none}` controls which candidates g
 ~12 KB × 10,000 per search), and `--progress-every N` throttles the progress lines
 (`0` silences them).
 
-**Run the full §4.2 campaign** (324 scenarios × 2 strategies = 648 searches, ~400 core-hours):
+**Run the full §4.2 campaign** (324 scenarios × 2 strategies = 648 searches; ~160 core-hours
+for the evolutionary half, an order of magnitude less for the descent half):
 ```bash
 python scripts/generate_search_configs.py     # once: writes the 324 config/search/*.json
 DRY_RUN=1 ./run_experiments.sh                # list the 648 jobs
@@ -178,7 +180,7 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 - **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`.
 - **Supervised roles are additionally capped by throughput saturation** (§3.11.1): `search_configurations.saturation_bounds(params, sigma)` returns `u_k = ⌈σ·W_k/ρ_k⌉` per supervised role, where `W_k` is the steady-state work that reaches the role (all of it derived from `r_arrival`) and `ρ_k` the throughput one agent sustains, with the debt amplifier at its floor `delta_min`. `σ` (`SearchConfiguration.sigma`, default and §4.2 value 2) is the headroom for Poisson arrival peaks. Beyond `u_k` an agent simply has no work, so the search does not spend budget there. Note `u_4` is now large (`ρ_4 = r_refactor = 0.10`, so ~15 at medium tiers) — see the refactoring bullet.
 - **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` draws each supervised role independently and uniformly in `{0, …, u_k}` (`{1, …, u_1}` for the dev implementer) and/or mutates both vectors evolutionarily. Stars-and-bars composition sampling is gone. Every draw is structurally valid by construction, so `_random_draws` returns `TeamConfiguration`s directly — there is no discarded-draw path in the sampler.
-- **Feasibility pre-filter** runs before any simulation. One rejection path, recorded and skipped: the human-capacity condition of §3.6 Eq. (feas_monitoring) (`failed_step = 1`). It still **consumes one evaluation of the search budget** (§4.2), in both strategies, so `n_evaluated` is the budget spend and `n_simulated` the realised simulation count — both are written to `manifest.json`. Rejected candidates are reported, never silently redrawn.
+- **Feasibility pre-filter** runs before any simulation. One rejection path, recorded and skipped: the human-capacity condition of §3.6 Eq. (feas_monitoring) (`failed_step = 1`). It still **counts as one evaluation** (§4.2), in both strategies, so `n_evaluated` is the evaluation count — the budget spend for the evolutionary search, the reported search effort for the descent — and `n_simulated` the realised simulation count; both are written to `manifest.json`. Rejected candidates are reported, never silently redrawn.
 - **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
 - **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, but **the grid is not a cube**: `project` carries a fourth `veryhigh` tier (`r_arrival = 1000` issues/week, a deliberately unrealistic extreme-velocity stress case — the high tier at 75 is already managed by two FTE), giving 3^4 · 4 = 324 scenarios. Read the tiers through `config.scenario_tiers(group)` / `config.scenario_tier_combinations()` / `config.scenario_id(tiers)`, never `SCENARIO_TIERS` (the three base tiers) — anything iterating `SCENARIO_TIERS` per group silently drops the `p-v` scenarios. `ALL_SCENARIO_TIERS` is the plotting/ordinal order and `TIER_INITIALS` the `l`/`m`/`h`/`v` codes the scenario ids and the LaTeX scenario codes share. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
@@ -201,11 +203,12 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 
 Uniform random sampling is **not** a strategy — it is the shared initialiser
 (`_random_draws`) both strategies seed from. `SEARCH_STRATEGIES` in `src/config.py` is the
-authority; both receive the same budget `E = 10,000` so the comparison measures search
-efficiency, not effort.
+authority. **`budget` (`E`) is the evolutionary strategy's alone** — the descent is bounded
+by convergence, not by money, so the two are not compared at equal effort and the effort
+the descent needed is itself a reported result (`n_evaluated`).
 
-- **`evolutionary`** (§3.11.4) — `n_samples_initial` random draws, then `n_generations` × `n_offspring` mutations. Parents come 80 % from the **elite** (`rank`'s first `n_elite` entries) and 20 % from the remainder; the `seen` set means no configuration is ever charged twice, and the loop stops once `budget` evaluations are spent. §4.2: 1,000 / 90 / 100 / `n_elite = 100`.
-- **`descent`** (§3.11.5) — `n_starts` restarts of `budget // n_starts` evaluations each. Each seeds from `_random_draws` and repeatedly moves to the `prefers`-best member of `neighbourhood(...)`, stopping at a local optimum or when the restart's share runs out mid-neighbourhood. A revisited candidate is free (`scored`), so an incumbent whose whole neighbourhood has been visited is a local optimum at no cost. Manifest entries carry `restart` and `step` where evolutionary's carry `generation`. §4.2: `n_starts = 5`, i.e. 2,000 evaluations per restart.
+- **`evolutionary`** (§3.11.4) — `n_samples_initial` random draws, then `n_generations` × `n_offspring` mutations. Parents come 80 % from the **elite** (`rank`'s first `n_elite` entries) and 20 % from the remainder; the `seen` set means no configuration is ever charged twice, and the loop stops once `budget` evaluations are spent. §4.2: `budget = 10,000`, 1,000 / 90 / 100 / `n_elite = 100`.
+- **`descent`** (§3.11.5) — `n_starts` restarts, **each run to a local optimum with no evaluation cap**; `budget` is not read at all. Each seeds from `_random_draws` (redrawing an infeasible seed up to `_MAX_SEED_DRAWS = 100` times, the only thing that terminates the seed loop now that no budget does) and repeatedly moves to the `prefers`-best member of `neighbourhood(...)`, stopping when no neighbour is preferred. A revisited candidate is free (`scored`), so an incumbent whose whole neighbourhood has been visited is a local optimum at no cost. Manifest entries carry `restart` and `step` where evolutionary's carry `generation`. §4.2: `n_starts = 20`; realised spend is a few hundred to a few thousand evaluations, well under the evolutionary budget.
 
 `neighbourhood` **enumerates exactly what `_mutate` can reach in one step** — the two
 adjacent staffing levels in `N_values`, `F_freeze ± 1` within `[0, R-1]`, and, per phase,

@@ -4,8 +4,10 @@
 #
 # 324 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
 # tier for project) are each solved twice, once with evolutionary search and once with
-# greedy neighbourhood descent, giving 648 searches of 10,000
-# candidate evaluations each.  Jobs are independent, so they run in parallel and the
+# greedy neighbourhood descent, giving 648 searches.  An evolutionary search spends a
+# fixed budget of 10,000 candidate evaluations; a descent search runs each of its 20
+# restarts to a local optimum and is therefore much shorter, typically a few hundred
+# evaluations.  Jobs are independent, so they run in parallel and the
 # simulator itself is single-threaded — but throughput does NOT scale to the core count.
 # Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
 #
@@ -20,8 +22,10 @@
 # Throughput is flat from 4 workers on, so raising $JOBS beyond that does not finish the
 # campaign any sooner — it only stretches each individual search (and since a search
 # writes nothing until it completes, that is lost work if the run is interrupted).
-# Hence the default of 4.  Expect roughly 330 core-hours in total, though a descent job
-# can finish well under budget when every restart reaches a local optimum early.
+# Hence the default of 4.  The table above is measured on a 10,000-candidate search, so
+# the 324 evolutionary jobs alone are roughly 160 core-hours; the 324 descent jobs stop
+# at their local optima after a few hundred candidates each and add an order of
+# magnitude less on top.
 #
 # Prerequisite:  .venv/bin/python scripts/generate_search_configs.py
 #

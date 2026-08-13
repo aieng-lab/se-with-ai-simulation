@@ -1,5 +1,5 @@
 {
-  "description": "Template search configuration (paper Section 4.2): full search range and evaluation budget, with all five scenario parameter groups at their medium tier",
+  "description": "Template search configuration (paper Section 4.2): full search range, the evolutionary evaluation budget and the descent restart count, with all five scenario parameter groups at their medium tier",
   "scenario_id": "h-m_p-m_d-m_a-m_b-m",
   "scenario": {
     "human": "config/human_medium.json",
@@ -21,7 +21,7 @@
     "n_generations": 90,
     "n_offspring": 100,
     "n_elite": 100,
-    "n_starts": 5,
+    "n_starts": 20,
     "samples": "best",
     "seed": 42
   }

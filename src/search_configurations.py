@@ -527,6 +527,14 @@ def write_samples(outcome: SearchOutcome, out_dir: Path, keys: list[str]) -> int
 # Search strategies
 # ---------------------------------------------------------------------------
 
+#: Seed draws a single descent restart may attempt before it is abandoned.  A restart is
+#: not bounded by an evaluation budget, so this is the only thing that terminates the seed
+#: loop on a search range whose candidates are (almost) all rejected by the feasibility
+#: gate — a redrawn candidate that has already been scored costs nothing and would let the
+#: loop run forever.
+_MAX_SEED_DRAWS = 100
+
+
 def _progress(i: int, total: int, outcome: SearchOutcome, every: int) -> None:
     """Print a compact heartbeat every `every` candidates (`every == 0` silences it)."""
     if every and (i % every == 0 or i == total):
@@ -641,17 +649,21 @@ def _run_descent(
 
     Each of `n_starts` restarts begins at a configuration drawn by the sampler of §3.11.2
     and repeatedly moves to the `prefers`-best member of its enumerated neighbourhood,
-    stopping at a local optimum — no neighbour is preferred to the incumbent — or when the
-    restart's share of the budget runs out mid-neighbourhood.
+    stopping at a local optimum — no neighbour is preferred to the incumbent.
 
-    Budget accounting matches the evolutionary strategy: every candidate that reaches the
-    feasibility check consumes one evaluation, infeasible ones included, and a candidate
-    already evaluated in an earlier step or restart is free (`seen`).  An incumbent whose
-    whole neighbourhood has already been visited is therefore a local optimum for free.
+    The descent is **not** budgeted: `SearchConfiguration.budget` governs the evolutionary
+    strategy alone.  Every restart runs to convergence, however many evaluations that
+    takes, and the realised count is reported afterwards as `n_evaluated` (paper §4.2).
+    Descent converges long before an evolutionary-sized budget is spent, so capping it
+    would only have truncated some restarts mid-neighbourhood without buying comparability.
+
+    Evaluation accounting still matches the evolutionary strategy: every candidate that
+    reaches the feasibility check counts as one evaluation, infeasible ones included, and
+    a candidate already evaluated in an earlier step or restart is free (`scored`).  An
+    incumbent whose whole neighbourhood has already been visited is therefore a local
+    optimum at no cost.
     """
     n_starts = search_cfg.n_starts
-    budget = search_cfg.budget
-    per_start = budget // n_starts
     keep_samples = search_cfg.samples != "none"
     bounds = saturation_bounds(params, search_cfg.sigma)
     floor = throughput_floor(params, search_cfg.epsilon)
@@ -678,18 +690,14 @@ def _run_descent(
         return agg
 
     for restart in range(n_starts):
-        spent_at_start = outcome.n_evaluated
         # One seed per restart, drawn independently.  An infeasible seed has no objective
-        # to descend from, so redraw until one passes the feasibility gate or the restart's
-        # budget is gone — each *new* draw is charged, as everywhere else.  The attempt cap
-        # is what a budget check alone cannot provide: re-drawing an already-scored
-        # candidate costs nothing, so on a narrow search range this loop would otherwise
-        # spin forever without ever advancing `n_evaluated`.
+        # to descend from, so redraw until one passes the feasibility gate — each *new*
+        # draw is charged, as everywhere else.  The attempt cap is what stops a search
+        # range on which (almost) nothing is feasible from spinning forever: re-drawing an
+        # already-scored candidate costs nothing, so `n_evaluated` need never advance.
         current: TeamConfiguration | None = None
         current_agg: "AggregatedObjectives | None" = None
-        for _ in range(10 * per_start):
-            if outcome.n_evaluated - spent_at_start >= per_start:
-                break
+        for _ in range(_MAX_SEED_DRAWS):
             seed = _random_draws(search_cfg, rng, 1, params)[0]
             agg = evaluate(seed, restart, step=0)
             if agg is not None:
@@ -697,7 +705,7 @@ def _run_descent(
                 break
         if current is None or current_agg is None:
             if progress_every:
-                print(f"  Restart {restart}: no feasible seed within its budget share",
+                print(f"  Restart {restart}: no feasible seed in {_MAX_SEED_DRAWS} draws",
                       flush=True)
             continue
 
@@ -705,19 +713,13 @@ def _run_descent(
         while True:
             step += 1
             best_cfg, best_agg, improved = current, current_agg, False
-            exhausted = False
             for nb in neighbourhood(current, search_cfg, bounds):
-                if nb not in scored and outcome.n_evaluated - spent_at_start >= per_start:
-                    exhausted = True
-                    break
                 agg = evaluate(nb, restart, step)
                 if agg is not None and prefers(agg, best_agg, floor):
                     best_cfg, best_agg, improved = nb, agg, True
             if not improved:
                 break        # local optimum: no neighbour is preferred
             current, current_agg = best_cfg, best_agg
-            if exhausted:
-                break        # moved on what we could afford to look at, then ran dry
 
         if progress_every:
             print(f"  Restart {restart}: {step} step(s), cost = {current_agg.cost_mean:.0f}, "

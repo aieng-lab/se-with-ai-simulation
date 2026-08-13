@@ -238,14 +238,16 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Strategy:    {strategy}")
     print(f"Horizon:     K={horizon.K} replications * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
-    print(f"Budget:      {search_cfg.budget} candidate evaluations")
     if strategy == "evolutionary":
+        print(f"Budget:      {search_cfg.budget} candidate evaluations")
         print(f"             {search_cfg.n_samples_initial} initial + "
               f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring, "
               f"elite {search_cfg.n_elite}")
     else:
-        print(f"             {search_cfg.n_starts} restarts * "
-              f"{search_cfg.budget // search_cfg.n_starts} evaluations each")
+        # The descent is not budgeted (§4.2): each restart runs to a local optimum and the
+        # evaluations it took are reported at the end.
+        print(f"Budget:      none; {search_cfg.n_starts} restarts, "
+              f"each descending to a local optimum")
     print(f"Throughput:  value >= (1 - {search_cfg.epsilon}) * {params.r_arrival:g} = "
           f"{throughput_floor(params, search_cfg.epsilon):.3f} features/sprint")
     print(f"Samples:     {search_cfg.samples}")

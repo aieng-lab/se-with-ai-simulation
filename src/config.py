@@ -250,12 +250,12 @@ class SearchConfiguration:
     F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
     sigma: float = 2.0                      # throughput-saturation headroom factor (§3.11.1)
     epsilon: float = 0.02                   # throughput-constraint tolerance (§3.9)
-    budget: int = 500                       # E: candidate evaluations, both strategies
+    budget: int = 500                       # E: candidate evaluations, evolutionary only
     n_samples_initial: int = 100            # evolutionary: initial population
     n_generations: int = 15                 # evolutionary: generation count
     n_offspring: int = 20                   # evolutionary: offspring per generation
     n_elite: int = 20                       # evolutionary: elite that parents are drawn from
-    n_starts: int = 3                       # descent: independent restarts
+    n_starts: int = 3                       # descent: restarts, each run to convergence
     samples: str = "best"                   # per-candidate result.json retention policy
     seed: int = 0                           # RNG seed for search
     scenario_id: str = ""                   # label of the tier combination, e.g. "h-l_p-m_d-h_a-l_b-m"
@@ -301,12 +301,11 @@ class SearchConfiguration:
             raise ValueError(f"n_offspring must be >= 1, got {self.n_offspring}")
         if self.n_elite < 1:
             raise ValueError(f"n_elite must be >= 1, got {self.n_elite}")
-        if not 1 <= self.n_starts <= self.budget:
-            # Each restart gets budget // n_starts evaluations, so more restarts than
-            # budget would leave some of them unable to evaluate even their seed.
-            raise ValueError(
-                f"n_starts must be in [1, budget={self.budget}], got {self.n_starts}"
-            )
+        if self.n_starts < 1:
+            # `budget` does not bound the descent: every restart runs to a local optimum
+            # and the evaluations it took are reported afterwards (§4.2), so the only
+            # requirement here is that there is at least one restart.
+            raise ValueError(f"n_starts must be >= 1, got {self.n_starts}")
         if self.samples not in SAMPLE_POLICIES:
             raise ValueError(
                 f"samples must be one of {list(SAMPLE_POLICIES)}, got {self.samples!r}"

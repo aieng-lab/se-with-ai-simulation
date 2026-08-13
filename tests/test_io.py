@@ -194,9 +194,9 @@ class TestLoadSearchConfig:
         assert cfg.strategy == "evolutionary"
 
     def test_default_search_config_matches_paper_search_range(self):
-        # Paper §4.2, Table 6: search range and the E = 10,000 evaluation budget, split
-        # 10 % / 90 % between the initial pool and the generation loop for the
-        # evolutionary strategy and into n_starts restarts for the descent.
+        # Paper §4.2, Table 6: search range, the evolutionary E = 10,000 evaluation
+        # budget split 10 % / 90 % between the initial pool and the generation loop, and
+        # the n_starts restarts of the descent, which is budgeted by convergence instead.
         cfg = load_search_config("config/search_default.json")
         # Staffing levels from a one-day-per-week part-timer to a two-pizza team;
         # N is a staffing level, so the values are floats.
@@ -210,8 +210,7 @@ class TestLoadSearchConfig:
         assert cfg.n_generations * cfg.n_offspring == 9_000
         assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.budget
         assert cfg.n_elite == 100
-        assert cfg.n_starts == 5
-        assert cfg.budget // cfg.n_starts == 2_000
+        assert cfg.n_starts == 20
         assert cfg.samples == "best"
         assert cfg.seed == 42
 

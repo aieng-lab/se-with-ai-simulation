@@ -500,13 +500,18 @@ class TestSearchBudget:
                 for e in outcome.manifest.values()]
         assert len(keys) == len(set(keys))
 
-    def test_descent_stays_within_its_budget(self, wasteful_cfg, tiny_horizon,
-                                             wasteful_params):
+    def test_descent_is_not_bounded_by_the_budget(self, wasteful_cfg, tiny_horizon,
+                                                  wasteful_params):
+        """`budget` is the evolutionary strategy's; the descent runs to convergence (§4.2).
+
+        The fixture's budget of 50 is far below what two restarts of full neighbourhood
+        enumeration cost, so a descent that still honoured it would stop short here.
+        """
         outcome = _run_descent(
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
             progress_every=0,
         )
-        assert 0 < outcome.n_evaluated <= wasteful_cfg.budget
+        assert outcome.n_evaluated > wasteful_cfg.budget
 
     def test_descent_never_evaluates_a_duplicate(self, wasteful_cfg, tiny_horizon,
                                                  wasteful_params):
@@ -523,12 +528,13 @@ class TestSearchBudget:
     def test_descent_terminates_on_a_range_that_guarantees_duplicate_seeds(
         self, tiny_horizon
     ):
-        """A re-drawn seed costs no budget, so the seed loop needs its own attempt cap.
+        """A re-drawn seed costs nothing, so the seed loop needs its own attempt cap.
 
-        The range here is one staffing level, one cadence and no freeze window, so a
-        20-evaluation budget cannot help but redraw candidates it has already scored.
-        Without the cap, a restart whose redraws are all infeasible would never advance
-        `n_evaluated` and would spin forever; the test passing at all is the assertion.
+        The range here is one staffing level, one cadence and no freeze window, so the
+        seed draws cannot help but repeat candidates that have already been scored.  With
+        no budget left to bound the restart, `_MAX_SEED_DRAWS` is the only thing that ends
+        a seed loop whose draws are all infeasible; the test passing at all is the
+        assertion.
         """
         cfg = SearchConfiguration(
             scenario_paths={group: f"config/{group}_{tier}.json"
@@ -536,12 +542,11 @@ class TestSearchBudget:
             horizon_path="config/horizon_default.json",
             strategy="descent",
             N_values=(0.25,), R_values=(1,), F_freeze_values=(0,),
-            budget=20, n_starts=2, seed=1,
+            n_starts=2, seed=1,
         )
         params = load_scenario_params(cfg.scenario_paths)
         outcome = _run_descent(cfg, tiny_horizon, params, np.random.default_rng(0),
                                progress_every=0)
-        assert outcome.n_evaluated <= cfg.budget
         # Every rejection is still recorded, and nothing is charged twice.
         keys = [(e["N"], e["R"], e["F_freeze"], tuple(e["A_dev"]), tuple(e["A_qa"]))
                 for e in outcome.manifest.values()]
@@ -563,19 +568,17 @@ class TestSearchBudget:
         """No neighbour of the final incumbent of a completed restart is preferred."""
         from dataclasses import replace
         from src.selection import best_index, prefers
-        # A generous budget so the descent terminates on its own rather than on money.
         cfg = SearchConfiguration(
             scenario_paths={group: f"config/{group}_medium.json"
                             for group in SCENARIO_GROUPS},
             horizon_path="config/horizon_default.json",
             strategy="descent",
             N_values=(1.0, 2.0), R_values=(2,), F_freeze_values=(0, 1),
-            budget=4000, n_starts=1, seed=4,
+            n_starts=1, seed=4,
         )
         params = load_scenario_params(cfg.scenario_paths)
         outcome = _run_descent(cfg, tiny_horizon, params, np.random.default_rng(0),
                                progress_every=0)
-        assert outcome.n_evaluated < cfg.budget, "must have stopped before running dry"
 
         floor = throughput_floor(params, cfg.epsilon)
         aggs = [a for _, _, a in outcome.aggs]
