@@ -1,17 +1,22 @@
-"""Search for the optimal agent team composition using random or evolutionary search.
+"""Search for the cheapest team composition that keeps up with the project (paper §3.11).
 
-Unlike a fixed-recipe sweep, this module searches over the full space of integer agent
-compositions A for given (N, R) values.
+Two strategies solve the constrained single-objective problem of Eq. (objective):
+`_run_evolutionary_search` maintains a population and mutates parents drawn from an elite
+ranked by the preference relation of `src.selection`, and `_run_descent` repeatedly moves to
+the best configuration in an *enumerated* neighbourhood until it reaches a local optimum.
+Uniform random sampling (`_random_draws`) is not a strategy of its own — it is the shared
+initialiser both of them seed from (§3.11.2).
 
 Output layout
 -------------
     RESULTS_DIR/
         manifest.json          metadata, per-config feasibility, A composition
-        search_summary.json    Pareto frontier + all objectives including A
+        search_summary.json    c*, the indistinguishable set I*, and the objectives of
+                               every simulated candidate including A
         samples/
             N2_R4_00042.json   per-replication objectives; which candidates get a
                                file is governed by SearchConfiguration.samples
-                               ("all" / "frontier" / "none")
+                               ("all" / "best" / "none")
 
 Supervised role counts are bounded per role by the throughput saturation bound u_k
 of `saturation_bounds` (Eq. sat_bound) — beyond u_k an agent has no work to do —
@@ -24,6 +29,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 
@@ -36,13 +42,14 @@ from .config import (
     TeamConfiguration,
 )
 from .feasibility import check_feasibility
-from .pareto import (
+from .results import save_result
+from .selection import (
     AggregatedObjectives,
     aggregate_config_result,
-    pareto_frontier,
-    parsimony_key,
+    prefers,
+    rank,
+    throughput_floor,
 )
-from .results import save_result
 from .simulation import ConfigResult, run_configuration
 from .state import SystemState
 
@@ -234,8 +241,8 @@ def _mutate(
     mutating it would produce a child that is canonicalised straight back to its parent —
     burning a retry every time.  Before that canonicalisation existed this was the single
     largest source of behavioural duplicates: the mutation produced a child that differed
-    from its parent in name only, was scored on a different RNG stream, and joined it on
-    the frontier as a separate point.
+    from its parent in name only and was then scored on a different RNG stream.
+    `neighbourhood` drops the same block, for the same reason.
     """
     n_mutation_types = 3 if config.F_freeze == 0 else 4
     for _ in range(10):
@@ -287,6 +294,110 @@ def _mutate(
             return child
 
     return config   # all attempts were unchanged or invalid
+
+
+# ---------------------------------------------------------------------------
+# Neighbourhood enumeration (for greedy descent)
+# ---------------------------------------------------------------------------
+
+def _composition_neighbours(
+    A: tuple[int, ...],
+    mutable: tuple[int, ...],
+    bounds: dict[int, int],
+    min_impl: bool,
+) -> Iterator[tuple[int, ...]]:
+    """Every composition `_mutate_composition` can reach from `A` in one step (§3.11.5).
+
+    The same four elementary operations, enumerated instead of sampled: add one agent to a
+    supervised role still below its bound u_k, remove one from a non-empty supervised role,
+    transfer one between two supervised roles, and apply +/-1 to each background service.
+    `min_impl` protects index 0 from being drained below one, as in the mutation operator.
+    Duplicates and no-ops are the caller's problem — `neighbourhood` deduplicates.
+    """
+    floor = 1 if min_impl else 0
+    donors = [i for i in mutable if A[i] > (floor if i == 0 else 0)]
+    recipients = [i for i in mutable if A[i] < bounds[i]]
+
+    for i in recipients:                        # add
+        out = list(A)
+        out[i] += 1
+        yield tuple(out)
+    for i in donors:                            # remove
+        out = list(A)
+        out[i] -= 1
+        yield tuple(out)
+    for src in donors:                          # move
+        for dst in mutable:
+            # The donor is always below its bound after the decrement, so a transfer back
+            # into it would be a no-op; every other recipient must still have headroom.
+            if dst == src or A[dst] >= bounds[dst]:
+                continue
+            out = list(A)
+            out[src] -= 1
+            out[dst] += 1
+            yield tuple(out)
+    for i in BACKGROUND_ROLE_INDICES:           # adjust service, uncapped, floored at 0
+        for delta in (-1, 1):
+            if A[i] + delta < 0:
+                continue
+            out = list(A)
+            out[i] += delta
+            yield tuple(out)
+
+
+def neighbourhood(
+    config: TeamConfiguration,
+    search_cfg: SearchConfiguration,
+    bounds: dict[int, int],
+) -> list[TeamConfiguration]:
+    """Every configuration one mutation step away from `config` (paper §3.11.5).
+
+    The adjacent staffing levels in `N_values`, F_freeze +/- 1 within [0, R-1], and
+    `_composition_neighbours` over A_dev and over A_qa.  `R` is never changed, matching the
+    mutation operator.  The A_qa block is skipped at `F_freeze == 0`, where A_qa is
+    canonically zero and every QA move would collapse straight back to `config`.
+    Structurally invalid children and `config` itself are dropped, and the result is
+    deduplicated, so the returned list is exactly the set of distinct valid neighbours.
+    """
+    candidates: list[tuple[float, tuple[int, ...], int, tuple[int, ...]]] = []
+
+    n_vals = sorted(search_cfg.N_values)
+    if config.N in n_vals:
+        idx = n_vals.index(config.N)
+        adjacent = [n_vals[i] for i in (idx - 1, idx + 1) if 0 <= i < len(n_vals)]
+    else:
+        adjacent = list(n_vals)
+    for N in adjacent:
+        candidates.append((N, config.A_dev, config.F_freeze, config.A_qa))  # type: ignore[arg-type]
+
+    for F_freeze in (config.F_freeze - 1, config.F_freeze + 1):
+        if 0 <= F_freeze <= config.R - 1:
+            candidates.append((config.N, config.A_dev, F_freeze, config.A_qa))  # type: ignore[arg-type]
+
+    for A_dev in _composition_neighbours(
+        config.A_dev, SUPERVISED_ROLE_INDICES, bounds, min_impl=True
+    ):
+        candidates.append((config.N, A_dev, config.F_freeze, config.A_qa))  # type: ignore[arg-type]
+
+    if config.F_freeze > 0:
+        for A_qa in _composition_neighbours(
+            config.A_qa, _QA_SUPERVISED_INDICES, bounds, min_impl=False  # type: ignore[arg-type]
+        ):
+            candidates.append((config.N, config.A_dev, config.F_freeze, A_qa))
+
+    out: list[TeamConfiguration] = []
+    seen: set[TeamConfiguration] = {config}
+    for N, A_dev, F_freeze, A_qa in candidates:
+        try:
+            child = TeamConfiguration(N=N, A_dev=A_dev, R=config.R,
+                                      F_freeze=F_freeze, A_qa=A_qa)
+        except ValueError:
+            continue    # structurally invalid, e.g. a_qa,1 != 0 once a freeze opens
+        if child in seen:
+            continue
+        seen.add(child)
+        out.append(child)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -424,33 +535,6 @@ def _progress(i: int, total: int, outcome: SearchOutcome, every: int) -> None:
               flush=True)
 
 
-def _run_random_search(
-    search_cfg: SearchConfiguration,
-    settings: SimulationHorizon,
-    params,
-    rng: np.random.Generator,
-    n_samples: int,
-    initial_state: SystemState | None = None,
-    progress_every: int = 100,
-) -> SearchOutcome:
-    """Uniform random search over the configuration space (paper §3.11.2)."""
-    draws = _random_draws(search_cfg, rng, n_samples, params)
-    outcome = SearchOutcome(manifest={}, aggs=[], results={})
-    keep_samples = search_cfg.samples != "none"
-
-    for i, cfg in enumerate(draws):
-        key = _config_key(cfg, i)
-        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
-        entry["generation"] = 0
-        outcome.manifest[key] = entry
-        if agg is not None:
-            outcome.aggs.append((key, cfg, agg))
-            if keep_samples:
-                outcome.results[key] = cr    # type: ignore[assignment]
-        _progress(i + 1, len(draws), outcome, progress_every)
-
-    return outcome
-
 
 def _run_evolutionary_search(
     search_cfg: SearchConfiguration,
@@ -460,18 +544,23 @@ def _run_evolutionary_search(
     initial_state: SystemState | None = None,
     progress_every: int = 100,
 ) -> SearchOutcome:
-    """Evolutionary search: random init + guided mutation toward the Pareto front.
+    """Evolutionary search: random init + guided mutation toward the optimum (§3.11.4).
 
     Budget accounting follows paper §4.2: every candidate that reaches the
     feasibility check consumes one evaluation, whether or not it is simulated.  A
     generation can therefore fall short of `n_offspring` only when the mutation
-    operator keeps producing duplicates until its attempt limit is exhausted.
+    operator keeps producing duplicates until its attempt limit is exhausted.  The loop
+    also stops early once `budget` evaluations have been spent, so the nominal
+    `n_samples_initial + n_generations * n_offspring` can never overrun it.
     """
     n_initial   = search_cfg.n_samples_initial
     n_gen       = search_cfg.n_generations
     n_offspring = search_cfg.n_offspring
+    n_elite     = search_cfg.n_elite
+    budget      = search_cfg.budget
     keep_samples = search_cfg.samples != "none"
     bounds = saturation_bounds(params, search_cfg.sigma)
+    floor = throughput_floor(params, search_cfg.epsilon)
 
     outcome = SearchOutcome(manifest={}, aggs=[], results={})
     # Every candidate that has consumed budget, feasible or not, so a duplicate is
@@ -490,38 +579,37 @@ def _run_evolutionary_search(
                 outcome.results[key] = cr    # type: ignore[assignment]
 
     print(f"Random initialisation ({n_initial} samples) …", flush=True)
-    init_draws = _random_draws(search_cfg, rng, n_initial, params)
+    init_draws = _random_draws(search_cfg, rng, min(n_initial, budget), params)
     for i, cfg in enumerate(init_draws):
         evaluate_new(cfg, generation=0)
         _progress(i + 1, len(init_draws), outcome, progress_every)
 
     for gen in range(1, n_gen + 1):
-        # Build Pareto and non-Pareto parent pools (80% / 20% sampling)
-        agg_objs = [a for _, _, a in outcome.aggs]
-        # The parent pool is the parsimony-reduced frontier, so the search spends its
-        # offspring on the smallest team achieving each trade-off rather than on the
-        # statistically indistinguishable larger variants of it (§3.10).
-        front_keys = [parsimony_key(cfg) for _, cfg, _ in outcome.aggs]
-        front_idx = pareto_frontier(agg_objs, keys=front_keys) if agg_objs else []
-        front_set = set(front_idx)
-        pareto_parents = [outcome.aggs[i][1] for i in front_idx]
-        non_pareto_parents = [outcome.aggs[i][1]
-                              for i in range(len(outcome.aggs)) if i not in front_set]
+        if outcome.n_evaluated >= budget:
+            break
+        # Rank the population by the preference relation of §3.11.3 and split it into the
+        # elite that most offspring come from and the remainder that supplies exploration.
+        # A single objective makes this a sort, so there is no frontier to compute.
+        order = rank([a for _, _, a in outcome.aggs], floor)
+        elite_parents = [outcome.aggs[i][1] for i in order[:n_elite]]
+        rest_parents  = [outcome.aggs[i][1] for i in order[n_elite:]]
         # Fallback: if one pool is empty, use the other exclusively
-        if not pareto_parents:
-            pareto_parents = non_pareto_parents
+        if not elite_parents:
+            elite_parents = rest_parents
 
-        n_non_pareto_slots = round(n_offspring * 0.2) if non_pareto_parents else 0
-        n_pareto_slots = n_offspring - n_non_pareto_slots
+        n_rest_slots = round(n_offspring * 0.2) if rest_parents else 0
+        n_elite_slots = n_offspring - n_rest_slots
 
         n_new = 0
-        for pool, slots in [(non_pareto_parents, n_non_pareto_slots),
-                            (pareto_parents, n_pareto_slots)]:
+        for pool, slots in [(rest_parents, n_rest_slots),
+                            (elite_parents, n_elite_slots)]:
             if not pool or slots == 0:
                 continue
             count = 0
             attempts = 0
             while count < slots and attempts < slots * 10:
+                if outcome.n_evaluated >= budget:
+                    break
                 attempts += 1
                 parent = pool[int(rng.integers(len(pool)))]
                 child = _mutate(parent, rng, search_cfg, bounds)
@@ -532,8 +620,108 @@ def _run_evolutionary_search(
             n_new += count
 
         if progress_every:
-            print(f"  Gen {gen:3d}: Pareto frontier = {len(front_idx)}, "
+            best = outcome.aggs[order[0]][2] if order else None
+            best_txt = f"{best.cost_mean:.0f}" if best is not None else "n/a"
+            print(f"  Gen {gen:3d}: best cost = {best_txt}, elite = {len(elite_parents)}, "
                   f"offspring evaluated = {n_new}, total evaluated = {outcome.n_evaluated}, "
+                  f"simulated = {outcome.n_simulated}", flush=True)
+
+    return outcome
+
+
+def _run_descent(
+    search_cfg: SearchConfiguration,
+    settings: SimulationHorizon,
+    params,
+    rng: np.random.Generator,
+    initial_state: SystemState | None = None,
+    progress_every: int = 100,
+) -> SearchOutcome:
+    """Greedy neighbourhood descent with random restarts (paper §3.11.5).
+
+    Each of `n_starts` restarts begins at a configuration drawn by the sampler of §3.11.2
+    and repeatedly moves to the `prefers`-best member of its enumerated neighbourhood,
+    stopping at a local optimum — no neighbour is preferred to the incumbent — or when the
+    restart's share of the budget runs out mid-neighbourhood.
+
+    Budget accounting matches the evolutionary strategy: every candidate that reaches the
+    feasibility check consumes one evaluation, infeasible ones included, and a candidate
+    already evaluated in an earlier step or restart is free (`seen`).  An incumbent whose
+    whole neighbourhood has already been visited is therefore a local optimum for free.
+    """
+    n_starts = search_cfg.n_starts
+    budget = search_cfg.budget
+    per_start = budget // n_starts
+    keep_samples = search_cfg.samples != "none"
+    bounds = saturation_bounds(params, search_cfg.sigma)
+    floor = throughput_floor(params, search_cfg.epsilon)
+
+    outcome = SearchOutcome(manifest={}, aggs=[], results={})
+    # Objective of every candidate ever evaluated, so a revisit costs no budget.  None
+    # marks an infeasible candidate, which can never become an incumbent.
+    scored: dict[TeamConfiguration, "AggregatedObjectives | None"] = {}
+
+    def evaluate(cfg: TeamConfiguration, restart: int, step: int):
+        """Evaluate `cfg` unless already seen; returns its objective or None."""
+        if cfg in scored:
+            return scored[cfg]
+        key = _config_key(cfg, outcome.n_evaluated)
+        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
+        entry["restart"] = restart
+        entry["step"] = step
+        outcome.manifest[key] = entry
+        scored[cfg] = agg
+        if agg is not None:
+            outcome.aggs.append((key, cfg, agg))
+            if keep_samples:
+                outcome.results[key] = cr    # type: ignore[assignment]
+        return agg
+
+    for restart in range(n_starts):
+        spent_at_start = outcome.n_evaluated
+        # One seed per restart, drawn independently.  An infeasible seed has no objective
+        # to descend from, so redraw until one passes the feasibility gate or the restart's
+        # budget is gone — each *new* draw is charged, as everywhere else.  The attempt cap
+        # is what a budget check alone cannot provide: re-drawing an already-scored
+        # candidate costs nothing, so on a narrow search range this loop would otherwise
+        # spin forever without ever advancing `n_evaluated`.
+        current: TeamConfiguration | None = None
+        current_agg: "AggregatedObjectives | None" = None
+        for _ in range(10 * per_start):
+            if outcome.n_evaluated - spent_at_start >= per_start:
+                break
+            seed = _random_draws(search_cfg, rng, 1, params)[0]
+            agg = evaluate(seed, restart, step=0)
+            if agg is not None:
+                current, current_agg = seed, agg
+                break
+        if current is None or current_agg is None:
+            if progress_every:
+                print(f"  Restart {restart}: no feasible seed within its budget share",
+                      flush=True)
+            continue
+
+        step = 0
+        while True:
+            step += 1
+            best_cfg, best_agg, improved = current, current_agg, False
+            exhausted = False
+            for nb in neighbourhood(current, search_cfg, bounds):
+                if nb not in scored and outcome.n_evaluated - spent_at_start >= per_start:
+                    exhausted = True
+                    break
+                agg = evaluate(nb, restart, step)
+                if agg is not None and prefers(agg, best_agg, floor):
+                    best_cfg, best_agg, improved = nb, agg, True
+            if not improved:
+                break        # local optimum: no neighbour is preferred
+            current, current_agg = best_cfg, best_agg
+            if exhausted:
+                break        # moved on what we could afford to look at, then ran dry
+
+        if progress_every:
+            print(f"  Restart {restart}: {step} step(s), cost = {current_agg.cost_mean:.0f}, "
+                  f"total evaluated = {outcome.n_evaluated}, "
                   f"simulated = {outcome.n_simulated}", flush=True)
 
     return outcome

@@ -1,5 +1,5 @@
 {
-  "description": "Paper Section 4.2 scenario h-m_p-h_d-h_a-h_b-m (human=medium, project=high, debt=high, agent=high, bugimpact=medium); solve with --strategy random and --strategy evolutionary",
+  "description": "Paper Section 4.2 scenario h-m_p-h_d-h_a-h_b-m (human=medium, project=high, debt=high, agent=high, bugimpact=medium); solve with --strategy evolutionary and --strategy descent",
   "scenario_id": "h-m_p-h_d-h_a-h_b-m",
   "scenario": {
     "human": "config/human_medium.json",
@@ -10,28 +10,19 @@
   },
   "horizon": "config/horizon_default.json",
   "search": {
-    "strategy": "random",
+    "strategy": "evolutionary",
     "N_values": [
       0.25,
       0.5,
       0.75,
       1.0,
-      1.25,
       1.5,
-      1.75,
       2.0,
-      2.25,
-      2.5,
-      2.75,
       3.0,
-      3.25,
-      3.5,
-      3.75,
       4.0,
-      4.25,
-      4.5,
-      4.75,
-      5.0
+      5.0,
+      7.0,
+      10.0
     ],
     "R_values": [
       1,
@@ -45,11 +36,14 @@
       2
     ],
     "sigma": 2,
-    "n_samples": 10000,
+    "epsilon": 0.02,
+    "budget": 10000,
     "n_samples_initial": 1000,
     "n_generations": 90,
     "n_offspring": 100,
-    "samples": "frontier",
+    "n_elite": 100,
+    "n_starts": 5,
+    "samples": "best",
     "seed": 42
   }
 }

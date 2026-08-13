@@ -16,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
-from .pareto import AggregatedObjectives
+from .selection import AggregatedObjectives
 from .simulation import ConfigResult, ConfigTrace, ReplicationResult, SprintSnapshot
 
 
@@ -57,7 +57,8 @@ def save_result(
             "A_qa": list(result.config.A_qa),  # type: ignore[arg-type]
         },
         "replications": [
-            {"value": r.value, "quality": r.quality, "cost": r.cost,
+            {"value": r.value, "cost": r.cost,
+             "cost_quality": r.cost_quality,
              "cost_human": r.cost_human, "cost_agent": r.cost_agent,
              "actions": list(r.actions),
              "impl_human": r.impl_human, "impl_agents": r.impl_agents,
@@ -66,11 +67,10 @@ def save_result(
         ],
         "aggregated": {
             "value_mean": agg.value_mean,
-            "quality_mean": agg.quality_mean,
-            "cost_mean": agg.cost_mean,
             "value_ci": list(agg.value_ci),
-            "quality_ci": list(agg.quality_ci),
+            "cost_mean": agg.cost_mean,
             "cost_ci": list(agg.cost_ci),
+            "cost_quality_mean": agg.cost_quality_mean,
             "cost_human_mean": agg.cost_human_mean,
             "cost_agent_mean": agg.cost_agent_mean,
             "actions_mean": list(agg.actions_mean),
@@ -97,11 +97,11 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     config = TeamConfiguration(N=cfg["N"], A_dev=A_dev, R=cfg["R"],
                                F_freeze=F_freeze, A_qa=A_qa)
 
-    # The cost split and the action counts postdate the usage-based cost model, and the
-    # human/agent contribution counts postdate the §4.2 campaign; files written before
-    # either carry none of them, so all default rather than failing.
+    # The three cost drivers and the contribution counts are all optional, so a file
+    # written by a leaner producer still loads with them defaulted to zero.
     replications = tuple(
-        ReplicationResult(value=r["value"], quality=r["quality"], cost=r["cost"],
+        ReplicationResult(value=r["value"], cost=r["cost"],
+                          cost_quality=r.get("cost_quality", 0.0),
                           cost_human=r.get("cost_human", 0.0),
                           cost_agent=r.get("cost_agent", 0.0),
                           actions=tuple(r.get("actions", ())),
@@ -116,11 +116,10 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     ag = data["aggregated"]
     agg = AggregatedObjectives(
         value_mean=ag["value_mean"],
-        quality_mean=ag["quality_mean"],
-        cost_mean=ag["cost_mean"],
         value_ci=tuple(ag["value_ci"]),
-        quality_ci=tuple(ag["quality_ci"]),
+        cost_mean=ag["cost_mean"],
         cost_ci=tuple(ag["cost_ci"]),
+        cost_quality_mean=ag.get("cost_quality_mean", 0.0),
         cost_human_mean=ag.get("cost_human_mean", 0.0),
         cost_agent_mean=ag.get("cost_agent_mean", 0.0),
         actions_mean=tuple(ag.get("actions_mean", ())),

@@ -34,12 +34,13 @@ if TYPE_CHECKING:
     from numpy.random import Generator
 
 
-#: Token cost of implementing one approved architecture proposal, in units of one
-#: feature implementation (paper §3.7, Table tab:work_units).  Implementing a proposal
-#: needs the same code-base-wide analysis that makes producing one five times as
-#: expensive as a feature (c_token,2 = 5 * c_token,1 across every tier of §4.1), so it
-#: is billed at five features.  It still consumes only one unit of the implementation
-#: agent's *capacity* in Eq. (arch_impl) — this factor is a cost weight, not a rate.
+#: Cost of implementing one approved architecture proposal, in units of one feature
+#: implementation (paper §3.6, Eqs. (arch_impl)/(impl_agents), and §3.7,
+#: Table tab:work_units).  Implementing a proposal needs the same code-base-wide analysis
+#: that makes producing one five times as expensive as a feature (c_token,2 = 5 *
+#: c_token,1 across every tier of §4.1), so it costs five features in *both* senses: it
+#: consumes five features' worth of the implementation agents' capacity, and it is billed
+#: at five features.
 ARCH_IMPL_COST_UNITS = 5.0
 
 
@@ -183,15 +184,20 @@ def step_sprint(
     a_1 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
     total_impl_cap = int(params.r_F * delta_D * a_1)
     # Approved architecture proposals are implemented first (priority over backlog).
-    # arch_impl_done consumes agent capacity but does NOT count toward F_completed.
-    arch_impl_done = min(state.Q_arch_impl, total_impl_cap)
+    # arch_impl_done consumes agent capacity but does NOT count toward F_completed, and
+    # each proposal costs ARCH_IMPL_COST_UNITS features' worth of that capacity — the
+    # same code-base-wide analysis that makes producing a proposal five times as
+    # expensive as a feature (Eq. arch_impl).
+    arch_impl_cap = int(total_impl_cap // ARCH_IMPL_COST_UNITS)
+    arch_impl_done = min(state.Q_arch_impl, arch_impl_cap)
     # Demand is served by the humans first; the agents fill whatever is left. Capping
     # each stream at the residual backlog (rather than capping only their sum) keeps
     # impl_agents + impl_human == impl, so the two bug-injection streams of Step 5
     # cannot inject defects for features that were never implemented.
     demand = state.F_backlog + arrivals
     impl_human = min(impl_human, demand)
-    impl_agents = min(demand - impl_human, total_impl_cap - arch_impl_done)
+    impl_agents = min(demand - impl_human,
+                      total_impl_cap - int(ARCH_IMPL_COST_UNITS * arch_impl_done))
     impl = impl_agents + impl_human
     state.F_backlog = max(0, state.F_backlog + arrivals - impl)
     state.F_completed += impl
@@ -335,14 +341,13 @@ def step_sprint(
     D_raw = (state.D_tech
              + params.delta_impl * impl
              + params.delta_fix * total_fixes)
+    # r_refactor is denominated in D_tech units (§4.1): one agent removes a tenth of the
+    # maximum debt per sprint, i.e. clearing a fully degraded code base occupies one agent
+    # for ten sprints.  There is no countable artefact here, which is why k=4 is billed
+    # per deployed instance rather than per unit of output (see the units vector below).
     D_new = max(0.0, min(1.0,
         D_raw - params.r_refactor * A_active[3],   # Refactoring Agent (k=4, index 3)
     ))
-    # Debt the refactoring actually removed: where it would have landed without any
-    # refactoring, minus where it landed with it.  Bounded by r_refactor * a_4 and zero
-    # when the role is unstaffed, so it is the billable work unit for k=4.  Computed
-    # beside the update rather than by restructuring it — the clip order matters.
-    refactor_applied = min(1.0, D_raw) - D_new
     state.D_tech = D_new
 
     # Documentation coverage is capped at 1, i.e. one document per completed feature;
@@ -373,17 +378,18 @@ def step_sprint(
     # ------------------------------------------------------------------
     # Billable work completed this sprint, by role (paper Eq. cost_agents)
     # ------------------------------------------------------------------
-    # Every role except the two background services is demand-driven and idle when no
-    # work reaches it: roles 1-4 through the queues they drain, roles 7-8 through the
-    # coverage caps above.  The background services have no discrete unit of output, so
-    # they are charged per deployed instance per sprint (r_5 = r_6 = 1).
+    # Roles 1-3 and 7-8 are demand-driven and idle when no work reaches them: through the
+    # queues they drain, and through the coverage caps above.  Three roles have no discrete
+    # unit of output and are charged per deployed instance per sprint (r_4 = r_5 = r_6 = 1,
+    # §3.7): the two background review services, and the Refactoring Agent, whose output is
+    # a reduction of the normalised D_tech rather than a countable artefact.
     return SprintActions(
         units=(
             # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each
             float(impl_agents + ARCH_IMPL_COST_UNITS * arch_impl_done),
             float(arch_chg_done),                  # k=2 change requests resolved
             float(fixes_agent),                    # k=3 bugs repaired by agents
-            float(refactor_applied),               # k=4 technical debt removed
+            float(A_active[3]),                    # k=4 deployed refactoring instances
             float(A_active[4]),                    # k=5 deployed review instances
             float(A_active[5]),                    # k=6 deployed audit instances
             tests_written,                         # k=7 tests written

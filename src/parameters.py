@@ -63,15 +63,18 @@ class ScenarioParameters:
     rho_esc: float                   # Per-agent escalation rate
 
     # --- Costs ---
-    # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix/
-    # r_refactor/1/1/r_test/r_doc for roles 1-8), not per sprint.
+    # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix/1/1/1/r_test/r_doc
+    # for roles 1-8), not per sprint.  Roles 4-6 have no countable unit of output, so
+    # their r_k is 1 and c_token is a flat fee per deployed instance per sprint (§3.7).
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Annual fully-loaded cost of one FTE
-    # Severity weights default to the medium bugimpact tier of paper §4.1
+    # Expected cost in dollars of a single escaped bug of each severity (Eq. obj_Q).
+    # These are absolute costs, not relative quality weights: escaped bugs are a cost
+    # driver of Eq. (cost_rep).  Defaults are the medium bugimpact tier of paper §4.1
     # (tab:scenario:bugimpact); every scenario file supplies them explicitly.
-    omega_min: float = 1.0           # Quality objective weight for minor bugs
-    omega_maj: float = 2000.0        # Quality objective weight for major bugs
-    omega_sec: float = 6700.0        # Quality objective weight for security bugs
+    omega_min: float = 150.0         # Cost of one escaped minor bug
+    omega_maj: float = 300_000.0     # Cost of one escaped major bug
+    omega_sec: float = 1_000_000.0   # Cost of one escaped security bug
 
     def __post_init__(self) -> None:
         if len(self.c_token) != AGENT_ROLE_COUNT:

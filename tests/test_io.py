@@ -191,23 +191,28 @@ class TestLoadSearchConfig:
         cfg = load_search_config("config/search_default.json")
         assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
         assert cfg.horizon_path == "config/horizon_default.json"
-        assert cfg.strategy == "random"
+        assert cfg.strategy == "evolutionary"
 
     def test_default_search_config_matches_paper_search_range(self):
-        # Paper §4.2, Table 6: search range and the E = 10,000 evaluation budget,
-        # split 10 % / 90 % between the initial pool and the generation loop.
+        # Paper §4.2, Table 6: search range and the E = 10,000 evaluation budget, split
+        # 10 % / 90 % between the initial pool and the generation loop for the
+        # evolutionary strategy and into n_starts restarts for the descent.
         cfg = load_search_config("config/search_default.json")
-        # Staffing levels in quarter-FTE steps from a one-day-per-week part-timer to a
-        # five-FTE team; N is a staffing level, so the values are floats.
-        assert cfg.N_values == tuple(0.25 * i for i in range(1, 21))
+        # Staffing levels from a one-day-per-week part-timer to a two-pizza team;
+        # N is a staffing level, so the values are floats.
+        assert cfg.N_values == (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0)
         assert cfg.R_values == (1, 2, 4, 13)
         assert cfg.F_freeze_values == (0, 1, 2)
         assert cfg.sigma == 2.0
-        assert cfg.n_samples == 10_000
+        assert cfg.epsilon == 0.02
+        assert cfg.budget == 10_000
         assert cfg.n_samples_initial == 1_000
         assert cfg.n_generations * cfg.n_offspring == 9_000
-        assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.n_samples
-        assert cfg.samples == "frontier"
+        assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.budget
+        assert cfg.n_elite == 100
+        assert cfg.n_starts == 5
+        assert cfg.budget // cfg.n_starts == 2_000
+        assert cfg.samples == "best"
         assert cfg.seed == 42
 
     def test_sigma_defaults_and_is_validated(self, tmp_path):
@@ -227,7 +232,7 @@ class TestLoadSearchConfig:
         del data["search"]["samples"]
         path = tmp_path / "search.json"
         path.write_text(json.dumps(data))
-        assert load_search_config(path).samples == "frontier"
+        assert load_search_config(path).samples == "best"
 
         data["search"]["samples"] = "everything"
         path.write_text(json.dumps(data))

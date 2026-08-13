@@ -8,8 +8,9 @@ with its five `scenario` entries repointed at one tier combination; the search r
 budget, horizon, and seed are inherited unchanged so that all 324 searches share the
 experimental setup.
 
-Each scenario is solved twice — once with random and once with evolutionary search —
-via the `optimize --strategy` override, so 324 files cover all 648 searches.
+Each scenario is solved twice — once with evolutionary search and once with greedy
+neighbourhood descent — via the `optimize --strategy` override, so 324 files cover all
+648 searches.
 
 Usage
 -----
@@ -30,6 +31,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from src.config import (   # noqa: E402
     SCENARIO_GROUPS,
+    SEARCH_STRATEGIES,
     scenario_id,
     scenario_tier_combinations,
     scenario_tiers,
@@ -44,9 +46,9 @@ def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
     sid = scenario_id(tiers)
     tier_list = ", ".join(f"{g}={t}" for g, t in zip(SCENARIO_GROUPS, tiers))
     config = dict(template)
+    strategies = " and ".join(f"--strategy {s}" for s in SEARCH_STRATEGIES)
     config["description"] = (
-        f"Paper Section 4.2 scenario {sid} ({tier_list}); "
-        f"solve with --strategy random and --strategy evolutionary"
+        f"Paper Section 4.2 scenario {sid} ({tier_list}); solve with {strategies}"
     )
     config["scenario_id"] = sid
     config["scenario"] = {
@@ -91,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     shape = " x ".join(str(len(scenario_tiers(g))) for g in SCENARIO_GROUPS)
     print(f"Wrote {written} search configurations to {out_dir}/ "
           f"({shape} = {expected} scenarios, "
-          f"{2 * expected} searches with both strategies)")
+          f"{len(SEARCH_STRATEGIES) * expected} searches with both strategies)")
     print(f"Template: {args.template}")
     return 0
 

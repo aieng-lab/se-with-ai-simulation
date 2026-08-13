@@ -64,7 +64,7 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 
     One ``<group initial>-<tier initial>`` token per group, in SCENARIO_GROUPS order.
     Both initial sets are distinct, so the label round-trips to the tier tuple
-    (`src.results_analysis.tiers_from_scenario_id`).
+    (`src.campaign.tiers_from_scenario_id`).
     """
     if len(tiers) != len(SCENARIO_GROUPS):
         raise ValueError(f"expected {len(SCENARIO_GROUPS)} tiers, got {len(tiers)}")
@@ -75,10 +75,16 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 
 
 # Retention policy for the per-candidate result.json files a search writes:
-#   "all"      — one file per feasible candidate (10,000 per search at §4.2 scale)
-#   "frontier" — only the configurations on the final Pareto frontier
-#   "none"     — no per-candidate files; aggregates live in search_summary.json
-SAMPLE_POLICIES: tuple[str, ...] = ("all", "frontier", "none")
+#   "all"  — one file per feasible candidate (10,000 per search at §4.2 scale)
+#   "best" — only c* and the indistinguishable set I* it is reported with (§3.10)
+#   "none" — no per-candidate files; aggregates live in search_summary.json
+SAMPLE_POLICIES: tuple[str, ...] = ("all", "best", "none")
+
+# The two search strategies of paper §3.11: evolutionary search over an elite ranked by
+# the preference relation, and greedy descent over an enumerated neighbourhood.  Uniform
+# random sampling is not a strategy — it is the shared initialiser both of them seed from
+# (§3.11.2).
+SEARCH_STRATEGIES: tuple[str, ...] = ("evolutionary", "descent")
 
 AGENT_ROLE_NAMES: tuple[str, ...] = (
     "Feature Implementation Agent",           # k=1
@@ -204,9 +210,9 @@ class TeamConfiguration:
             # checks above, so a malformed A_qa still raises rather than being silently
             # replaced.  This is what keeps two configurations that differ only in an
             # inert A_qa from becoming two points: `rng._config_hash` folds A_qa in, so
-            # without canonicalisation they would draw different RNG streams, land at
-            # different objective values, and both survive onto the frontier — while
-            # being the same model.  Equality and hashing of this frozen dataclass follow
+            # without canonicalisation they would draw different RNG streams and land at
+            # different objective values while being the same model — multiplying the
+            # search space and the reported set alike.  Equality and hashing follow
             # the fields, so the collapse also makes the evolutionary `seen` set reject
             # such children for free.
             object.__setattr__(self, "A_qa", (0,) * AGENT_ROLE_COUNT)
@@ -238,16 +244,19 @@ class SearchConfiguration:
 
     scenario_paths: dict[str, str]          # one path per entry of SCENARIO_GROUPS
     horizon_path: str
-    strategy: str                           # "random" or "evolutionary"
+    strategy: str                           # one of SEARCH_STRATEGIES
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
     R_values: tuple[int, ...]
     F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
     sigma: float = 2.0                      # throughput-saturation headroom factor (§3.11.1)
-    n_samples: int = 500                    # random: total samples
+    epsilon: float = 0.02                   # throughput-constraint tolerance (§3.9)
+    budget: int = 500                       # E: candidate evaluations, both strategies
     n_samples_initial: int = 100            # evolutionary: initial population
     n_generations: int = 15                 # evolutionary: generation count
     n_offspring: int = 20                   # evolutionary: offspring per generation
-    samples: str = "frontier"               # per-candidate result.json retention policy
+    n_elite: int = 20                       # evolutionary: elite that parents are drawn from
+    n_starts: int = 3                       # descent: independent restarts
+    samples: str = "best"                   # per-candidate result.json retention policy
     seed: int = 0                           # RNG seed for search
     scenario_id: str = ""                   # label of the tier combination, e.g. "h-l_p-m_d-h_a-l_b-m"
 
@@ -259,8 +268,10 @@ class SearchConfiguration:
                 f"scenario_paths must have exactly one entry per scenario group "
                 f"{list(SCENARIO_GROUPS)}; missing={missing}, unknown={unknown}"
             )
-        if self.strategy not in ("random", "evolutionary"):
-            raise ValueError(f"strategy must be 'random' or 'evolutionary', got {self.strategy!r}")
+        if self.strategy not in SEARCH_STRATEGIES:
+            raise ValueError(
+                f"strategy must be one of {list(SEARCH_STRATEGIES)}, got {self.strategy!r}"
+            )
         if not self.N_values:
             raise ValueError("N_values must be non-empty")
         if any(n <= 0 for n in self.N_values):
@@ -278,14 +289,24 @@ class SearchConfiguration:
                 f"F_freeze_values must contain 0 so that every R (in particular R=1) "
                 f"has an admissible feature-freeze length, got {self.F_freeze_values}"
             )
-        if self.n_samples < 1:
-            raise ValueError(f"n_samples must be >= 1, got {self.n_samples}")
+        if not 0.0 <= self.epsilon < 1.0:
+            raise ValueError(f"epsilon must be in [0, 1), got {self.epsilon}")
+        if self.budget < 1:
+            raise ValueError(f"budget must be >= 1, got {self.budget}")
         if self.n_samples_initial < 1:
             raise ValueError(f"n_samples_initial must be >= 1, got {self.n_samples_initial}")
         if self.n_generations < 1:
             raise ValueError(f"n_generations must be >= 1, got {self.n_generations}")
         if self.n_offspring < 1:
             raise ValueError(f"n_offspring must be >= 1, got {self.n_offspring}")
+        if self.n_elite < 1:
+            raise ValueError(f"n_elite must be >= 1, got {self.n_elite}")
+        if not 1 <= self.n_starts <= self.budget:
+            # Each restart gets budget // n_starts evaluations, so more restarts than
+            # budget would leave some of them unable to evaluate even their seed.
+            raise ValueError(
+                f"n_starts must be in [1, budget={self.budget}], got {self.n_starts}"
+            )
         if self.samples not in SAMPLE_POLICIES:
             raise ValueError(
                 f"samples must be one of {list(SAMPLE_POLICIES)}, got {self.samples!r}"

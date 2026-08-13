@@ -1,8 +1,8 @@
 {
-  "description": "Bug impact parameters, high tier (safety-critical system). See paper/main.tex tab:scenario:bugimpact. omega_min is fixed at 1 as the reference; omega_maj and omega_sec are the ratios of estimated real-world major/security incident cost to the cost of a minor bug.",
+  "description": "Bug impact parameters, high tier (safety-critical system, e.g. a medical device). See paper/main.tex tab:scenario:bugimpact. The weights are the expected cost in dollars that one escaped minor/major/security bug causes once it affects real users: two hours of engineering time to repair a minor bug after release, an average software-related recall event for a major one, and a breach/incident estimate for a security one.",
   "bugimpact": {
-    "omega_min": 1.0,
-    "omega_maj": 28000.0,
-    "omega_sec": 480000.0
+    "omega_min": 250.0,
+    "omega_maj": 7000000.0,
+    "omega_sec": 120000000.0
   }
 }

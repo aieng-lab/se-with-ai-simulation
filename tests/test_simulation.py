@@ -21,8 +21,8 @@ class TestRunConfigurationBasic:
         result = run_configuration(base_config, s, base_params)
         for rep in result.replications:
             assert rep.value >= 0
-            assert rep.quality >= 0
             assert rep.cost >= 0
+            assert rep.cost_quality >= 0
 
     def test_no_trace_returns_ConfigResult(self, base_config, base_params, small_settings):
         result = run_configuration(base_config, small_settings, base_params)
@@ -45,7 +45,8 @@ class TestTraceCapture:
         no_trace = run_configuration(base_config, s, base_params)
         with_trace = run_configuration(base_config, s, base_params, capture_traces=True)
         for a, b in zip(no_trace.replications, with_trace.replications):
-            assert a.value == b.value and a.quality == b.quality and a.cost == b.cost
+            assert a.value == b.value and a.cost == b.cost
+            assert a.cost_quality == b.cost_quality
 
 
 class TestDeterminism:
@@ -121,7 +122,7 @@ class TestCostAccounting:
         assert rep.cost_human == pytest.approx(0.0)
 
     def test_idle_agents_are_free(self, base_params):
-        """With no work arriving, every role but the two flat services bills nothing."""
+        """With no work arriving, every demand-driven role bills nothing."""
         from src.config import AGENT_ROLE_COUNT
         params = dataclasses.replace(
             base_params, c_salary=0.0, r_arrival=0.0, f_arch_chg=0.0,
@@ -133,15 +134,15 @@ class TestCostAccounting:
         s = SimulationHorizon(T=6, K=1, master_seed=0)
         rep = run_configuration(config, s, params).replications[0]
 
-        # k=1..4 idle: no features arrive, so nothing is implemented, no change
-        # requests are raised, no bugs are injected, and no debt accrues to remove.
-        # k=7,8 are idle too: with no completed features there is no coverage to buy,
-        # so both caps are zero.
-        for k in (0, 1, 2, 3, 6, 7):
+        # k=1..3 idle: no features arrive, so nothing is implemented, no change
+        # requests are raised and no bugs are injected.  k=7,8 are idle too: with no
+        # completed features there is no coverage to buy, so both caps are zero.
+        for k in (0, 1, 2, 6, 7):
             assert rep.actions[k] == pytest.approx(0.0)
-        # k=5,6 are flat per deployed instance per sprint.
-        assert rep.actions[4] == pytest.approx(s.T)
-        assert rep.actions[5] == pytest.approx(s.T)
+        # k=4,5,6 have no countable unit of output and are charged flat per deployed
+        # instance per sprint (§3.7), so they bill even with nothing to do.
+        for k in (3, 4, 5):
+            assert rep.actions[k] == pytest.approx(s.T)
 
     def test_saturated_demand_reproduces_the_nominal_bill(self, base_params):
         """Regression anchor: when every agent is busy, usage billing meets the
@@ -176,24 +177,50 @@ class TestCostAccounting:
         from src.state import SystemState
         import numpy as np
 
-        # No arrivals and no backlog, so the implementation agent's only work is the
+        # No arrivals and no backlog, so the implementation agents' only work is the
         # queued architecture proposals; u_1 is then purely the arch_impl term.
         params = dataclasses.replace(
             base_params, r_arrival=0.0, f_arch_chg=0.0, delta_min=1.0,
         )
+        # A proposal also *consumes* five features' worth of capacity (Eq. arch_impl), so
+        # implementing three needs floor(r_F * a_1) >= 15: with the fixture's r_F = 3
+        # that is a_1 = 5.
         config = TeamConfiguration(
-            N=2, A_dev=tuple(1 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
+            N=2, A_dev=tuple(5 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
             R=8, F_freeze=0,
         )
         state = SystemState(F_backlog=0, Q_arch_impl=3)
         actions = step_sprint(0, state, config, params, np.random.default_rng(0))
 
-        # Capacity is floor(r_F * 1.0 * 1) = 3 with the fixture's r_F, so all three
-        # proposals are implemented this sprint and nothing else is.
         implemented = 3 - state.Q_arch_impl
         assert implemented == 3
         assert actions.units[0] == pytest.approx(ARCH_IMPL_COST_UNITS * implemented)
         assert ARCH_IMPL_COST_UNITS == 5.0
+
+    def test_architecture_implementation_capacity_costs_five_features(self, base_params):
+        """Eq. (arch_impl): the proposal cap is floor(r_F * delta_D * a_1 / 5)."""
+        from src.config import AGENT_ROLE_COUNT
+        from src.sprint import ARCH_IMPL_COST_UNITS, step_sprint
+        from src.state import SystemState
+        import numpy as np
+
+        params = dataclasses.replace(
+            base_params, r_arrival=0.0, f_arch_chg=0.0, delta_min=1.0,
+            f_fix=0.0, h_feature=1e9,      # humans implement nothing
+        )
+        # floor(r_F * a_1) = 3 * 4 = 12, so at five features per proposal only two fit,
+        # and they leave 12 - 10 = 2 features' worth of capacity for the backlog.
+        config = TeamConfiguration(
+            N=2, A_dev=tuple(4 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
+            R=8, F_freeze=0,
+        )
+        state = SystemState(F_backlog=10, Q_arch_impl=5)
+        actions = step_sprint(0, state, config, params, np.random.default_rng(0))
+
+        assert state.Q_arch_impl == 3, "only two of the five proposals fit"
+        arch_impl = (actions.units[0] - actions.impl_agents) / ARCH_IMPL_COST_UNITS
+        assert arch_impl == pytest.approx(2.0)
+        assert actions.impl_agents == pytest.approx(2.0)
 
     def test_test_and_doc_output_is_capped_at_the_coverage_demand(self, base_params):
         """Eqs. (ntest_update)/(ndoc_update): neither role writes past its ceiling.
@@ -240,11 +267,62 @@ class TestCostAccounting:
                 assert snap.N_doc == pytest.approx(snap.F_completed)
 
     def test_cost_split_sums_to_cost(self, base_config, base_params):
+        """The three cost drivers of §3.8 partition Eq. (cost_rep) exactly."""
         params = dataclasses.replace(base_params, c_salary=120_000.0)
         s = SimulationHorizon(T=8, K=3, master_seed=11)
         for rep in run_configuration(base_config, s, params).replications:
-            assert rep.cost_human + rep.cost_agent == pytest.approx(rep.cost)
-            assert rep.cost_human > 0 and rep.cost_agent >= 0
+            assert (rep.cost_quality + rep.cost_human + rep.cost_agent
+                    == pytest.approx(rep.cost))
+            assert rep.cost_human > 0
+            assert rep.cost_agent >= 0 and rep.cost_quality >= 0
+
+    def test_escaped_bugs_are_priced_into_the_objective(self, base_params):
+        """Eq. (obj_Q): the omega weights are dollars, so they move `cost` directly."""
+        from src.simulation import escaped_bug_cost
+        s = SimulationHorizon(T=12, K=3, master_seed=13)
+        # Plenty of bugs and nobody to catch or repair them, so every injected bug ships.
+        leaky = dataclasses.replace(base_params, r_bugs=1.0, d_test=0.0)
+        config = TeamConfiguration(
+            N=2, A_dev=(2, 0, 0, 0, 0, 0, 0, 0), R=4, F_freeze=0,
+        )
+        cheap = dataclasses.replace(leaky, omega_min=1.0, omega_maj=1.0, omega_sec=1.0)
+        pricey = dataclasses.replace(cheap, omega_min=1e4, omega_maj=1e4, omega_sec=1e4)
+        cheap_reps = run_configuration(config, s, cheap).replications
+        pricey_reps = run_configuration(config, s, pricey).replications
+
+        # Identical trajectories (the weights enter no transition), so the only
+        # difference is the price of the escaped bugs.
+        for a, b in zip(cheap_reps, pricey_reps):
+            assert a.value == b.value
+            assert a.cost_human == pytest.approx(b.cost_human)
+            assert a.cost_agent == pytest.approx(b.cost_agent)
+            assert b.cost_quality == pytest.approx(1e4 * a.cost_quality)
+        assert sum(r.cost_quality for r in pricey_reps) > 0, "bugs must have escaped"
+
+        assert escaped_bug_cost(pricey, 1, 2, 3) == pytest.approx(6e4)
+
+    def test_refactoring_is_billed_per_deployed_instance(self, base_params):
+        """Table tab:work_units: u_4 = a_4, independent of the debt trajectory (§3.7)."""
+        from src.config import AGENT_ROLE_COUNT
+        config = TeamConfiguration(
+            N=3, A_dev=(1, 0, 0, 2, 0, 0, 0, 0), R=4, F_freeze=0,
+        )
+        s = SimulationHorizon(T=7, K=1, master_seed=5)
+        # Two runs whose debt trajectories differ wildly: one where refactoring has
+        # something to remove, one where debt never accrues at all.
+        busy = dataclasses.replace(base_params, delta_impl=0.5, delta_fix=0.5)
+        idle = dataclasses.replace(base_params, delta_impl=0.0, delta_fix=0.0)
+        for params in (busy, idle):
+            rep = run_configuration(config, s, params).replications[0]
+            assert rep.actions[3] == pytest.approx(config.A_dev[3] * s.T)
+
+    def test_unstaffed_refactoring_bills_nothing(self, base_params):
+        config = TeamConfiguration(
+            N=2, A_dev=(1, 0, 0, 0, 0, 0, 0, 0), R=4, F_freeze=0,
+        )
+        s = SimulationHorizon(T=5, K=1, master_seed=6)
+        rep = run_configuration(config, s, base_params).replications[0]
+        assert rep.actions[3] == pytest.approx(0.0)
 
 
 class TestContributionAccounting:

@@ -3,8 +3,8 @@
 # Run the full experiment campaign of paper Section 4.2.
 #
 # 324 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
-# tier for project) are each solved twice, once
-# with uniform random and once with evolutionary search, giving 648 searches of 10,000
+# tier for project) are each solved twice, once with evolutionary search and once with
+# greedy neighbourhood descent, giving 648 searches of 10,000
 # candidate evaluations each.  Jobs are independent, so they run in parallel and the
 # simulator itself is single-threaded — but throughput does NOT scale to the core count.
 # Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
@@ -20,7 +20,8 @@
 # Throughput is flat from 4 workers on, so raising $JOBS beyond that does not finish the
 # campaign any sooner — it only stretches each individual search (and since a search
 # writes nothing until it completes, that is lost work if the run is interrupted).
-# Hence the default of 4.  Expect roughly 330 core-hours in total.
+# Hence the default of 4.  Expect roughly 330 core-hours in total, though a descent job
+# can finish well under budget when every restart reaches a local optimum early.
 #
 # Prerequisite:  .venv/bin/python scripts/generate_search_configs.py
 #
@@ -38,7 +39,7 @@
 
 set -euo pipefail
 
-usage() { sed -n '3,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
 
 # ---------------------------------------------------------------------------
@@ -49,8 +50,8 @@ cd "$(dirname "$0")"
 PYTHON=${PYTHON:-.venv/bin/python}
 CONFIG_DIR=${CONFIG_DIR:-config/search}
 OUT_ROOT=${OUT_ROOT:-results/experiments}
-STRATEGIES=${STRATEGIES:-"random evolutionary"}
-SAMPLES=${SAMPLES:-frontier}
+STRATEGIES=${STRATEGIES:-"evolutionary descent"}
+SAMPLES=${SAMPLES:-best}
 START_STATE=${START_STATE:-config/startstate_default.json}
 PROGRESS_EVERY=${PROGRESS_EVERY:-500}
 JOBS=${JOBS:-4}

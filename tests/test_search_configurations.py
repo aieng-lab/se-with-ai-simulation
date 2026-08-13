@@ -26,19 +26,21 @@ from src.config import (
     supervised_agent_count,
 )
 from src.io import load_scenario_params
-from src.pareto import pareto_frontier
 from src.search_configurations import (
     _QA_SUPERVISED_INDICES,
+    _composition_neighbours,
     _mutate,
     _random_draws,
+    _run_descent,
     _run_evolutionary_search,
-    _run_random_search,
     _sample_dev_composition,
     _sample_qa_composition,
     background_count_max,
+    neighbourhood,
     saturation_bounds,
     write_samples,
 )
+from src.selection import indistinguishable_set, parsimony_key, throughput_floor
 
 BG_MAX = 12   # matches r_arrival of config/project_medium.json
 
@@ -54,11 +56,11 @@ def search_cfg():
             group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
         },
         horizon_path="config/horizon_default.json",
-        strategy="random",
+        strategy="evolutionary",
         N_values=(1.0, 2.0, 3.0),
         R_values=(2, 4),
         F_freeze_values=(0, 1, 2),
-        n_samples=50,
+        budget=50,
         seed=7,
     )
 
@@ -290,8 +292,8 @@ class TestMutation:
         """A_qa is inert at F_freeze=0, so mutating it would only produce a duplicate.
 
         Before this rule one mutation type in four perturbed A_qa on an F_freeze=0 parent,
-        producing a child that is the same model as its parent, scored on a different RNG
-        stream, and co-retained on the frontier as a separate point.
+        producing a child that is the same model as its parent but scored on a different
+        RNG stream — burning budget on a team that is not distinct.
         """
         rng = np.random.default_rng(23)
         A_dev = [0] * AGENT_ROLE_COUNT
@@ -349,14 +351,16 @@ def wasteful_cfg():
         scenario_paths={group: f"config/{group}_{tier}.json"
                         for group, tier in _WASTEFUL_TIERS.items()},
         horizon_path="config/horizon_default.json",
-        strategy="random",
+        strategy="evolutionary",
         N_values=(0.25, 1.0),
         R_values=(2, 4),
         F_freeze_values=(0, 1),
-        n_samples=40,
+        budget=50,
         n_samples_initial=20,
         n_generations=3,
         n_offspring=10,
+        n_elite=5,
+        n_starts=2,
         seed=11,
     )
 
@@ -371,46 +375,115 @@ def wasteful_params(wasteful_cfg):
     return load_scenario_params(wasteful_cfg.scenario_paths)
 
 
-class TestSearchBudget:
-    def test_random_search_charges_every_candidate(self, wasteful_cfg, tiny_horizon,
-                                                   wasteful_params):
-        outcome = _run_random_search(
-            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
-            wasteful_cfg.n_samples, progress_every=0,
-        )
-        assert outcome.n_evaluated == wasteful_cfg.n_samples
-        assert outcome.n_simulated == len(outcome.aggs) <= outcome.n_evaluated
-        assert outcome.n_evaluated - outcome.n_simulated == sum(
-            1 for e in outcome.manifest.values() if not e["feasible"]
-        )
+class TestNeighbourhood:
+    """The enumerated neighbourhood of §3.11.5 must match the mutation operator's reach."""
 
-    def test_infeasible_draws_are_charged_and_labelled(self, wasteful_cfg, tiny_horizon,
-                                                       wasteful_params):
+    def _cfg(self, F_freeze=1):
+        return TeamConfiguration(N=2.0, A_dev=(2, 1, 1, 0, 3, 0, 1, 0), R=4,
+                                 F_freeze=F_freeze,
+                                 A_qa=(0, 0, 2, 1, 1, 0, 0, 1) if F_freeze else None)
+
+    def test_neighbours_are_distinct_and_exclude_the_parent(self, search_cfg):
+        cfg = self._cfg()
+        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
+        assert cfg not in nbs
+        assert len(nbs) == len(set(nbs))
+
+    def test_every_mutation_lands_in_the_neighbourhood(self, search_cfg):
+        """Whatever `_mutate` can reach in one step must be enumerated (§3.11.5)."""
+        cfg = self._cfg()
+        nbs = set(neighbourhood(cfg, search_cfg, WIDE_BOUNDS))
+        rng = np.random.default_rng(0)
+        reached = {_mutate(cfg, rng, search_cfg, WIDE_BOUNDS) for _ in range(600)}
+        reached.discard(cfg)      # the operator returns the parent when it gives up
+        assert reached <= nbs
+        # The sampling must have actually explored, or the containment is vacuous.
+        assert len(reached) > 10
+
+    def test_staffing_moves_are_the_adjacent_grid_values(self, search_cfg):
+        cfg = self._cfg()
+        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
+        # search_cfg.N_values == (1.0, 2.0, 3.0) and cfg.N == 2.0
+        n_moves = {nb.N for nb in nbs if nb.A_dev == cfg.A_dev and nb.A_qa == cfg.A_qa
+                   and nb.F_freeze == cfg.F_freeze}
+        assert n_moves == {1.0, 3.0}
+
+    def test_release_cadence_is_never_changed(self, search_cfg):
+        cfg = self._cfg()
+        assert all(nb.R == cfg.R for nb in neighbourhood(cfg, search_cfg, WIDE_BOUNDS))
+
+    def test_freeze_length_stays_in_range(self, search_cfg):
+        cfg = self._cfg()
+        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
+        assert all(0 <= nb.F_freeze <= cfg.R - 1 for nb in nbs)
+        assert {nb.F_freeze for nb in nbs} >= {0, 1, 2}
+
+    def test_saturation_bounds_are_respected(self, search_cfg):
+        cfg = self._cfg()
+        bounds = {i: 2 for i in SUPERVISED_ROLE_INDICES}
+        tight = TeamConfiguration(N=2.0, A_dev=(2, 2, 0, 0, 1, 0, 0, 0), R=4, F_freeze=0)
+        for nb in neighbourhood(tight, search_cfg, bounds):
+            for i in SUPERVISED_ROLE_INDICES:
+                assert nb.A_dev[i] <= bounds[i]
+
+    def test_qa_block_is_absent_without_a_freeze_window(self, search_cfg):
+        """A_qa is canonically zero at F_freeze == 0, so mutating it is a no-op."""
+        cfg = self._cfg(F_freeze=0)
+        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
+        # Every neighbour that keeps F_freeze == 0 keeps the canonical zero A_qa.
+        assert all(nb.A_qa == (0,) * AGENT_ROLE_COUNT
+                   for nb in nbs if nb.F_freeze == 0)
+        # Opening a window is available, and lands on the canonical zero A_qa.
+        opened = [nb for nb in nbs if nb.F_freeze == 1]
+        assert opened and all(nb.A_qa == (0,) * AGENT_ROLE_COUNT for nb in opened)
+
+    def test_qa_implementation_roles_stay_at_zero(self, search_cfg):
+        cfg = self._cfg()
+        for nb in neighbourhood(cfg, search_cfg, WIDE_BOUNDS):
+            if nb.F_freeze > 0:
+                assert nb.A_qa[0] == 0 and nb.A_qa[1] == 0
+
+    def test_dev_implementation_role_never_drains_to_zero(self, search_cfg):
+        cfg = self._cfg()
+        assert all(nb.A_dev[0] >= 1
+                   for nb in neighbourhood(cfg, search_cfg, WIDE_BOUNDS))
+
+    def test_composition_neighbours_change_exactly_one_step(self):
+        A = (2, 1, 1, 0, 3, 0, 1, 0)
+        for out in _composition_neighbours(A, SUPERVISED_ROLE_INDICES, WIDE_BOUNDS,
+                                           min_impl=True):
+            delta = sum(abs(a - b) for a, b in zip(A, out))
+            assert delta in (1, 2)    # 1 for add/remove/service, 2 for a transfer
+            assert sum(out) - sum(A) in (-1, 0, 1)
+
+
+class TestSearchBudget:
+    def test_infeasible_candidates_are_charged_and_labelled(self, wasteful_cfg,
+                                                            tiny_horizon,
+                                                            wasteful_params):
         """A draw rejected by Eq. (feas_monitoring) still consumes one evaluation (§4.2)."""
         from dataclasses import replace
-        cfg = replace(wasteful_cfg, N_values=(0.25,), n_samples=30)
-        outcome = _run_random_search(
+        cfg = replace(wasteful_cfg, N_values=(0.25,))
+        outcome = _run_evolutionary_search(
             cfg, tiny_horizon, wasteful_params, np.random.default_rng(3),
-            cfg.n_samples, progress_every=0,
+            progress_every=0,
         )
-        assert outcome.n_evaluated == cfg.n_samples
         rejected = [e for e in outcome.manifest.values() if not e["feasible"]]
         assert rejected, "the wasteful range must produce rejections"
         assert all(e["failed_step"] == 1 for e in rejected)
         # The manifest must still describe the candidate that was thrown away.
         assert all({"N", "R", "F_freeze", "A_dev", "A_qa"} <= e.keys() for e in rejected)
+        assert outcome.n_evaluated - outcome.n_simulated == len(rejected)
 
-    def test_evolutionary_search_stays_within_its_nominal_budget(
+    def test_evolutionary_search_stays_within_its_budget(
         self, wasteful_cfg, tiny_horizon, wasteful_params
     ):
         """Infeasible offspring consume budget too, so §4.2's E is a hard ceiling."""
-        budget = (wasteful_cfg.n_samples_initial
-                  + wasteful_cfg.n_generations * wasteful_cfg.n_offspring)
         outcome = _run_evolutionary_search(
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
             progress_every=0,
         )
-        assert outcome.n_evaluated <= budget
+        assert outcome.n_evaluated <= wasteful_cfg.budget
         # The wasteful staffing range guarantees rejections, so this run must have
         # charged some infeasible candidates against the budget.
         assert outcome.n_simulated < outcome.n_evaluated
@@ -427,25 +500,116 @@ class TestSearchBudget:
                 for e in outcome.manifest.values()]
         assert len(keys) == len(set(keys))
 
+    def test_descent_stays_within_its_budget(self, wasteful_cfg, tiny_horizon,
+                                             wasteful_params):
+        outcome = _run_descent(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
+            progress_every=0,
+        )
+        assert 0 < outcome.n_evaluated <= wasteful_cfg.budget
+
+    def test_descent_never_evaluates_a_duplicate(self, wasteful_cfg, tiny_horizon,
+                                                 wasteful_params):
+        """`seen` makes a revisited neighbour free, so no configuration is charged twice."""
+        outcome = _run_descent(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(5),
+            progress_every=0,
+        )
+        keys = [(e["N"], e["R"], e["F_freeze"],
+                 tuple(e["A_dev"]), tuple(e["A_qa"]))
+                for e in outcome.manifest.values()]
+        assert len(keys) == len(set(keys))
+
+    def test_descent_terminates_on_a_range_that_guarantees_duplicate_seeds(
+        self, tiny_horizon
+    ):
+        """A re-drawn seed costs no budget, so the seed loop needs its own attempt cap.
+
+        The range here is one staffing level, one cadence and no freeze window, so a
+        20-evaluation budget cannot help but redraw candidates it has already scored.
+        Without the cap, a restart whose redraws are all infeasible would never advance
+        `n_evaluated` and would spin forever; the test passing at all is the assertion.
+        """
+        cfg = SearchConfiguration(
+            scenario_paths={group: f"config/{group}_{tier}.json"
+                            for group, tier in _WASTEFUL_TIERS.items()},
+            horizon_path="config/horizon_default.json",
+            strategy="descent",
+            N_values=(0.25,), R_values=(1,), F_freeze_values=(0,),
+            budget=20, n_starts=2, seed=1,
+        )
+        params = load_scenario_params(cfg.scenario_paths)
+        outcome = _run_descent(cfg, tiny_horizon, params, np.random.default_rng(0),
+                               progress_every=0)
+        assert outcome.n_evaluated <= cfg.budget
+        # Every rejection is still recorded, and nothing is charged twice.
+        keys = [(e["N"], e["R"], e["F_freeze"], tuple(e["A_dev"]), tuple(e["A_qa"]))
+                for e in outcome.manifest.values()]
+        assert len(keys) == len(set(keys))
+        assert any(not e["feasible"] for e in outcome.manifest.values()), \
+            "the wasteful range must reject at least one candidate"
+
+    def test_descent_records_every_restart(self, wasteful_cfg, tiny_horizon,
+                                           wasteful_params):
+        outcome = _run_descent(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
+            progress_every=0,
+        )
+        restarts = {e["restart"] for e in outcome.manifest.values()}
+        assert restarts == set(range(wasteful_cfg.n_starts))
+        assert all("step" in e for e in outcome.manifest.values())
+
+    def test_descent_ends_at_a_local_optimum(self, tiny_horizon):
+        """No neighbour of the final incumbent of a completed restart is preferred."""
+        from dataclasses import replace
+        from src.selection import best_index, prefers
+        # A generous budget so the descent terminates on its own rather than on money.
+        cfg = SearchConfiguration(
+            scenario_paths={group: f"config/{group}_medium.json"
+                            for group in SCENARIO_GROUPS},
+            horizon_path="config/horizon_default.json",
+            strategy="descent",
+            N_values=(1.0, 2.0), R_values=(2,), F_freeze_values=(0, 1),
+            budget=4000, n_starts=1, seed=4,
+        )
+        params = load_scenario_params(cfg.scenario_paths)
+        outcome = _run_descent(cfg, tiny_horizon, params, np.random.default_rng(0),
+                               progress_every=0)
+        assert outcome.n_evaluated < cfg.budget, "must have stopped before running dry"
+
+        floor = throughput_floor(params, cfg.epsilon)
+        aggs = [a for _, _, a in outcome.aggs]
+        by_config = {c: a for _, c, a in outcome.aggs}
+        incumbent = outcome.aggs[best_index(aggs, floor)][1]
+        bounds = saturation_bounds(params, cfg.sigma)
+        for nb in neighbourhood(incumbent, cfg, bounds):
+            agg = by_config.get(nb)
+            if agg is not None:
+                assert not prefers(agg, by_config[incumbent], floor)
+
 
 class TestSampleRetention:
     def _outcome(self, cfg, horizon, params, samples):
         from dataclasses import replace
-        return _run_random_search(
+        return _run_evolutionary_search(
             replace(cfg, samples=samples), horizon, params, np.random.default_rng(1),
-            cfg.n_samples, progress_every=0,
+            progress_every=0,
         )
 
-    def test_frontier_policy_writes_one_file_per_frontier_config(
+    def test_best_policy_writes_one_file_per_reported_config(
         self, wasteful_cfg, tiny_horizon, wasteful_params, tmp_path
     ):
-        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "frontier")
-        frontier_keys = [outcome.aggs[i][0]
-                         for i in pareto_frontier([a for _, _, a in outcome.aggs])]
-        written = write_samples(outcome, tmp_path, frontier_keys)
-        assert written == len(frontier_keys) > 0
+        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "best")
+        floor = throughput_floor(wasteful_params, wasteful_cfg.epsilon)
+        keep = indistinguishable_set(
+            [a for _, _, a in outcome.aggs], floor,
+            keys=[parsimony_key(c) for _, c, _ in outcome.aggs],
+        )
+        keys = [outcome.aggs[i][0] for i in keep]
+        written = write_samples(outcome, tmp_path, keys)
+        assert written == len(keys) > 0
         assert sorted(p.stem for p in (tmp_path / "samples").glob("*.json")) == \
-            sorted(frontier_keys)
+            sorted(keys)
 
     def test_none_policy_keeps_no_results_in_memory(
         self, wasteful_cfg, tiny_horizon, wasteful_params, tmp_path

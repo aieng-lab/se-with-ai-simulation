@@ -9,6 +9,7 @@ from src.config import (
     SearchConfiguration,
     SCENARIO_GROUPS,
     SCENARIO_TIERS,
+    SEARCH_STRATEGIES,
     SimulationHorizon,
     TeamConfiguration,
     scenario_id,
@@ -114,7 +115,7 @@ class TestSearchConfigurationValidation:
         kwargs = dict(
             scenario_paths={g: f"config/{g}_medium.json" for g in SCENARIO_GROUPS},
             horizon_path="config/horizon_default.json",
-            strategy="random",
+            strategy="evolutionary",
             N_values=(0.25, 1.0),
             R_values=(2,),
         )
@@ -133,6 +134,32 @@ class TestSearchConfigurationValidation:
     def test_sigma_below_one_raises(self):
         with pytest.raises(ValueError, match="sigma must be >= 1"):
             self._cfg(sigma=0.9)
+
+    @pytest.mark.parametrize("strategy", SEARCH_STRATEGIES)
+    def test_both_paper_strategies_are_accepted(self, strategy):
+        assert self._cfg(strategy=strategy).strategy == strategy
+
+    def test_the_removed_random_strategy_is_rejected(self):
+        """Uniform random sampling is the shared initialiser, not a strategy (§3.11.2)."""
+        with pytest.raises(ValueError, match="strategy must be one of"):
+            self._cfg(strategy="random")
+
+    def test_epsilon_defaults_to_the_paper_value(self):
+        assert self._cfg().epsilon == 0.02
+
+    @pytest.mark.parametrize("epsilon", [-0.01, 1.0, 1.5])
+    def test_epsilon_outside_the_unit_interval_raises(self, epsilon):
+        with pytest.raises(ValueError, match=r"epsilon must be in \[0, 1\)"):
+            self._cfg(epsilon=epsilon)
+
+    def test_non_positive_elite_raises(self):
+        with pytest.raises(ValueError, match="n_elite must be >= 1"):
+            self._cfg(n_elite=0)
+
+    def test_more_restarts_than_budget_raises(self):
+        """Each restart gets budget // n_starts evaluations, so it needs at least one."""
+        with pytest.raises(ValueError, match="n_starts must be in"):
+            self._cfg(budget=4, n_starts=5)
 
 
 class TestBackgroundServiceBudget:
@@ -203,8 +230,8 @@ class TestBackgroundServiceBudget:
 
         Configurations differing only in an unexercised A_qa are the same model, and must
         therefore be the same object: equal, equally hashed, and — via _config_hash —
-        scored on the same RNG stream.  Otherwise each variant lands at a different point
-        and they all survive onto the frontier as if they were distinct teams.
+        scored on the same RNG stream.  Otherwise each variant lands at a different cost
+        and the search spends budget distinguishing teams that are not distinct.
         """
         variants = [
             (0,) * AGENT_ROLE_COUNT,

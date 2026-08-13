@@ -61,15 +61,19 @@ class TestGeneratedGrid:
             cfg = load_search_config(path)
             assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
             # Only the scenario differs; horizon, range, budget and seed are shared so
-            # that frontier differences are attributable to the scenario alone (§4.2).
+            # that result differences are attributable to the scenario alone (§4.2).
             assert cfg.horizon_path == reference.horizon_path
             assert cfg.N_values == reference.N_values
             assert cfg.R_values == reference.R_values
             assert cfg.F_freeze_values == reference.F_freeze_values
-            assert cfg.n_samples == reference.n_samples
+            assert cfg.sigma == reference.sigma
+            assert cfg.epsilon == reference.epsilon
+            assert cfg.budget == reference.budget
             assert cfg.n_samples_initial == reference.n_samples_initial
             assert cfg.n_generations == reference.n_generations
             assert cfg.n_offspring == reference.n_offspring
+            assert cfg.n_elite == reference.n_elite
+            assert cfg.n_starts == reference.n_starts
             assert cfg.seed == reference.seed
 
     def test_tier_combinations_are_covered_exactly_once(self, generated):

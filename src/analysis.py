@@ -5,17 +5,17 @@ All functions accept a `pd.DataFrame` as returned by `results.to_dataframe()` or
 per SprintSnapshot field.
 
 Public API:
-    mean_trajectory(df, field)               -> pd.Series
-    quantile_band(df, field, q_lo, q_hi)     -> pd.DataFrame
-    final_distribution(df, field)            -> pd.Series
-    convergence_check(results, master_seed)  -> dict
+    mean_trajectory(df, field)                      -> pd.Series
+    quantile_band(df, field, q_lo, q_hi)            -> pd.DataFrame
+    final_distribution(df, field)                   -> pd.Series
+    convergence_check(results, master_seed, floor)  -> dict
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
-from .pareto import aggregate_config_result, pareto_frontier
+from .selection import aggregate_config_result, best_index
 from .simulation import ConfigResult
 
 
@@ -58,19 +58,22 @@ def final_distribution(df: pd.DataFrame, field: str) -> pd.Series:
 def convergence_check(
     results: list[ConfigResult],
     master_seed: int,
+    floor: float = 0.0,
 ) -> dict[str, object]:
-    """§9.5 Pareto stability: compare frontier at K vs K//2 replications.
+    """Is the reported optimum stable when the replication count is halved?
 
-    For each ConfigResult, aggregate objectives at full K and at K//2, build Pareto
-    frontiers for both, then compute the fraction of frontier slots that differ.
+    `c*` is chosen by a mean over K Monte Carlo replications (§3.10), so the honest check
+    on K is whether the same configuration still wins at K//2.  Aggregates every
+    ConfigResult at full K and at K//2 under the throughput floor `floor`, then compares
+    the two minimisers and reports how wide the winner's cost CI is relative to its mean —
+    the quantity that decides how large the indistinguishable set comes out.
 
     Returns:
-        stable          bool  — True iff change_fraction ≤ 0.05
-        change_fraction float — fraction of frontier positions that changed
-        frontier_K      list[int] — indices on full-K frontier
-        frontier_half_K list[int] — indices on half-K frontier
+        stable          bool  — True iff the same configuration wins at both K
+        best_K          int | None — index of c* at full K
+        best_half_K     int | None — index of c* at K//2
+        rel_ci_width_K  float — (cost_ci_hi - cost_ci_lo) / cost_mean at full K
     """
-    # Full-K aggregated objectives
     full_aggs = [aggregate_config_result(r, master_seed) for r in results]
 
     # Half-K aggregated objectives (first K//2 replications only)
@@ -80,17 +83,18 @@ def convergence_check(
     ]
     half_aggs = [aggregate_config_result(r, master_seed) for r in half_results]
 
-    frontier_K = set(pareto_frontier(full_aggs))
-    frontier_half_K = set(pareto_frontier(half_aggs))
+    best_K = best_index(full_aggs, floor)
+    best_half_K = best_index(half_aggs, floor)
 
-    # Fraction of positions that differ between the two frontiers
-    total = max(1, len(frontier_K | frontier_half_K))
-    changed = len(frontier_K.symmetric_difference(frontier_half_K))
-    change_fraction = changed / total
+    rel_ci_width = 0.0
+    if best_K is not None:
+        agg = full_aggs[best_K]
+        if agg.cost_mean:
+            rel_ci_width = (agg.cost_ci[1] - agg.cost_ci[0]) / agg.cost_mean
 
     return {
-        "stable": change_fraction <= 0.05,
-        "change_fraction": change_fraction,
-        "frontier_K": sorted(frontier_K),
-        "frontier_half_K": sorted(frontier_half_K),
+        "stable": best_K == best_half_K,
+        "best_K": best_K,
+        "best_half_K": best_half_K,
+        "rel_ci_width_K": rel_ci_width,
     }

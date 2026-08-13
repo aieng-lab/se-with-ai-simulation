@@ -707,11 +707,13 @@ class TestContributionAccounting:
         from src.sprint import ARCH_IMPL_COST_UNITS
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0,
                                 delta_min=1.0, h_feature=1e9, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=2, A_dev=_A(k1=1), R=8, F_freeze=0)
-        # Capacity is floor(r_F * 1.0 * 1) = 3: two proposals, then one backlog feature.
+        cfg = TeamConfiguration(N=2, A_dev=_A(k1=4), R=8, F_freeze=0)
+        # Capacity is floor(r_F * 1.0 * 4) = 12.  A proposal costs five features of it
+        # (Eq. arch_impl), so both queued proposals are implemented and the remaining
+        # 12 - 10 = 2 features' worth goes to the backlog.
         state = SystemState(F_backlog=5, Q_arch_impl=2)
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(27))
 
         arch_impl = (actions.units[0] - actions.impl_agents) / ARCH_IMPL_COST_UNITS
         assert arch_impl == pytest.approx(2.0)
-        assert actions.impl_agents == pytest.approx(1.0)
+        assert actions.impl_agents == pytest.approx(2.0)

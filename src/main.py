@@ -15,9 +15,10 @@ Load and analyse persisted results:
     python -m src.main analyze results/result.json
     python -m src.main analyze results/result.json results/traces.csv
 
-Search for optimal team compositions:
+Search for the cheapest team that keeps up with the project:
     python -m src.main optimize config/search_default.json --out results/search_default
-    python -m src.main optimize config/search_default.json --out results/search_evo --strategy evolutionary
+    python -m src.main optimize config/search_default.json --out results/search_descent \
+        --strategy descent
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
         --samples none --progress-every 500 --out results/one_scenario
 
@@ -47,13 +48,20 @@ from .config import (
     BACKGROUND_ROLE_INDICES,
     SAMPLE_POLICIES,
     SCENARIO_GROUPS,
+    SEARCH_STRATEGIES,
     TeamConfiguration,
     supervised_agent_count,
 )
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
-from .pareto import aggregate_config_result, pareto_frontier, parsimony_key
 from .results import load_result, load_traces, save_result, save_traces
-from .search_configurations import _run_evolutionary_search, _run_random_search, write_samples
+from .search_configurations import _run_descent, _run_evolutionary_search, write_samples
+from .selection import (
+    aggregate_config_result,
+    parsimony_key,
+    report_optimum,
+    satisfies_throughput,
+    throughput_floor,
+)
 from .simulation import ConfigResult, ConfigTrace, run_configuration
 from .visualization import visualize_multi, visualize_single
 
@@ -131,10 +139,12 @@ def _cmd_run(args: argparse.Namespace) -> None:
     agg = aggregate_config_result(cr, master_seed=horizon.master_seed)
 
     print()
-    print("Objectives (mean [95 % CI]):")
-    print(f"  value   features/sprint       {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
-    print(f"  quality weighted-bugs/feature {agg.quality_mean:.4f}   [{agg.quality_ci[0]:.4f}, {agg.quality_ci[1]:.4f}]")
-    print(f"  CF  cost/feature      {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
+    print("Objective and constraint (mean [95 % CI]):")
+    print(f"  cost   $/feature         {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
+    print(f"  value  features/sprint   {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
+    print("Cost drivers ($/feature):")
+    print(f"  escaped bugs {agg.cost_quality_mean:.1f}   "
+          f"developers {agg.cost_human_mean:.1f}   agents {agg.cost_agent_mean:.1f}")
 
     if args.out:
         out = Path(args.out)
@@ -159,10 +169,12 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print(f"Source:      {args.result}")
     print(f"Replications: K={len(result.replications)}")
     print()
-    print("Objectives (mean [95 % CI]):")
-    print(f"  value   features/sprint       {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
-    print(f"  quality weighted-bugs/feature {agg.quality_mean:.4f}   [{agg.quality_ci[0]:.4f}, {agg.quality_ci[1]:.4f}]")
-    print(f"  CF  cost/feature      {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
+    print("Objective and constraint (mean [95 % CI]):")
+    print(f"  cost   $/feature         {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
+    print(f"  value  features/sprint   {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
+    print("Cost drivers ($/feature):")
+    print(f"  escaped bugs {agg.cost_quality_mean:.1f}   "
+          f"developers {agg.cost_human_mean:.1f}   agents {agg.cost_agent_mean:.1f}")
 
     if not args.traces:
         return
@@ -226,13 +238,16 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Strategy:    {strategy}")
     print(f"Horizon:     K={horizon.K} replications * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
-    if strategy == "random":
-        print(f"Budget:      {search_cfg.n_samples} candidates")
+    print(f"Budget:      {search_cfg.budget} candidate evaluations")
+    if strategy == "evolutionary":
+        print(f"             {search_cfg.n_samples_initial} initial + "
+              f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring, "
+              f"elite {search_cfg.n_elite}")
     else:
-        print(f"Budget:      {search_cfg.n_samples_initial} initial + "
-              f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring "
-              f"= {search_cfg.n_samples_initial + search_cfg.n_generations * search_cfg.n_offspring}"
-              f" candidates")
+        print(f"             {search_cfg.n_starts} restarts * "
+              f"{search_cfg.budget // search_cfg.n_starts} evaluations each")
+    print(f"Throughput:  value >= (1 - {search_cfg.epsilon}) * {params.r_arrival:g} = "
+          f"{throughput_floor(params, search_cfg.epsilon):.3f} features/sprint")
     print(f"Samples:     {search_cfg.samples}")
     print()
 
@@ -241,32 +256,39 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     rng = np.random.default_rng(search_cfg.seed)
 
     t_start = time.perf_counter()
-    if strategy == "random":
-        outcome = _run_random_search(
-            search_cfg, horizon, params, rng, search_cfg.n_samples, initial_state,
-            progress_every=args.progress_every,
-        )
-    else:
-        outcome = _run_evolutionary_search(
-            search_cfg, horizon, params, rng, initial_state,
-            progress_every=args.progress_every,
-        )
+    runner = {
+        "evolutionary": _run_evolutionary_search,
+        "descent": _run_descent,
+    }[strategy]
+    outcome = runner(
+        search_cfg, horizon, params, rng, initial_state,
+        progress_every=args.progress_every,
+    )
     wall_clock_s = time.perf_counter() - t_start
 
     aggs = outcome.aggs
     agg_objs = [a for _, _, a in aggs]
-    # Parsimony keys are supplied, so the reported frontier carries the smallest team for
-    # each trade-off rather than every statistically indistinguishable variant of it (§3.10).
-    frontier_keys_parsimony = [parsimony_key(cfg) for _, cfg, _ in aggs]
-    frontier_indices = (pareto_frontier(agg_objs, keys=frontier_keys_parsimony)
-                        if agg_objs else [])
-    frontier_keys = [aggs[i][0] for i in frontier_indices]
+    floor = throughput_floor(params, search_cfg.epsilon)
+    # c* and the set of admissible configurations it cannot be distinguished from (§3.10).
+    # Parsimony keys are supplied, so of several equally good teams running the same
+    # process only the one that uses no more agents anywhere is reported — including when
+    # that removes the raw cost minimiser, which is why c* comes from report_optimum
+    # rather than from best_index.
+    best_idx, keep_idx = report_optimum(
+        agg_objs, floor, keys=[parsimony_key(cfg) for _, cfg, _ in aggs]
+    )
+    best_key = aggs[best_idx][0] if best_idx is not None else None
+    keep_keys = [aggs[i][0] for i in keep_idx]
+    # c* may violate the throughput constraint when nothing in the pool satisfies it; say so
+    # rather than presenting it as an admissible answer.
+    best_admissible = (best_idx is not None
+                       and satisfies_throughput(agg_objs[best_idx], floor))
 
-    # Sample files are written only now, so that the "frontier" policy can restrict
-    # them to the configurations that survived to the final frontier.
+    # Sample files are written only now, so that the "best" policy can restrict them to
+    # the configurations that are actually reported.
     sample_keys = {
         "none": [],
-        "frontier": frontier_keys,
+        "best": keep_keys,
         "all": [key for key, _, _ in aggs],
     }[search_cfg.samples]
     n_samples_written = write_samples(outcome, out_dir, sample_keys)
@@ -283,10 +305,13 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             "R_values": list(search_cfg.R_values),
             "F_freeze_values": list(search_cfg.F_freeze_values),
             "sigma": search_cfg.sigma,
-            "n_samples": search_cfg.n_samples,
+            "epsilon": search_cfg.epsilon,
+            "budget": search_cfg.budget,
             "n_samples_initial": search_cfg.n_samples_initial,
             "n_generations": search_cfg.n_generations,
             "n_offspring": search_cfg.n_offspring,
+            "n_elite": search_cfg.n_elite,
+            "n_starts": search_cfg.n_starts,
             "samples": search_cfg.samples,
             "seed": search_cfg.seed,
         },
@@ -296,7 +321,9 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "n_simulated": outcome.n_simulated,
         "n_infeasible": outcome.n_evaluated - outcome.n_simulated,
         "n_feasible": outcome.n_simulated,
-        "n_frontier": len(frontier_keys),
+        "throughput_floor": floor,
+        "best_admissible": best_admissible,
+        "n_indistinguishable": len(keep_keys),
         "n_samples_written": n_samples_written,
         "wall_clock_s": round(wall_clock_s, 1),
         "configs": outcome.manifest,
@@ -306,15 +333,20 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     )
 
     search_summary = {
-        "pareto_frontier": frontier_keys,
+        "best": best_key,
+        "indistinguishable": keep_keys,
+        "throughput_floor": floor,
         "objectives": {
             key: {
                 "N": cfg.N, "R": cfg.R, "F_freeze": cfg.F_freeze,
                 "A_dev": list(cfg.A_dev),
                 "A_qa": list(cfg.A_qa),
-                "value_mean": agg.value_mean, "quality_mean": agg.quality_mean, "cost_mean": agg.cost_mean,
-                "value_ci": list(agg.value_ci), "quality_ci": list(agg.quality_ci), "cost_ci": list(agg.cost_ci),
-                "cost_human_mean": agg.cost_human_mean, "cost_agent_mean": agg.cost_agent_mean,
+                "cost_mean": agg.cost_mean, "cost_ci": list(agg.cost_ci),
+                "value_mean": agg.value_mean, "value_ci": list(agg.value_ci),
+                "feasible_throughput": satisfies_throughput(agg, floor),
+                "cost_quality_mean": agg.cost_quality_mean,
+                "cost_human_mean": agg.cost_human_mean,
+                "cost_agent_mean": agg.cost_agent_mean,
                 "actions_mean": list(agg.actions_mean),
                 "impl_human_mean": agg.impl_human_mean,
                 "impl_agents_mean": agg.impl_agents_mean,
@@ -333,12 +365,25 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
           f"({outcome.n_simulated} simulated, "
           f"{outcome.n_evaluated - outcome.n_simulated} infeasible) "
           f"in {wall_clock_s:.1f} s")
-    print(f"Pareto frontier ({len(frontier_keys)} config(s)):")
-    for key in frontier_keys:
-        obj = search_summary["objectives"][key]
-        print(f"  {key}  N={obj['N']:g} R={obj['R']}  "
-              f"value={obj['value_mean']:.3f}  quality={obj['quality_mean']:.4f}  CF={obj['cost_mean']:.0f}")
-        print(f"         A_dev={obj['A_dev']}")
+    if best_key is None:
+        print("No candidate was simulated — nothing to report.")
+    else:
+        obj = search_summary["objectives"][best_key]
+        if not best_admissible:
+            print(f"WARNING: no candidate reached the throughput floor of "
+                  f"{floor:.3f} features/sprint; reporting the least-violating one.")
+        print(f"Best configuration c* ({best_key}):")
+        print(f"  N={obj['N']:g} R={obj['R']} F_freeze={obj['F_freeze']}  "
+              f"cost={obj['cost_mean']:.0f} $/feature "
+              f"[{obj['cost_ci'][0]:.0f}, {obj['cost_ci'][1]:.0f}]  "
+              f"value={obj['value_mean']:.3f}")
+        print(f"  cost split: escaped bugs {obj['cost_quality_mean']:.0f}   "
+              f"developers {obj['cost_human_mean']:.0f}   "
+              f"agents {obj['cost_agent_mean']:.0f}")
+        print(f"  A_dev={obj['A_dev']}")
+        print(f"  A_qa ={obj['A_qa']}")
+        print(f"Statistically indistinguishable from c*: {len(keep_keys)} config(s) "
+              f"(after the parsimony tie-break)")
     print()
     print(f"Results saved to: {out_dir}")
 
@@ -351,17 +396,16 @@ def _cmd_visualize(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     fmt = args.format
-    mean_pareto = args.mean_pareto
     multi = len(result_dirs) > 1
 
     if multi:
         for rd in result_dirs:
-            visualize_single(rd, rd / "plots", fmt, mean_pareto=mean_pareto)
+            visualize_single(rd, rd / "plots", fmt)
         cmp_out = Path(args.out) if args.out else Path("plots")
-        visualize_multi(result_dirs, cmp_out, fmt, mean_pareto=mean_pareto)
+        visualize_multi(result_dirs, cmp_out, fmt)
     else:
         out = Path(args.out) if args.out else result_dirs[0] / "plots"
-        visualize_single(result_dirs[0], out, fmt, mean_pareto=mean_pareto)
+        visualize_single(result_dirs[0], out, fmt)
 
     print("\nDone.")
 
@@ -408,12 +452,13 @@ def main(argv: list[str] | None = None) -> None:
                          help="Path to search config JSON (e.g. config/search_default.json)")
     p_optimize.add_argument("--out", required=True, metavar="DIR",
                          help="Output directory for optimization results")
-    p_optimize.add_argument("--strategy", choices=["random", "evolutionary"], default=None,
+    p_optimize.add_argument("--strategy", choices=list(SEARCH_STRATEGIES), default=None,
                          help="Override strategy from config")
     p_optimize.add_argument(
         "--samples", choices=list(SAMPLE_POLICIES), default=None,
-        help="Which candidates get a samples/<key>.json file: 'all', 'frontier' "
-             "(Pareto-optimal only), or 'none' (overrides the search config)",
+        help="Which candidates get a samples/<key>.json file: 'all', 'best' "
+             "(c* and the set indistinguishable from it), or 'none' "
+             "(overrides the search config)",
     )
     p_optimize.add_argument(
         "--progress-every", type=int, default=100, metavar="N",
@@ -433,8 +478,6 @@ def main(argv: list[str] | None = None) -> None:
                        help="Output image format (default: png)")
     p_vis.add_argument("--out", default=None, metavar="DIR",
                        help="Output directory for plots (default: RESULT_DIR/plots/)")
-    p_vis.add_argument("--mean-pareto", action="store_true",
-                       help="Use strict mean-value Pareto dominance instead of CI-aware frontier")
 
     args = parser.parse_args(argv)
 

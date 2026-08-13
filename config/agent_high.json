@@ -1,11 +1,11 @@
 {
-  "description": "Agent cost and throughput parameters, high tier (Claude Fable 5 pricing). See paper/main.tex tab:scenario:agents. Tiers are ordered by model price, not by capability: r_bugs and d_test derive from vals.ai SWE-bench Verified scores (0.80/0.97/0.95 for low/medium/high), so they are deliberately non-monotonic across tiers. c_token is indexed by agent role 1-8 and is a cost per unit of that role's throughput rate.",
+  "description": "Agent cost and throughput parameters, high tier (Claude Fable 5 pricing). See paper/main.tex tab:scenario:agents. Tiers are ordered by model price, not by capability: r_bugs and d_test derive from vals.ai SWE-bench Verified scores (0.80/0.97/0.95 for low/medium/high), so they are deliberately non-monotonic across tiers. c_token is indexed by agent role 1-8 and is a cost per unit of that role's throughput rate; roles 4-6 (Refactoring, Code Review, Security Audit) have no countable unit of output, so r_k = 1 and c_token is a flat fee per deployed instance per sprint. r_refactor is denominated in D_tech units, not in work items.",
   "agent": {
-    "c_token": [7.60, 38.00, 1.80, 1.80, 1.80, 18.00, 1.80, 1.80],
+    "c_token": [7.60, 38.00, 1.80, 7.60, 1.80, 18.00, 1.80, 1.80],
     "r_F": 178.0,
     "r_arch_chg": 35.0,
     "r_fix": 747.0,
-    "r_refactor": 747.0,
+    "r_refactor": 0.10,
     "r_test": 747.0,
     "r_doc": 747.0,
     "r_bugs": 0.05,

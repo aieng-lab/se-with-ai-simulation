@@ -19,13 +19,17 @@ from .state import SystemState
 
 @dataclass(frozen=True, slots=True)
 class ReplicationResult:
-    value: float    # F_completed(T) / T — features/sprint
-    quality: float  # weighted B_escaped(T) / max(1, F_completed(T))
-    cost: float     # (C_human + C_agents) / max(1, F_completed(T)) — cost/feature
-    # The two components of `cost`, sharing its denominator, so cost_human + cost_agent
-    # == cost.  They are persisted rather than reconstructed: C_agents now depends on
-    # the realised trajectory (agents are billed for work performed), so the split is no
-    # longer a deterministic ratio the analysis could recover from `cost` alone.
+    value: float    # F_completed(T) / T — features/sprint, Eq. (obj_V)
+    # The single objective of §3.9, Eq. (cost_rep):
+    #   (C_quality + C_human + C_agents) / F_completed(T)
+    # formed *within* this replication, so it is charged for the bugs it let through and
+    # the agent work it consumed, and credited with the features it delivered.
+    cost: float
+    # The three cost drivers of §3.8, sharing `cost`'s denominator, so
+    # cost_quality + cost_human + cost_agent == cost.  They are persisted rather than
+    # reconstructed: C_quality and C_agents both depend on the realised trajectory, so no
+    # fixed ratio recovers them from `cost` alone.
+    cost_quality: float = 0.0
     cost_human: float = 0.0
     cost_agent: float = 0.0
     # Work completed per role over the horizon, in each role's own throughput unit.
@@ -34,7 +38,7 @@ class ReplicationResult:
     actions: tuple[float, ...] = ()
     # Who did the work, summed over the horizon: features delivered and bugs repaired,
     # split by human developers and agents (see SprintActions for the paper symbols).
-    # Reporting only — not billable, and invisible to the §3.10 dominance relation.
+    # Reporting only — not billable, and invisible to the selection rule of §3.10.
     # `impl_human + impl_agents == F_completed(T)` exactly, by Eq. (impl).
     impl_human: float = 0.0
     impl_agents: float = 0.0
@@ -105,6 +109,20 @@ def phase_sprint_counts(config: TeamConfiguration, T: int) -> tuple[int, int]:
         if (t % config.R) >= (config.R - config.F_freeze)
     )
     return T - qa_sprint_count, qa_sprint_count
+
+
+def escaped_bug_cost(params: ScenarioParameters, B_min: int, B_maj: int, B_sec: int) -> float:
+    """C_quality of Eq. (obj_Q): what the bugs that reached production cost.
+
+    The severity weights are absolute expected costs in dollars of a single escaped minor,
+    major, or security bug (§4.1), not relative quality weights, which is what makes poor
+    quality a cost driver of Eq. (cost_rep) rather than a separate objective.  The counts
+    cover everything that shipped: bugs never detected and bugs detected but not fixed
+    before their release deadline.
+    """
+    return (params.omega_min * B_min
+            + params.omega_maj * B_maj
+            + params.omega_sec * B_sec)
 
 
 def cost_components(
@@ -233,20 +251,23 @@ def _run_replication(
     # Compute Costs
     # ------------------------------------------------------------------
     C_human, C_agents = cost_components(config, params, settings.T, actions)
-    C_total = C_human + C_agents
+    C_quality = escaped_bug_cost(
+        params, state.B_escaped_min, state.B_escaped_maj, state.B_escaped_sec
+    )
+    C_total = C_quality + C_human + C_agents
 
     # ------------------------------------------------------------------
-    # Compute Pareto objectives
+    # Compute the objective and the constraint quantity
     # ------------------------------------------------------------------
     F_done = state.F_completed
+    # Eq. (cost_rep) writes a bare F_completed(T).  A horizon that completes no feature at
+    # all is reachable (a tiny r_arrival whose Poisson draws all come up zero), so the
+    # denominator is floored at one rather than dividing by zero.
     denom = max(1, F_done)
-    Q_weighted = (params.omega_min * state.B_escaped_min
-                + params.omega_maj * state.B_escaped_maj
-                + params.omega_sec * state.B_escaped_sec)
     result = ReplicationResult(
         value=F_done / settings.T,
-        quality=Q_weighted / denom,
         cost=C_total / denom,
+        cost_quality=C_quality / denom,
         cost_human=C_human / denom,
         cost_agent=C_agents / denom,
         actions=tuple(actions),
