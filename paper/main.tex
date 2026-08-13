@@ -254,7 +254,7 @@ $\mathcal{K}_\mathrm{bg} = \{5,6\}$. We write
   n_\mathrm{sup}(t) = \sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\cdot,k}
   \label{eq:nsup}
 \end{equation}
-for the number of active supervised agents in sprint $t$. Every supervised agent consumes monitoring effort from the human developers, so the admissible compositions are limited by the human-capacity feasibility condition of Section~\ref{sec:model:transition}, Eq.~\eqref{eq:feas_monitoring}. Leaving supervised slots unfilled may be optimal in some cases to reduce coordination overhead and free up human capacity for review, escalation, and implementation work.
+for the number of active supervised agents in sprint $t$, where the placeholder $\cdot$ stands for the composition that is active in sprint $t$, i.e., $\mathrm{dev}$ during development sprints and $\mathrm{qa}$ during feature-freeze sprints. We use this notation throughout wherever a statement holds for both phases. Every supervised agent consumes monitoring effort from the human developers, so the admissible compositions are limited by the human-capacity feasibility condition of Section~\ref{sec:model:transition}, Eq.~\eqref{eq:feas_monitoring}. Leaving supervised slots unfilled may be optimal in some cases to reduce coordination overhead and free up human capacity for review, escalation, and implementation work.
 The counts $a_{\cdot,5}$ and $a_{\cdot,6}$ of the background services are unbounded, since these agents require no supervision and therefore consume no human monitoring capacity. The only brake on them is their token cost, since at some point investing more in detecting possible bugs yields diminishing returns. The dev-phase and QA-phase counts are independent of each other, so a service can be staffed differently during a feature freeze than during development.
 $\mathbf{A}_\mathrm{dev}$ must satisfy $a_{dev,1} \geq 1$, i.e., there must be at least one Feature
 Implementation Agent in the development phase. This also ensures that there is $value$, i.e., that at least some features are implemented and the simulation does not trivially collapse to zero throughput.
@@ -432,7 +432,7 @@ Symbol & Description & Domain & Step \\
 $d_\mathrm{CR}$                 & Base Binomial detection probability for Code Review                                    & $[0,1]$               & 5 \\[2pt]
 $d_\mathrm{SA}$                 & Base Binomial detection probability for Security Audit                                 & $[0,1]$               & 5 \\[2pt]
 $d_\mathrm{test}$               & Maximum test detection probability at full coverage                     & $[0,1]$               & 5 \\[2pt]
-$c_\mathrm{test,ceil}$          & Upper bound on test coverage                                                           & $(0,\infty)$          & 5 \\[2pt]
+$c_\mathrm{test,ceil}$          & Upper bound on test coverage                                                           & $(0,1]$               & 5 \\[2pt]
 $\alpha_\mathrm{size}$          & Detection degradation based on change volume per review/audit agent & $\mathbb{R}_{\geq 0}$ & 5 \\[2pt]
 \bottomrule
 \end{tabularx}
@@ -468,9 +468,9 @@ Symbol & Description & Domain & Section \\
 \midrule
 $c_\mathrm{token}$              & API token cost per deployed agent, indexed by role, per unit of the role's throughput rate $r_k$ (per sprint for Code Review/Security Audit, whose $r_k=1$) & $\mathbb{R}_{\geq 0}^8$ & \ref{sec:model:objectives} \\[2pt]
 $c_\mathrm{salary}$             & Annual fully-loaded salary of one FTE                & $\mathbb{R}_{\geq 0}$   & \ref{sec:model:objectives} \\[2pt]
-$\omega_\mathrm{min}$           & Quality weight for minor escaped bugs                                        & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
-$\omega_\mathrm{maj}$           & Quality weight for major escaped bugs                                        & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
-$\omega_\mathrm{sec}$           & Quality weight for security escaped bugs                                     & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\
+$\omega_\mathrm{min}$           & Expected cost of one escaped minor bug                                       & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
+$\omega_\mathrm{maj}$           & Expected cost of one escaped major bug                                       & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\[2pt]
+$\omega_\mathrm{sec}$           & Expected cost of one escaped security bug                                    & $\mathbb{R}_{>0}$        & \ref{sec:model:objectives} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -627,17 +627,21 @@ available for implementation, the human developers are served first and the agen
 implement what remains. The rational for this is that the human salary has to be paid so their capacity should be used first.
 \begin{align}
   \mathrm{arch\_impl}(t) &= \min\!\Bigl(Q_\mathrm{arch,impl}(t-1),\;
-    \bigl\lfloor r_F\,\delta_D\,a_1\bigr\rfloor\Bigr),
+    \bigl\lfloor r_F\,\delta_D\,a_{\cdot,1}/5\bigr\rfloor\Bigr),
   \label{eq:arch_impl} \\
   \mathrm{impl\_human}'(t) &= \min\!\bigl(\mathrm{impl\_human}(t),\;\mathrm{demand}(t)\bigr),
   \label{eq:impl_human_capped} \\
   \mathrm{impl\_agents}(t) &= \min\!\Bigl(\mathrm{demand}(t) - \mathrm{impl\_human}'(t),\;
-    \bigl\lfloor r_F\,\delta_D\,a_1\bigr\rfloor - \mathrm{arch\_impl}(t)\Bigr).
+    \bigl\lfloor r_F\,\delta_D\,a_{\cdot,1}\bigr\rfloor - 5\,\mathrm{arch\_impl}(t)\Bigr).
   \label{eq:impl_agents}
 \end{align}
 Implementing approved architecture proposals ($\mathrm{arch\_impl}$) consumes agent
 capacity but does not increment $F_\mathrm{completed}$, since it represents internal
-architecture work rather than user-visible feature delivery. The feature implementation is linearly reduced by $\delta_D$ to reflect the impact of debt on development speed.
+architecture work rather than user-visible feature delivery. Each such implementation
+consumes five features' worth of agent capacity, because it requires the same
+code-base-wide analysis that makes an architecture proposal five times as expensive to
+produce (Section~\ref{sec:scenario:agentcosts}). The feature implementation is linearly reduced by $\delta_D$ to reflect the impact of debt on development speed.
+Total user-feature implementation per sprint is capped at the available backlog to
 Total user-feature implementation per sprint is capped at the available backlog to
 prevent over-counting features:
 \begin{equation}
@@ -659,7 +663,7 @@ cumulative test count before bug detection runs, up to the coverage ceiling of
 Eq.~\eqref{eq:coverage}, beyond which further tests no longer raise
 $\mathrm{cov\_test}$:
 \begin{equation}
-  N_\mathrm{test}(t) = \min\!\bigl(N_\mathrm{test}(t-1) + r_\mathrm{test}\,a_7,\;
+  N_\mathrm{test}(t) = \min\!\bigl(N_\mathrm{test}(t-1) + r_\mathrm{test}\,a_{\cdot,7},\;
     c_\mathrm{test,ceil}\,F_\mathrm{completed}(t)\bigr).
   \label{eq:ntest_update}
 \end{equation}
@@ -776,7 +780,7 @@ Each resolved change request produces one design proposal forwarded to the human
 review queue $Q_\mathrm{rev}$, which is at the same time reduced by the human review capacity:
 \begin{align}
   \mathrm{arch\_chg\_done}(t) &= \min\!\bigl(Q_\mathrm{arch}(t),\;
-    \lfloor r_\mathrm{arch,chg}\,a_2\rfloor\bigr), \label{eq:arch_chg_done} \\
+    \lfloor r_\mathrm{arch,chg}\,a_{\cdot,2}\rfloor\bigr), \label{eq:arch_chg_done} \\
   Q_\mathrm{arch}(t) &= Q_\mathrm{arch}(t) - \mathrm{arch\_chg\_done}(t),
     \label{eq:Q_arch} \\
   Q_\mathrm{rev}(t) &= \max\!\bigl(0,\;
@@ -810,7 +814,7 @@ where $B^H_1(t) = \mathrm{fix\_human}(t)$.
 \emph{Phase 2 — Agent fixes (debt-slowed):} The Bug Fixing Agents then drain the
 remaining queues, traversing the same tiers in the same order with a shared budget
 \begin{equation}
-  B^A_1(t) = \bigl\lfloor a_3\,\delta_D\,r_\mathrm{fix}\bigr\rfloor,
+  B^A_1(t) = \bigl\lfloor a_{\cdot,3}\,\delta_D\,r_\mathrm{fix}\bigr\rfloor,
   \label{eq:fix_budget}
 \end{equation}
 i.e., the per-agent fix rate $r_\mathrm{fix}$ scaled by the number of deployed Bug Fixing
@@ -878,7 +882,7 @@ bug fixing each \emph{increase} debt, while refactoring conducted by the Refacto
   D_\mathrm{tech}(t) = \operatorname{clip}\bigl(D_\mathrm{tech}(t-1)
     &+ \delta_\mathrm{impl}\,\mathrm{impl}(t) \\
     &+ \delta_\mathrm{fix}\,\mathrm{fixes\_total}(t) \\
-    &- r_\mathrm{refactor}\,a_4,\; 0,\, 1\bigr),
+    &- r_\mathrm{refactor}\,a_{\cdot,4},\; 0,\, 1\bigr),
   \label{eq:debt_update}
 \end{split}
 \end{equation}
@@ -888,7 +892,7 @@ The second activity is documentation written by the Developer Documentation Agen
 document count, up to one document per completed feature, i.e., the point at which
 Eq.~\eqref{eq:doc_cov} is capped:
 \begin{equation}
-  N_\mathrm{doc}(t) = \min\!\bigl(N_\mathrm{doc}(t-1) + r_\mathrm{doc}\,a_8,\;
+  N_\mathrm{doc}(t) = \min\!\bigl(N_\mathrm{doc}(t-1) + r_\mathrm{doc}\,a_{\cdot,8},\;
     F_\mathrm{completed}(t)\bigr).
   \label{eq:ndoc_update}
 \end{equation}
@@ -1026,7 +1030,7 @@ quantified with 95\% percentile bootstrap confidence intervals (CIs).
 \subsection{Search Problem}
 \label{sec:model:sosp}
 
-We first define the feasible set $\mathcal{F}$ as the set of all configurations
+We first define the feasible set $\mathcal{X}$ as the set of all configurations
 $\mathbf{c} = (N,\,\mathbf{A}_\mathrm{dev},\,\mathbf{A}_\mathrm{qa},\,R,\,F_\mathrm{freeze})$
 satisfying the structural constraints of Section~\ref{sec:model:team} and the
 human-capacity feasibility condition of Eq.~\eqref{eq:feas_monitoring}.
@@ -1039,7 +1043,7 @@ What a development team is asked to do is to deliver the work the project demand
 
 Using the feasible configurations that satisfy the throughput constraint, we define our search problem as the minimisation of the expected cost per feature delivered (Eq.~\eqref{eq:cost_rep}), i.e., 
 \begin{equation}
-  \min_{\mathbf{c}\,\in\,\mathcal{F}: \mathit{value} \,\geq\, (1-\epsilon)\,r_\mathrm{arrival}}\; C.
+  \min_{\mathbf{c}\,\in\,\mathcal{X}: \mathit{value} \,\geq\, (1-\epsilon)\,r_\mathrm{arrival}}\; C.
   \label{eq:objective}
 \end{equation}
 
@@ -1048,14 +1052,14 @@ Using the feasible configurations that satisfy the throughput constraint, we def
 \subsection{Selection under Monte Carlo noise}
 \label{sec:model:selection}
 
-Every configuration is scored by a mean over $K$ Monte Carlo replications. The objective above only consider the mean, but not yet the confidence of the estimates. We therefore do not report the minimiser alone. Let $\mathbf{c}$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraintwhose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is statistically significantly different at the 95\% confidence level. We define the \emph{indistinguishable set} as
+Every configuration is scored by a mean over $K$ Monte Carlo replications. The objective above only considers the mean, but not yet the confidence of the estimates. We therefore do not report the minimiser alone. Let $\mathbf{c}^\star$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraint and whose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is not statistically significantly different at the 95\% confidence level. We define the \emph{indistinguishable set} as
 \begin{equation}
-  \mathcal{T}^\star = \bigl\{\mathbf{c} \;:\; \bar{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
+  \mathcal{I}^\star = \bigl\{\mathbf{c} \;:\; \bar{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
     \;\wedge\; [C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}] \cap [C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}] \neq \emptyset \bigr\},
   \label{eq:topset}
 \end{equation}
 
-Two configurations in $\mathcal{T}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{T}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{T}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{T}^\star$ before it is reported.
+Two configurations in $\mathcal{I}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{I}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported.
 
 % ---- 3.11 ----
 \subsection{Search Strategies}
@@ -1107,10 +1111,10 @@ This gives us constraints
 \end{equation}
 where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:sosp}, this defines the region that the search strategies explore:
 \begin{equation}
-  \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{F} \;:\;
+  \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{X} \;:\;
     a_{\mathrm{dev},k} \leq u_k \;\wedge\;
     a_{\mathrm{qa},k} \leq u_k
-    \;\;\forall k \in \mathcal{K}_\mathrm{sup} \bigr\} \subseteq \mathcal{F}.
+    \;\;\forall k \in \mathcal{K}_\mathrm{sup} \bigr\} \subseteq \mathcal{X}.
   \label{eq:searched_region}
 \end{equation}
 
@@ -1206,7 +1210,7 @@ returned unchanged.
 The mixture of drawing most mutations from the elite and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
 
 \paragraph{Final selection.}
-At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{T}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations$\mathcal{P}_G$.
+At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations$\mathcal{P}_G$.
 
 \subsubsection{Greedy Neighbourhood Descent}
 \label{sec:model:search:descent}
@@ -1214,7 +1218,7 @@ At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistingui
 Our second strategy is a local search that repeatedly moves to the best configuration in the immediate vicinity of the current one. This strategy is less explorative than the evolutionary search, but should converge to local optima more quickly. By repeating the search from different random starting points, the chances of finding a global optimum increase. 
 
 \paragraph{Neighbourhood.}
-The neighbourhood $\mathcal{V}(\mathbf{c})$ consists of all configurations that the mutation operator of Section~\ref{sec:model:search:evo} can reach from $\mathbf{c}$ in one step, enumerated rather than sampled: the two adjacent staffing levels in $\mathcal{N}$, the two adjacent feature-freeze lengths within $[0, R-1]$, and, for each of $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$, every single-agent addition to and removal from a supervised role, every transfer of one agent between two supervised roles, and a $\pm 1$ change to each background service. As in the mutation operator, $R$ is not changed, the saturation bounds of Eq.~\eqref{eq:sat_bound} are respected, and the structural constraints on $\mathbf{A}_\mathrm{qa}$ are preserved.
+The neighbourhood of a configuration $\mathbf{c}$ consists of all configurations that the mutation operator of Section~\ref{sec:model:search:evo} can reach from $\mathbf{c}$ in one step, enumerated rather than sampled: the two adjacent staffing levels in $\mathcal{N}$, the two adjacent feature-freeze lengths within $[0, R-1]$, and, for each of $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$, every single-agent addition to and removal from a supervised role, every transfer of one agent between two supervised roles, and a $\pm 1$ change to each background service. As in the mutation operator, $R$ is not changed, the saturation bounds of Eq.~\eqref{eq:sat_bound} are respected, and the structural constraints on $\mathbf{A}_\mathrm{qa}$ are preserved.
 
 \paragraph{Descent.}
 Starting from a configuration drawn with the sampler of Section~\ref{sec:model:search:random}, we iteratively determine the neighbour that $\prec$ ranks best. The descent terminates when no neighbour is preferred, i.e., at a local optimum. We repeat this $n_\mathrm{start}$ times with independently sampled starting points. 
@@ -1269,7 +1273,7 @@ $c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salari
 
 \subsubsection{Project dynamics parameters}
 
-To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. Moreover, since two FTE developers could already manage the highest throughput, this does not stress the simulation to assess extreme-velocity scenarios. Therefore, we add a very high tier as well, that has 1000 issues per week. While this might be unrealistically high, this will show if and how such extreme scales could be managed by a single team. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
+To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. Moreover, since two FTE developers could already manage the highest throughput, this does not stress the simulation to assess extreme-velocity scenarios. Therefore, we add a very high tier as well, that has 1000 issues per week. While this might be unrealistically high, this will show if and how such extreme scales could be managed by a single team. We note that this tier also stresses the architecture pipeline beyond what human review can absorb: at $f_\mathrm{arch,chg} = 0.13$ it generates around 130 change requests per sprint, which only the fastest reviewers of the high human tier can keep up with even at the largest staffing level we consider. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
 
 To understand how often issues affect architecture, we use data from \cite{shahbazian2018toward}, who used automated methods to determine whether the change triggered by an issue caused architectural changes. Depending on the method used, the proportion ranged from 13\% of issues to 26\% of issues. Since the automated approach possibly overestimates the proportion by counting purely structural changes, we use the lower bound of 13\%. We derive the data for the distribution of the severity of bugs from data collected by \cite{ohira2015highimpact}. They distinguish between critical, blocker, and major issues (which we map to major bugs), and minor and trivial issues (which we map to minor bugs). Orthogonally, they determine which of these bugs are security related, which we use to infer the ratio of security bugs. We exclude one of the collected projects (Ambari) for the estimation of the ratio of major bugs, since it did not mark issues as minor.
 These numbers are independent of the number of issues per week and therefore the same across all four tiers.
@@ -1427,13 +1431,13 @@ $\omega_\mathrm{sec}$ & 48{,}000 & 1{,}000{,}000 & 120{,}000{,}000 & Breach/inci
 Since we have five orthogonal aspects, four of them with three levels and the project dynamics with four, we have a total of $3^4 \cdot 4 = 324$ scenarios. We solve each of these problems twice, once with evolutionary search and once with greedy neighbourhood descent (Section~\ref{sec:model:search}), which yields 648 searches in total.
 All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two results is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
 
-The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range in quarter-FTE steps from a single developer investing one day per week up to a small five-person team. Larger teams do not make sense, since this is not supported by the feature arrival speed. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what a five-person team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 38 supervised agents at that tier, which two FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved. 
+The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range from a quarter-FTE up to ten FTE, i.e., a ``two-pizza team''. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what such a team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 38 supervised agents at that tier, which three FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved.
 
 The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many supervised agents a staffing level can carry: with $H_\mathrm{mon,overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a full-time developer's net capacity at roughly 16, 24, and 27 supervised agents \emph{per FTE}, respectively.
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. We set the tolerance of the throughput constraint of Eq.~\eqref{eq:throughput_constraint} to $\epsilon = 0.02$, i.e., require delivery of at least 98\% of the arriving features. 
 
-Both search strategies receive the same budget of $E = 10\,000$ candidate evaluations per scenario, so that the comparison between them measures search efficiency and not effort. For evolutionary search we spend 10\% of the budget on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. For the greedy neighbourhood descent we use $n_\mathrm{start} = 20$ restarts, i.e., 500 evaluations per restart. Since a neighbourhood comprises on the order of $10^2$ configurations, this permits a few descent steps per restart at the smaller project tiers and more where the saturation bounds keep neighbourhoods small.
+Both search strategies receive the same budget of $E = 10\,000$ candidate evaluations per scenario, so that the comparison between them measures search efficiency and not effort. For evolutionary search we spend 10\% of the budget on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. For the greedy neighbourhood descent we use $n_\mathrm{start} = 5$ restarts, i.e., 2\,000 evaluations per restart. Since a neighbourhood comprises on the order of $10^2$ configurations, this permits roughly two dozen descent steps per restart. The exact number depends on the scenario: at the very high project tier the saturation bounds of Eq.~\eqref{eq:sat_bound} are large, so neighbourhoods are wide and fewer steps fit into the budget, whereas the smaller project tiers cap most roles at one agent, which makes neighbourhoods narrow and allows more steps.
 
 \begin{table}[t]
 \caption{Experiment constants and search range, identical for all 324 scenarios.}
@@ -1451,7 +1455,7 @@ $B$                             & 1{,}000             & Bootstrap resamples for 
 $s_0$                           & 42            & Master seed \\[2pt]
 \midrule
 \multicolumn{3}{l}{\emph{Search range}} \\[2pt]
-$\mathcal{N}$                   & $\{0.25, 0.50, \ldots, 5.00\}$     & Quarter-FTE steps, from a one-day-per-week part-time developer to a small team \\[2pt]
+$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00\}$     & Quarter-FTE steps, from a one-day-per-week part-time developer to a two-pizza team \\[2pt]
 $\mathcal{R}$                   & $\{1,2,4,13\}$      & Continuous, biweekly, monthly, quarterly releases \\[2pt]
 $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two-week freeze; capped at $R-1$ \\[2pt]
 $\sigma$                        & 2                   & Allows up to twice the agents required for their steady-state workload \\[2pt]
@@ -1462,7 +1466,7 @@ $E$                             & 10{,}000             & Identical budget for bo
 $n_\mathrm{init}$               & 1{,}000             & Evolutionary search: 10\% of $E$ on the initial pool \\[2pt]
 $G$ / $n_\mathrm{off}$          & 90 / 100            & Evolutionary search: 90\% of $E$ on the generation loop \\[2pt]
 $n_\mathrm{elite}$              & 100                 & Evolutionary search: size of the elite that parents are drawn from \\[2pt]
-$n_\mathrm{start}$              & 20                  & Descent: independent restarts, 500 evaluations each \\
+$n_\mathrm{start}$              & 5                   & Descent: independent restarts, 2{,}000 evaluations each \\
 \bottomrule
 \end{tabularx}
 \end{table}
