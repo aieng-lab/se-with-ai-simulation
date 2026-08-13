@@ -1063,7 +1063,7 @@ Two configurations in $\mathcal{T}^\star$ are equally good by assumption, and it
 
 Exhaustive search of the configuration space for the optimal process and team configuration is impossible, because the counts of the two background services are unbounded (Section~\ref{sec:model:team}). Even under an arbitrary cap of 99 agents per service, the four background counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$, $a_{\mathrm{qa},5}$, and $a_{\mathrm{qa},6}$ alone already give $100^4 = 10^8$ combinations, which the human staffing level, the release cadence, the feature-freeze length, and the supervised parts of both compositions multiply further.
 
-We therefore search $\mathcal{F}$ stochastically for Pareto-optimal configurations using two different approaches. Within both approaches, we first define a general search range for the parameters. \emph{Uniform random sampling} is our simple baseline strategy that randomly selects configurations uniformly from this search range. \emph{Evolutionary search} is a more sophisticated strategy that also starts with a uniform random sampling, but then looks for better configurations through evolutionary search.
+We therefore search Eq.~\eqref{eq:objective} heuristically, with two search strategies. \emph{Evolutionary search} maintains a population of configurations and improves it through mutation and selection. \emph{Greedy neighbourhood descent} repeatedly moves from a configuration to the cheapest configuration in its immediate neighbourhood until no improvement remains. 
 
 \subsubsection{Search range}
 
@@ -1105,7 +1105,7 @@ This gives us constraints
   \qquad k \in \mathcal{K}_\mathrm{sup}.
   \label{eq:sat_bound}
 \end{equation}
-where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:mosp}, this defines the region that the search strategies explore:
+where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:sosp}, this defines the region that the search strategies explore:
 \begin{equation}
   \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{F} \;:\;
     a_{\mathrm{dev},k} \leq u_k \;\wedge\;
@@ -1115,10 +1115,10 @@ where $\sigma \geq 1$ is a headroom factor that allows the search to explore con
 \end{equation}
 
 
-\subsubsection{Uniform Random Search}
+\subsubsection{Random configuration sampling}
 \label{sec:model:search:random}
 
-In random search, each candidate configuration is drawn independently. A single candidate is generated using the following rejection sampling approach: 
+Both search strategies need a way to produce a valid initial configurations. We sample these configurations as follows:
 \begin{enumerate}
   \item Draw $N$ and $R$ uniformly from $\mathcal{N}$ and $\mathcal{R}$ respectively.
   \item Draw $F_\mathrm{freeze}$ uniformly from the admissible values
@@ -1143,17 +1143,25 @@ In random search, each candidate configuration is drawn independently. A single 
         Eq.~\eqref{eq:feas_monitoring}.
 \end{enumerate}
 
-Using this approach, we draw $n_\mathrm{rand}$ random candidate configurations and evaluate each feasible candidate with $K$ Monte Carlo replications. The CI-aware Pareto frontier is then computed over the set of all evaluated configurations.
+Note that the sampling does not require that the throughput constraint for the value achieved is fulfilled. 
+
+\subsubsection{Constraint handling}
+
+The advantage of not discarding solutions that violate the throughput constraint is that we can approach the admissible region from the outside, possibly finding better configurations. Still, this means we must be able to compare two configurations of which one, or both, violate Eq.~\eqref{eq:throughput_constraint}. We adopt a feasibilty rule from \cite{deb2000efficient} to resolve this:
+\begin{itemize}
+  \item If both configurations violate the throughput constraint, the one with the smaller the higher value is preferred.
+  \item A configuration that satisfies the throughput constraint is always preferred to one that does not.
+  \item Two configurations that both satisfy the throughput constraint are compared by their cost, with the lower cost preferred.
+\end{itemize}
+Thus, the search first looks for admissible configurations, and then among those for the cheapest one. 
 
 \subsubsection{Evolutionary Search}
 \label{sec:model:search:evo}
 
-While the random search strategy is simple and can discover diverse configurations, it is inefficient for finding Pareto-optimal configurations in a large search space: while the probability of randomly sampling something that is in the general area of the Pareto frontier is non-negligible, the probability of sampling a configuration that is actually on the Pareto frontier is low. 
-
-We use an evolutionary search strategy to address this inefficiency. As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the Pareto frontier. In our case, we use a simple mutation-based algorithm that creates new solutions by modifying existing ones.
+As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the optimum. In our case, we use a simple mutation-based algorithm that creates new solutions by modifying existing ones.
 
 \paragraph{Initialisation.}
-The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathrm{init}$ configurations. These configurations are generated using the same random sampling approach as in the random search strategy, ensuring that the initial pool is diverse and covers a broad area of the search space. Each configuration in the initial pool is evaluated with $K$ Monte Carlo replications. 
+The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathrm{init}$ configurations, drawn with the random sampling procedure of Section~\ref{sec:model:search:random}, so that the initial pool is diverse and covers a broad area of the search space. Each configuration in the initial pool is evaluated with $K$ Monte Carlo replications.
 
 \paragraph{Mutation operator.}
 The mutation operator receives a parent configuration
@@ -1189,13 +1197,13 @@ returned unchanged.
 
 \paragraph{Generation loop.} The generation loop iteratively produces new configurations by mutating selected parents from the current pool of configurations. The loop is repeated for $g=1,\ldots,G$ generations. In each generation, the following steps are performed:
 \begin{enumerate}
-  \item Compute the current CI-aware Pareto frontier $\mathcal{F}_{g-1}$ over the previously generated population $\mathcal{P}_{g-1}$.
-  \item Sample $n_\mathrm{off}$ parent configurations. 80\% of the parents are drawn uniformly from $\mathcal{F}_{g-1}$ to search for better solutions along the Pareto front. 20\% of the parents are drawn uniformly from $\mathcal{P}_{g-1} \setminus \mathcal{F}_{g-1}$ to enable exploration of the search space in other regions.
+  \item Rank the previously generated population $\mathcal{P}_{g-1}$ by the preference relation $\prec$ and let the elite $\mathcal{E}_{g-1}$ be its $n_\mathrm{elite}$ best configurations.
+  \item Sample $n_\mathrm{off}$ parent configurations. 80\% of the parents are drawn uniformly from $\mathcal{E}_{g-1}$ to search for improvements near the best configurations found so far. 20\% of the parents are drawn uniformly from $\mathcal{P}_{g-1} \setminus \mathcal{E}_{g-1}$ to enable exploration of the search space in other regions.
   \item Apply the mutation operator to each parent, creating the child population $\mathcal{P}_{g,child}$.
   \item Create the new population $\mathcal{P}_g$ as the union of the child population and the current population: $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$.
 \end{enumerate}
 
-The mixture of drawing most mutations from the Pareto frontier and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
+The mixture of drawing most mutations from the elite and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
 
 \paragraph{Final frontier.}
 At the conclusion of the generation loop, the CI-aware Pareto frontier is computed over $\mathcal{P}_G$, which contains all feasible, simulated configurations evaluated across all generations.
