@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -120,6 +121,22 @@ class TestOptimumRow:
         assert (row["cost_quality_mean"] + row["cost_human_mean"]
                 + row["cost_agent_mean"]) == pytest.approx(row["cost_mean"])
         assert row["n_indistinguishable"] == 2
+
+    def test_cost_shares_partition_the_total(self, campaign):
+        row = self._row(campaign)
+        assert row["cost_quality_share"] == pytest.approx(0.5)
+        assert row["cost_human_share"] == pytest.approx(0.3)
+        assert row["cost_agent_share"] == pytest.approx(0.2)
+        assert (row["cost_quality_share"] + row["cost_human_share"]
+                + row["cost_agent_share"]) == pytest.approx(1.0)
+
+    def test_a_zero_cost_optimum_yields_nan_shares(self, campaign):
+        d = campaign / _SID / "evolutionary"
+        manifest = json.loads((d / "manifest.json").read_text())
+        summary = json.loads((d / "search_summary.json").read_text())
+        summary["objectives"]["N2_R4_00007"] = _objective(0.0)
+        row = optimum_row(_SID, "evolutionary", manifest, summary)
+        assert math.isnan(row["cost_agent_share"])
 
     def test_carries_every_tier_and_both_compositions(self, campaign):
         row = self._row(campaign)

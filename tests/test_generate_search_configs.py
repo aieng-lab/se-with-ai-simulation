@@ -1,4 +1,4 @@
-"""Tests for scripts/generate_search_configs.py — the 324-scenario grid of paper §4.2."""
+"""Tests for scripts/generate_search_configs.py — the 432-scenario grid of paper §4.2."""
 
 from __future__ import annotations
 
@@ -41,19 +41,28 @@ class TestScenarioId:
     def test_ids_are_unique_across_the_whole_grid(self, script):
         combos = scenario_tier_combinations()
         ids = {script.scenario_id(t) for t in combos}
-        # 3^4 * 4: only `project` carries the fourth "very high" tier.
-        assert len(ids) == len(combos) == 324
+        # 3^3 * 4 * 4: `project` carries a fourth "very high" tier and `agent` a fourth
+        # "pessimistic" one.
+        assert len(ids) == len(combos) == 432
 
     def test_the_very_high_project_tier_gets_its_own_initial(self, script):
         assert script.scenario_id(("low", "veryhigh", "high", "low", "medium")) == \
             "h-l_p-v_d-h_a-l_b-m"
 
+    def test_the_pessimistic_agent_tier_gets_its_own_initial(self, script):
+        # The tier initial `p` coincides with the *group* initial of `project`; the
+        # `<group>-<tier>` token format keeps that unambiguous.
+        assert script.scenario_id(("low", "medium", "high", "pessimistic", "medium")) == \
+            "h-l_p-m_d-h_a-p_b-m"
+
 
 class TestGeneratedGrid:
     def test_writes_one_config_per_tier_combination(self, generated):
-        assert len(list(generated.glob("search_*.json"))) == 324
-        # One quarter of them are the very high project tier.
-        assert len(list(generated.glob("search_*_p-v_*.json"))) == 81
+        assert len(list(generated.glob("search_*.json"))) == 432
+        # One quarter of them are the very high project tier, and one quarter the
+        # pessimistic agent tier.
+        assert len(list(generated.glob("search_*_p-v_*.json"))) == 108
+        assert len(list(generated.glob("search_*_a-p_*.json"))) == 108
 
     def test_every_config_loads_and_keeps_the_shared_setup(self, generated):
         reference = load_search_config("config/search_default.json")

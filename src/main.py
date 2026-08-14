@@ -22,13 +22,17 @@ Search for the cheapest team that keeps up with the project:
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
         --samples none --progress-every 500 --out results/one_scenario
 
-Run all 324 scenarios of paper Section 4.2 with both strategies:
+Run all 432 scenarios of paper Section 4.2 with both strategies:
     ./run_experiments.sh          (see its --help; generate the configs first with
                                    scripts/generate_search_configs.py)
 
 Generate visualizations from optimization results:
     python -m src.main visualize results/search_default [--out results/search_default/plots]
     python -m src.main visualize results/run1 results/run2 --out results/comparison
+
+Consolidate a finished campaign into its tables and the five-dimension optima figure:
+    python -m src.main campaign [results/experiments] [--out results/analysis]
+    python -m src.main campaign --share human --x debt --color agent
 """
 
 from __future__ import annotations
@@ -62,8 +66,9 @@ from .selection import (
     satisfies_throughput,
     throughput_floor,
 )
+from .campaign import build_tables, search_dirs
 from .simulation import ConfigResult, ConfigTrace, run_configuration
-from .visualization import visualize_multi, visualize_single
+from .visualization import COST_SHARES, visualize_campaign, visualize_multi, visualize_single
 
 
 #: Default file per scenario group; every group defaults to its medium tier.
@@ -412,6 +417,57 @@ def _cmd_visualize(args: argparse.Namespace) -> None:
     print("\nDone.")
 
 
+#: Which scenario group drives which visual channel of the §5 optima matrix, by default.
+#: Two groups have a fourth tier: `project` sits on the shape channel, the only per-point
+#: channel whose fourth level reads as a peer rather than as "more", and `agent` on a facet
+#: axis, where a fourth tier costs only one extra column.
+CAMPAIGN_CHANNEL_DEFAULTS: dict[str, str] = {
+    "x": "agent", "y": "human", "color": "debt", "marker": "project", "size": "bugimpact",
+}
+
+
+def _cmd_campaign(args: argparse.Namespace) -> None:
+    results_dir = Path(args.results_dir)
+    if not results_dir.is_dir():
+        print(f"Error: {results_dir} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    searches = search_dirs(results_dir)
+    if not searches:
+        print(f"Error: no finished searches found under {results_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    optima, scenarios = build_tables(results_dir, args.config_dir)
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    optima_path = out_dir / "optima.csv"
+    scenarios_path = out_dir / "scenarios.csv"
+    optima.to_csv(optima_path, index=False)
+    scenarios.to_csv(scenarios_path, index=False)
+
+    n_scenarios = len({sid for sid, _, _ in searches})
+    print(f"Collected {len(searches)} search(es) over {n_scenarios} scenario(s)")
+    print(f"  {optima_path}   {len(optima)} reported optima")
+    print(f"  {scenarios_path}   {len(scenarios)} (scenario, strategy) pairs")
+    missing = len(SEARCH_STRATEGIES) * n_scenarios - len(searches)
+    if missing:
+        print(f"  note: {missing} (scenario, strategy) pair(s) have no results yet")
+    if len(optima) < len(searches):
+        print(f"  note: {len(searches) - len(optima)} search(es) simulated no candidate")
+
+    if optima.empty:
+        print("\nNo optimum was reported; skipping the figures.")
+        return
+
+    visualize_campaign(
+        optima, out_dir, args.format, share=args.share,
+        x_group=args.x, y_group=args.y, color_group=args.color,
+        marker_group=args.marker, size_group=args.size,
+    )
+    print("\nDone.")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m src.main",
@@ -481,6 +537,32 @@ def main(argv: list[str] | None = None) -> None:
     p_vis.add_argument("--out", default=None, metavar="DIR",
                        help="Output directory for plots (default: RESULT_DIR/plots/)")
 
+    # -- campaign --
+    p_camp = sub.add_parser(
+        "campaign",
+        help="Consolidate a whole campaign into optima.csv, scenarios.csv and the "
+             "five-dimension optima figure.",
+    )
+    p_camp.add_argument("results_dir", nargs="?", default="results/experiments",
+                        metavar="RESULTS_DIR",
+                        help="Campaign output root (default: results/experiments)")
+    p_camp.add_argument("--out", default="results/analysis", metavar="DIR",
+                        help="Where to write the CSVs and figures "
+                             "(default: results/analysis)")
+    p_camp.add_argument("--config-dir", default="config", metavar="DIR",
+                        help="Where the scenario JSONs live, for r_arrival "
+                             "(default: config)")
+    p_camp.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
+                        help="Output image format (default: png)")
+    p_camp.add_argument("--share", default="agent", choices=list(COST_SHARES),
+                        help="Which cost driver's share of the total goes on the x axis "
+                             "(default: agent)")
+    for channel, default in CAMPAIGN_CHANNEL_DEFAULTS.items():
+        p_camp.add_argument(
+            f"--{channel}", default=default, choices=list(SCENARIO_GROUPS),
+            help=f"Scenario group on the {channel} channel (default: {default})",
+        )
+
     args = parser.parse_args(argv)
 
     # Default: run smoke test if no subcommand given
@@ -502,6 +584,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_optimize(args)
     elif args.cmd == "visualize":
         _cmd_visualize(args)
+    elif args.cmd == "campaign":
+        _cmd_campaign(args)
     else:
         parser.print_help()
         sys.exit(1)

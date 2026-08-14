@@ -17,28 +17,38 @@ SCENARIO_GROUPS: tuple[str, ...] = ("human", "project", "debt", "agent", "bugimp
 # The three tiers every scenario group is defined at (paper §4.1).
 SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high")
 
-# `project` carries a fourth, extreme-velocity tier on top of those three
-# (r_arrival = 1000 issues/week, paper §4.1): the high tier is already managed by
-# two FTE, so it does not stress the simulation.  The tier grid is therefore *not*
-# a cube — combining the per-group tiers freely yields 3^4 * 4 = 324 scenarios
-# (paper §4.2).  Read tiers through `scenario_tiers` / `scenario_tier_combinations`
-# rather than assuming SCENARIO_TIERS applies to every group.
+# Two groups carry a fourth tier on top of those three (paper §4.1), each a stress
+# case rather than an observed operating point:
+#   `project`  "veryhigh"     — r_arrival = 1000 issues/week; the high tier is already
+#                               managed by two FTE, so it does not stress the simulation.
+#   `agent`    "pessimistic"  — the capability of the low tier at ten times the cost of
+#                               the high tier; both halves of the agent grounding (the
+#                               SWE-bench scores and the token prices) are optimistic.
+# The tier grid is therefore *not* a cube — combining the per-group tiers freely yields
+# 3^3 * 4 * 4 = 432 scenarios (paper §4.2).  Read tiers through `scenario_tiers` /
+# `scenario_tier_combinations` rather than assuming SCENARIO_TIERS applies to every group.
 SCENARIO_GROUP_TIERS: dict[str, tuple[str, ...]] = {
     "human": SCENARIO_TIERS,
     "project": SCENARIO_TIERS + ("veryhigh",),
     "debt": SCENARIO_TIERS,
-    "agent": SCENARIO_TIERS,
+    "agent": SCENARIO_TIERS + ("pessimistic",),
     "bugimpact": SCENARIO_TIERS,
 }
 
 # Every tier name in use anywhere, in canonical mild -> extreme order.  Plot legends
 # and ordinal encodings iterate this; a group that lacks a tier simply has no rows.
-ALL_SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high", "veryhigh")
+# The two fourth tiers are appended rather than interleaved: no group holds both, so
+# their relative order is arbitrary, and appending keeps the base tiers' positions.
+ALL_SCENARIO_TIERS: tuple[str, ...] = (
+    "low", "medium", "high", "veryhigh", "pessimistic",
+)
 
-# One-letter tier code, used by the scenario ids (`p-v`) and the LaTeX scenario
+# One-letter tier code, used by the scenario ids (`p-v`, `a-p`) and the LaTeX scenario
 # codes (uppercased).  Distinct per tier, so a scenario id round-trips to its tiers.
+# A tier initial may coincide with a *group* initial — the id format is
+# `<group>-<tier>`, so `a-p` is unambiguous.
 TIER_INITIALS: dict[str, str] = {
-    "low": "l", "medium": "m", "high": "h", "veryhigh": "v",
+    "low": "l", "medium": "m", "high": "h", "veryhigh": "v", "pessimistic": "p",
 }
 
 
@@ -53,8 +63,8 @@ def scenario_tiers(group: str) -> tuple[str, ...]:
 def scenario_tier_combinations() -> list[tuple[str, ...]]:
     """Every tier combination of paper §4.2, one tuple per group in SCENARIO_GROUPS order.
 
-    The product of the *per-group* tiers, so 3^4 * 4 = 324 combinations rather than
-    3^5: only `project` carries the fourth tier.
+    The product of the *per-group* tiers, so 3^3 * 4 * 4 = 432 combinations rather than
+    3^5: `project` and `agent` each carry a fourth tier.
     """
     return list(itertools.product(*(scenario_tiers(g) for g in SCENARIO_GROUPS)))
 

@@ -6,6 +6,8 @@ import pytest
 
 from src.config import (
     AGENT_ROLE_COUNT,
+    ALL_SCENARIO_TIERS,
+    TIER_INITIALS,
     SearchConfiguration,
     SCENARIO_GROUPS,
     SCENARIO_TIERS,
@@ -23,15 +25,30 @@ _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 
 class TestScenarioTierGrid:
-    """The §4.2 grid is not a cube: `project` carries a fourth tier."""
+    """The §4.2 grid is not a cube: `project` and `agent` each carry a fourth tier."""
 
     def test_project_has_the_extra_very_high_tier(self):
         assert scenario_tiers("project") == ("low", "medium", "high", "veryhigh")
 
+    def test_agent_has_the_extra_pessimistic_tier(self):
+        assert scenario_tiers("agent") == ("low", "medium", "high", "pessimistic")
+
     def test_every_other_group_has_the_three_base_tiers(self):
         for group in SCENARIO_GROUPS:
-            if group != "project":
+            if group not in ("project", "agent"):
                 assert scenario_tiers(group) == SCENARIO_TIERS
+
+    def test_no_group_carries_both_fourth_tiers(self):
+        # The visual encodings of `src.visualization` give "veryhigh" and "pessimistic"
+        # the same fourth slot (colour, shape, size), which is only sound because no
+        # channel can ever be asked to draw both at once.
+        for group in SCENARIO_GROUPS:
+            tiers = set(scenario_tiers(group))
+            assert not {"veryhigh", "pessimistic"} <= tiers
+
+    def test_every_tier_has_a_distinct_initial(self):
+        assert set(TIER_INITIALS) == set(ALL_SCENARIO_TIERS)
+        assert len(set(TIER_INITIALS.values())) == len(ALL_SCENARIO_TIERS)
 
     def test_unknown_group_raises(self):
         with pytest.raises(ValueError, match="unknown scenario group"):
@@ -39,10 +56,10 @@ class TestScenarioTierGrid:
 
     def test_combination_count_is_the_per_group_product(self):
         combos = scenario_tier_combinations()
-        assert len(combos) == len(set(combos)) == 3 ** 4 * 4 == 324
+        assert len(combos) == len(set(combos)) == 3 ** 3 * 4 * 4 == 432
 
     def test_scenario_ids_are_unique_over_the_grid(self):
-        assert len({scenario_id(t) for t in scenario_tier_combinations()}) == 324
+        assert len({scenario_id(t) for t in scenario_tier_combinations()}) == 432
 
     def test_scenario_id_rejects_a_wrong_length_tuple(self):
         with pytest.raises(ValueError, match="expected 5 tiers"):

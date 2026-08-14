@@ -1,0 +1,49 @@
+{
+  "description": "Paper Section 4.2 scenario h-m_p-h_d-l_a-p_b-l (human=medium, project=high, debt=low, agent=pessimistic, bugimpact=low); solve with --strategy evolutionary and --strategy descent",
+  "scenario_id": "h-m_p-h_d-l_a-p_b-l",
+  "scenario": {
+    "human": "config/human_medium.json",
+    "project": "config/project_high.json",
+    "debt": "config/debt_low.json",
+    "agent": "config/agent_pessimistic.json",
+    "bugimpact": "config/bugimpact_low.json"
+  },
+  "horizon": "config/horizon_default.json",
+  "search": {
+    "strategy": "evolutionary",
+    "N_values": [
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      1.5,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      7.0,
+      10.0
+    ],
+    "R_values": [
+      1,
+      2,
+      4,
+      13
+    ],
+    "F_freeze_values": [
+      0,
+      1,
+      2
+    ],
+    "sigma": 2,
+    "epsilon": 0.02,
+    "budget": 10000,
+    "n_samples_initial": 1000,
+    "n_generations": 90,
+    "n_offspring": 100,
+    "n_elite": 100,
+    "n_starts": 20,
+    "samples": "best",
+    "seed": 42
+  }
+}

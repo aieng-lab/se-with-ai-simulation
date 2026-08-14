@@ -9,9 +9,9 @@ writes out:
 
 ``optima.csv``
     One row per (scenario, strategy): the reported optimum `c*` — its five control
-    variables, the objective with its CI, the value it achieved, the three cost drivers,
-    the per-role work counts and the contribution split — plus the size of the
-    indistinguishable set `I*` it is reported with (§3.10).
+    variables, the objective with its CI, the value it achieved, the three cost drivers
+    in dollars and as shares of the total, the per-role work counts and the contribution
+    split — plus the size of the indistinguishable set `I*` it is reported with (§3.10).
 
 ``scenarios.csv``
     One row per (scenario, strategy) describing the search effort: budget spend,
@@ -71,8 +71,8 @@ def scenario_params_for_id(
 ) -> ScenarioParameters:
     """Rebuild the `ScenarioParameters` a scenario id stands for.
 
-    Reads ``<config_dir>/<group>_<tier>.json`` for the five groups.  Cached, so the 324
-    scenarios cost at most 324 loads however often they are asked for.
+    Reads ``<config_dir>/<group>_<tier>.json`` for the five groups.  Cached, so the 432
+    scenarios cost at most 432 loads however often they are asked for.
     """
     tiers = tiers_from_scenario_id(scenario_id)
     return load_scenario_params({
@@ -116,6 +116,9 @@ def optimum_row(
     `value_ratio` is the achieved throughput as a fraction of the arrival rate, so the
     throughput constraint of Eq. (throughput_constraint) reads `value_ratio >= 1 - eps`
     directly, independently of the scenario's `r_arrival`.
+
+    The three ``cost_*_share`` columns are the drivers of Eq. (cost_rep) as fractions of
+    the total; they sum to 1 exactly, since the three means do sum to `cost_mean`.
     """
     best = summary.get("best")
     if best is None:
@@ -138,6 +141,9 @@ def optimum_row(
     for k in range(AGENT_ROLE_COUNT):
         row[f"a_qa_{k + 1}"] = A_qa[k]
     T_dev, T_qa = phase_sprint_counts(team_config(row), T)
+    # A configuration with N > 0 always costs something, but a share column is the wrong
+    # place to discover otherwise: divide by NaN rather than raising here.
+    total = obj["cost_mean"] or float("nan")
     row.update({
         "n_sup_dev": supervised_agent_count(tuple(A_dev)),
         "n_sup_qa": supervised_agent_count(tuple(A_qa)),
@@ -149,6 +155,9 @@ def optimum_row(
         "cost_quality_mean": obj["cost_quality_mean"],
         "cost_human_mean": obj["cost_human_mean"],
         "cost_agent_mean": obj["cost_agent_mean"],
+        "cost_quality_share": obj["cost_quality_mean"] / total,
+        "cost_human_share": obj["cost_human_mean"] / total,
+        "cost_agent_share": obj["cost_agent_mean"] / total,
         "value_mean": obj["value_mean"],
         "value_ci_lo": obj["value_ci"][0],
         "value_ci_hi": obj["value_ci"][1],

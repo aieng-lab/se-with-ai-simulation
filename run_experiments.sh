@@ -2,9 +2,10 @@
 #
 # Run the full experiment campaign of paper Section 4.2.
 #
-# 324 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
-# tier for project) are each solved twice, once with evolutionary search and once with
-# greedy neighbourhood descent, giving 648 searches.  An evolutionary search spends a
+# 432 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
+# tier for project and a fourth "pessimistic" tier for agent) are each solved twice, once
+# with evolutionary search and once with greedy neighbourhood descent, giving 864
+# searches.  An evolutionary search spends a
 # fixed budget of 10,000 candidate evaluations; a descent search runs each of its 20
 # restarts to a local optimum and is therefore much shorter, typically a few hundred
 # evaluations.  Jobs are independent, so they run in parallel and the
@@ -23,7 +24,7 @@
 # campaign any sooner — it only stretches each individual search (and since a search
 # writes nothing until it completes, that is lost work if the run is interrupted).
 # Hence the default of 4.  The table above is measured on a 10,000-candidate search, so
-# the 324 evolutionary jobs alone are roughly 160 core-hours; the 324 descent jobs stop
+# the 432 evolutionary jobs alone are roughly 215 core-hours; the 432 descent jobs stop
 # at their local optima after a few hundred candidates each and add an order of
 # magnitude less on top.
 #

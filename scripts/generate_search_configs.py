@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Generate the 324 scenario search configurations of paper §4.2.
+"""Generate the 432 scenario search configurations of paper §4.2.
 
 The five orthogonal scenario groups (paper §4.1) each come in a low / medium / high
-tier, and `project` carries a fourth "very high" tier, so combining them freely
-yields 3^4 * 4 = 324 scenarios.  Every generated file is `config/search_default.json`
-with its five `scenario` entries repointed at one tier combination; the search range,
-budgets, horizon, and seed are inherited unchanged so that all 324 searches share the
-experimental setup.
+tier; `project` carries a fourth "very high" tier and `agent` a fourth "pessimistic"
+one, so combining them freely yields 3^3 * 4 * 4 = 432 scenarios.  Every generated file
+is `config/search_default.json` with its five `scenario` entries repointed at one tier
+combination; the search range, budgets, horizon, and seed are inherited unchanged so
+that all 432 searches share the experimental setup.
 
 Each scenario is solved twice — once with evolutionary search and once with greedy
-neighbourhood descent — via the `optimize --strategy` override, so 324 files cover all
-648 searches.
+neighbourhood descent — via the `optimize --strategy` override, so 432 files cover all
+864 searches.
 
 Usage
 -----

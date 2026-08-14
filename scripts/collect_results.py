@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Consolidate the 648 searches of paper §4.2 into two flat tables.
+"""Consolidate the 864 searches of paper §4.2 into two flat tables.
 
 Reads every ``<results-dir>/<scenario_id>/<strategy>/{manifest,search_summary}.json``
 written by ``python -m src.main optimize`` and emits:
@@ -7,8 +7,9 @@ written by ``python -m src.main optimize`` and emits:
     optima.csv      one row per (scenario, strategy): the reported optimum c* — its
                     scenario tiers, the five control variables, both 8-element
                     composition vectors, the cost objective with its 95 % CI, the three
-                    cost drivers, the achieved value, and the size of the
-                    indistinguishable set I* it is reported with
+                    cost drivers in dollars and as shares of the total, the achieved
+                    value, and the size of the indistinguishable set I* it is reported
+                    with
     scenarios.csv   one row per (scenario, strategy): realised evaluation counts,
                     feasibility rejections, and wall-clock time — the search-effort
                     figures §4.2 promises to report

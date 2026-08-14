@@ -126,6 +126,26 @@ class TestLoadScenarioParams:
         params = load_scenario_params(tier_paths(tier))
         assert isinstance(params, ScenarioParameters)
 
+    def test_pessimistic_agent_tier_is_low_capability_at_ten_times_the_high_price(self):
+        """The `agent` group's fourth tier is defined, not measured (paper §4.1).
+
+        Its whole content is "the low tier's capability at ten times the high tier's
+        price", so pinning it against the two files it is derived from is what catches a
+        hand-edited number drifting away from the definition.
+        """
+        pess = load_scenario_params(tier_paths("medium", agent="config/agent_pessimistic.json"))
+        low = load_scenario_params(tier_paths("medium", agent="config/agent_low.json"))
+        high = load_scenario_params(tier_paths("medium", agent="config/agent_high.json"))
+
+        assert pess.c_token == pytest.approx([10.0 * c for c in high.c_token])
+        # `c_token` is the only cost in the group; every other agent field is the low
+        # tier's, including the ones that happen to be tier-invariant.
+        agent_fields = set(json.loads(
+            Path("config/agent_low.json").read_text())["agent"]) - {"c_token"}
+        assert agent_fields   # guard against the key set silently going empty
+        for name in agent_fields:
+            assert getattr(pess, name) == pytest.approx(getattr(low, name)), name
+
     def test_groups_can_be_mixed(self):
         """The five groups are orthogonal, so tiers combine freely (paper §4.1)."""
         params = load_scenario_params(
