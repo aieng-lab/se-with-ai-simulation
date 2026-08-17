@@ -18,6 +18,12 @@ bug fixes (paper §3.6, Eq. qesc).
 
 Detection is unified: Code Review, Security Audit, and the Test suite all act
 within the same sprint as injection. There is no CI/CD latency buffer.
+
+A team with no agents at all (`config.is_human_only`) is the human-only baseline of
+paper §4.1 and takes a different path in two places: it reserves f_qa of its net capacity
+in Step 1 (Eq. hafter_qa), and its Step 5 detection is a single human review stage
+(Eqs. cov_qa / qa_human) in place of Test -> CR -> SA.  The two paths are mutually
+exclusive, so an agent-supported team's transition and RNG stream are untouched by it.
 """
 
 from __future__ import annotations
@@ -26,7 +32,13 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .config import AGENT_ROLE_COUNT, TeamConfiguration, net_capacity, supervised_agent_count
+from .config import (
+    AGENT_ROLE_COUNT,
+    TeamConfiguration,
+    is_human_only,
+    net_capacity,
+    supervised_agent_count,
+)
 from .parameters import ScenarioParameters
 from .state import SystemState
 
@@ -169,12 +181,23 @@ def step_sprint(
     esc_done = min(math.floor(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
     H_after_esc = max(0.0, H_after_rev - esc_done * params.H_escalation_time / config.N)
 
-    # f_fix fraction of H_after_esc goes to bug fixing; (1-f_fix) to feature coding.
+    # Human-only baseline (paper §4.1, Eq. hafter_qa): with no agents to supervise, the
+    # developers instead reserve f_qa of their net capacity to review what they wrote, and
+    # both the coding and the bug-fixing budgets are taken from the remainder.  Freeze
+    # sprints implement nothing, so there is nothing to review and nothing is reserved.
+    # An agent-supported team never enters this branch, so its capacity cascade — and the
+    # RNG stream that follows from it — is unchanged.
+    human_only = is_human_only(config)
+    H_after_qa = H_after_esc
+    if human_only and not is_frozen:
+        H_after_qa = (1.0 - params.f_qa) * H_after_esc
+
+    # f_fix fraction of H_after_qa goes to bug fixing; (1-f_fix) to feature coding.
     # During feature freeze, the coding fraction is redirected to bug fixing as well.
-    H_fix_human = H_after_esc if is_frozen else params.f_fix * H_after_esc
+    H_fix_human = H_after_qa if is_frozen else params.f_fix * H_after_qa
     fix_human_budget = math.floor(H_fix_human * config.N / params.h_fix)
     impl_human = 0 if is_frozen else math.floor(
-        (1.0 - params.f_fix) * H_after_esc * config.N / params.h_feature
+        (1.0 - params.f_fix) * H_after_qa * config.N / params.h_feature
     )
 
     # ------------------------------------------------------------------
@@ -217,8 +240,10 @@ def step_sprint(
     # ------------------------------------------------------------------
     r_bugs_eff = params.r_bugs * (2.0 - delta_D)
 
+    # Agent-written code injects at the debt-amplified rate (Eq. Binj-agent); human-written
+    # code injects at a fixed per-feature rate (Eq. Binj-human), independent of the debt.
     bugs_raw = int(rng.poisson(impl_agents * r_bugs_eff))
-    bugs_human_raw = int(rng.poisson(impl_human * r_bugs_eff * params.r_bugs_human))
+    bugs_human_raw = int(rng.poisson(impl_human * params.r_bugs_human))
     bugs_total = bugs_raw + bugs_human_raw
 
     # Three mutually exclusive types: security drawn first, then major/minor split of remainder
@@ -230,40 +255,67 @@ def step_sprint(
     bugs_maj = int(rng.binomial(remaining, theta_maj_cond)) if remaining > 0 else 0
     bugs_min = remaining - bugs_maj
 
-    # Stage 1 — Test suite (acts on all three types; coverage from tests written so far)
-    cov_test = min(params.c_test_ceil, state.N_test / max(1, state.F_completed))
-    p_test = min(1.0, params.d_test * cov_test)
-    test_det_min = int(rng.binomial(bugs_min, p_test)) if bugs_min > 0 else 0
-    test_det_maj = int(rng.binomial(bugs_maj, p_test)) if bugs_maj > 0 else 0
-    test_det_sec = int(rng.binomial(bugs_sec, p_test)) if bugs_sec > 0 else 0
+    if human_only:
+        # Human quality assurance (paper §4.1, Eqs. cov_qa / qa_human) replaces the three
+        # agentic stages below.  It is not an extra stage: with no agents those three
+        # detect nothing at all (Phi(., 0) = 0 kills review and audit, and N_test never
+        # grows so cov_test = 0), which is exactly why the baseline needs this path.
+        #
+        # cov_qa matches the capacity reserved by Eq. (hafter_qa) against the review the
+        # sprint demands — h_review hours for each implemented feature — and is the share
+        # of features that can be reviewed in full.  f_qa is calibrated so that it is 1 in
+        # steady state; it drops below only when the team implements more than its own
+        # reservation covers.  There is no human security-audit analogue, so security bugs
+        # are caught at the same d_qa as any other class.
+        cov_qa = min(1.0, params.f_qa * config.N * H_net
+                          / (params.h_review * max(1, impl)))
+        p_qa = cov_qa * params.d_qa
+        qa_det_min = int(rng.binomial(bugs_min, p_qa)) if bugs_min > 0 else 0
+        qa_det_maj = int(rng.binomial(bugs_maj, p_qa)) if bugs_maj > 0 else 0
+        qa_det_sec = int(rng.binomial(bugs_sec, p_qa)) if bugs_sec > 0 else 0
 
-    surv_min_t = bugs_min - test_det_min
-    surv_maj_t = bugs_maj - test_det_maj
-    surv_sec_t = bugs_sec - test_det_sec
+        det_min, det_maj, det_sec = qa_det_min, qa_det_maj, qa_det_sec
+    else:
+        # Stage 1 — Test suite (acts on all three types; coverage from tests written so far)
+        cov_test = min(params.c_test_ceil, state.N_test / max(1, state.F_completed))
+        p_test = min(1.0, params.d_test * cov_test)
+        test_det_min = int(rng.binomial(bugs_min, p_test)) if bugs_min > 0 else 0
+        test_det_maj = int(rng.binomial(bugs_maj, p_test)) if bugs_maj > 0 else 0
+        test_det_sec = int(rng.binomial(bugs_sec, p_test)) if bugs_sec > 0 else 0
 
-    # Stage 2 — Code Review (acts on all survivors).  Zero review agents means
-    # no code review takes place; more agents share the change volume and thus
-    # each degrade less.
-    a_CR = A_active[4]   # Code Review Agent (k=5, index 4) — background service
-    d_CR_eff = params.d_CR * delta_D * _volume_factor(impl, a_CR, params.alpha_size)
-    CR_det_min = int(rng.binomial(surv_min_t, d_CR_eff)) if surv_min_t > 0 else 0
-    CR_det_maj = int(rng.binomial(surv_maj_t, d_CR_eff)) if surv_maj_t > 0 else 0
-    CR_det_sec = int(rng.binomial(surv_sec_t, d_CR_eff)) if surv_sec_t > 0 else 0
+        surv_min_t = bugs_min - test_det_min
+        surv_maj_t = bugs_maj - test_det_maj
+        surv_sec_t = bugs_sec - test_det_sec
 
-    surv_sec_cr = surv_sec_t - CR_det_sec
+        # Stage 2 — Code Review (acts on all survivors).  Zero review agents means
+        # no code review takes place; more agents share the change volume and thus
+        # each degrade less.
+        a_CR = A_active[4]   # Code Review Agent (k=5, index 4) — background service
+        d_CR_eff = params.d_CR * delta_D * _volume_factor(impl, a_CR, params.alpha_size)
+        CR_det_min = int(rng.binomial(surv_min_t, d_CR_eff)) if surv_min_t > 0 else 0
+        CR_det_maj = int(rng.binomial(surv_maj_t, d_CR_eff)) if surv_maj_t > 0 else 0
+        CR_det_sec = int(rng.binomial(surv_sec_t, d_CR_eff)) if surv_sec_t > 0 else 0
 
-    # Stage 3 — Security Audit (acts only on security bugs that survived test + CR).
-    # Same volume split and debt sensitivity as code review.
-    a_SA = A_active[5]   # Security Audit Agent (k=6, index 5) — background service
-    d_SA_eff = params.d_SA * delta_D * _volume_factor(impl, a_SA, params.alpha_size)
-    SA_det_sec = int(rng.binomial(surv_sec_cr, d_SA_eff)) if surv_sec_cr > 0 else 0
+        surv_sec_cr = surv_sec_t - CR_det_sec
 
-    state.B_kno_min += test_det_min + CR_det_min
-    state.B_kno_maj += test_det_maj + CR_det_maj
-    state.B_kno_sec += test_det_sec + CR_det_sec + SA_det_sec
-    state.B_hid_min += surv_min_t - CR_det_min
-    state.B_hid_maj += surv_maj_t - CR_det_maj
-    state.B_hid_sec += surv_sec_cr - SA_det_sec
+        # Stage 3 — Security Audit (acts only on security bugs that survived test + CR).
+        # Same volume split and debt sensitivity as code review.
+        a_SA = A_active[5]   # Security Audit Agent (k=6, index 5) — background service
+        d_SA_eff = params.d_SA * delta_D * _volume_factor(impl, a_SA, params.alpha_size)
+        SA_det_sec = int(rng.binomial(surv_sec_cr, d_SA_eff)) if surv_sec_cr > 0 else 0
+
+        det_min = test_det_min + CR_det_min
+        det_maj = test_det_maj + CR_det_maj
+        det_sec = test_det_sec + CR_det_sec + SA_det_sec
+
+    # Detected bugs enter the known queues, the rest the hidden ones (Eq. bkno_update).
+    # The draws above are over this sprint's *injections*, not the standing hidden queue.
+    state.B_kno_min += det_min
+    state.B_kno_maj += det_maj
+    state.B_kno_sec += det_sec
+    state.B_hid_min += bugs_min - det_min
+    state.B_hid_maj += bugs_maj - det_maj
+    state.B_hid_sec += bugs_sec - det_sec
 
     # ------------------------------------------------------------------
     # Architecture queues update

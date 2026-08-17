@@ -368,3 +368,38 @@ class TestContributionAccounting:
         s = SimulationHorizon(T=4, K=3, master_seed=12)
         trace = run_configuration(base_config, s, base_params, capture_traces=True)
         assert {tr.k for tr in trace.traces} == set(range(s.K))
+
+
+class TestHumanOnlyBaselineCost:
+    """A zero-agent team (paper §4.1) has no token bill at all."""
+
+    @staticmethod
+    def _cfg(N=2):
+        from src.config import AGENT_ROLE_COUNT
+        zero = (0,) * AGENT_ROLE_COUNT
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+
+    def test_agent_cost_is_exactly_zero(self, base_params):
+        from src.config import AGENT_ROLE_COUNT
+        params = dataclasses.replace(
+            base_params, c_token=tuple(1000.0 for _ in range(AGENT_ROLE_COUNT)),
+        )
+        s = SimulationHorizon(T=6, K=2, master_seed=0)
+        result = run_configuration(self._cfg(), s, params)
+        for rep in result.replications:
+            assert rep.cost_agent == 0.0
+            assert sum(rep.actions) == 0.0
+
+    def test_the_cost_split_still_sums_to_the_total(self, base_params):
+        s = SimulationHorizon(T=6, K=2, master_seed=0)
+        result = run_configuration(self._cfg(), s, base_params)
+        for rep in result.replications:
+            assert rep.cost == pytest.approx(
+                rep.cost_quality + rep.cost_human + rep.cost_agent)
+
+    def test_every_feature_is_implemented_by_a_human(self, base_params):
+        s = SimulationHorizon(T=6, K=2, master_seed=0)
+        result = run_configuration(self._cfg(), s, base_params)
+        for rep in result.replications:
+            assert rep.impl_agents == 0
+            assert rep.impl_human == pytest.approx(rep.value * s.T)

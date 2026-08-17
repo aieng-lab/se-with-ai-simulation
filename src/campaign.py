@@ -32,9 +32,12 @@ import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
+    RESULT_MODES,
     SCENARIO_GROUPS,
     SEARCH_STRATEGIES,
     TIER_INITIALS,
+    UNUSED_TIER,
+    UNUSED_TIER_INITIAL,
     TeamConfiguration,
     supervised_agent_count,
 )
@@ -43,6 +46,8 @@ from .parameters import ScenarioParameters
 from .simulation import phase_sprint_counts
 
 _INITIAL_TO_TIER = {v: k for k, v in TIER_INITIALS.items()}
+# `X` marks a group the scenario does not use — the human-only baseline's `d-X` / `a-X`.
+_INITIAL_TO_TIER[UNUSED_TIER_INITIAL] = UNUSED_TIER
 
 
 # ----------------------------------------------------------------------------
@@ -85,14 +90,34 @@ def scenario_params_for_id(
 # Flat tables over the campaign artifacts
 # ----------------------------------------------------------------------------
 
+def is_baseline_scenario(scenario_id: str) -> bool:
+    """True for a human-only baseline scenario, i.e. one carrying the `X` sentinel.
+
+    The baseline varies only `human`, `project` and `bugimpact`; `debt` and `agent` are
+    provably inert for a zero-agent team and are marked `d-X` / `a-X` rather than pinned.
+    """
+    return UNUSED_TIER in tiers_from_scenario_id(scenario_id).values()
+
+
+def expected_modes(scenario_id: str) -> tuple[str, ...]:
+    """The result modes a scenario is supposed to carry.
+
+    A baseline scenario is enumerated once and has no search counterpart; every other
+    scenario is solved by both search strategies (paper §4.2).  `build_tables` reports
+    missing results against this, so the 432 campaign scenarios are not counted as missing
+    a baseline nor the 36 baseline scenarios as missing two searches.
+    """
+    return ("human_only",) if is_baseline_scenario(scenario_id) else SEARCH_STRATEGIES
+
+
 def search_dirs(results_dir: Path) -> list[tuple[str, str, Path]]:
-    """Find every (scenario_id, strategy, dir) that holds a finished search."""
+    """Find every (scenario_id, mode, dir) that holds a finished search or enumeration."""
     found = []
     for scenario_dir in sorted(p for p in Path(results_dir).iterdir() if p.is_dir()):
-        for strategy in SEARCH_STRATEGIES:
-            d = scenario_dir / strategy
+        for mode in RESULT_MODES:
+            d = scenario_dir / mode
             if (d / "search_summary.json").is_file():
-                found.append((scenario_dir.name, strategy, d))
+                found.append((scenario_dir.name, mode, d))
     return found
 
 
@@ -225,3 +250,50 @@ def build_tables(
             o_rows.append(row)
         s_rows.append(scenario_row(scenario_id, strategy, manifest, summary))
     return pd.DataFrame(o_rows), pd.DataFrame(s_rows)
+
+
+#: The scenario groups a human-only baseline actually varies.  `debt` and `agent` are
+#: excluded because they are inert for a zero-agent team, which is what lets one baseline
+#: row serve as the reference for every (debt, agent) combination at the same tiers.
+BASELINE_JOIN_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
+
+
+def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
+    """Cost of each search optimum against the human-only baseline at the same tiers.
+
+    One row per (campaign scenario, search strategy) that has a baseline sharing its
+    `human` / `project` / `bugimpact` tiers.  `cost_ratio = cost_mean(baseline) /
+    cost_mean(c*)` is the factor by which the agent-supported optimum changes the cost per
+    feature: above 1 the agents are cheaper per feature than the human-only team.
+
+    Since the baseline is inert in `debt` and `agent`, each baseline row is the reference
+    for every combination of those two — with the full campaign that is 36 baselines
+    against 432 scenarios x 2 strategies.  `best_admissible` is carried through from both
+    sides, because a ratio against an infeasible team is a different statement.
+    """
+    if optima.empty or "strategy" not in optima:
+        return pd.DataFrame()
+
+    base = optima[optima["strategy"] == "human_only"]
+    search = optima[optima["strategy"] != "human_only"]
+    if base.empty or search.empty:
+        return pd.DataFrame()
+
+    join = [f"tier_{g}" for g in BASELINE_JOIN_GROUPS]
+    keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "value_mean"]
+    if "best_admissible" in optima:
+        keep.append("best_admissible")
+
+    merged = search.merge(
+        base[keep].rename(columns=lambda c: c if c in join else f"baseline_{c}"),
+        on=join, how="inner", validate="many_to_one",
+    )
+    merged["cost_ratio"] = merged["baseline_cost_mean"] / merged["cost_mean"]
+
+    cols = (["scenario_id", "strategy"] + join
+            + ["cost_mean", "baseline_cost_mean", "cost_ratio", "baseline_scenario_id",
+               "baseline_N", "baseline_R", "baseline_F_freeze", "baseline_value_mean"])
+    if "best_admissible" in optima:
+        cols += ["best_admissible", "baseline_best_admissible"]
+    return merged[[c for c in cols if c in merged]].sort_values(
+        ["scenario_id", "strategy"]).reset_index(drop=True)

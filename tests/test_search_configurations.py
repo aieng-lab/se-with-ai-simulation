@@ -10,6 +10,7 @@ by the feasibility gate after the draw, not by the sampler.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -33,9 +34,11 @@ from src.search_configurations import (
     _random_draws,
     _run_descent,
     _run_evolutionary_search,
+    _run_human_only,
     _sample_dev_composition,
     _sample_qa_composition,
     background_count_max,
+    human_only_grid,
     neighbourhood,
     saturation_bounds,
     write_samples,
@@ -628,3 +631,81 @@ class TestSampleRetention:
     ):
         outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "all")
         assert set(outcome.results) == {key for key, _, _ in outcome.aggs}
+
+
+class TestHumanOnlyEnumeration:
+    """The human-only baseline of paper §4.1 is enumerated, not searched."""
+
+    @staticmethod
+    def _full_range_cfg():
+        # The §4.2 search range, which the paper says gives 99 configurations.
+        return SearchConfiguration(
+            scenario_paths={
+                group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
+            },
+            horizon_path="config/horizon_default.json",
+            strategy="human_only",
+            N_values=(0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0),
+            R_values=(1, 2, 4, 13),
+            F_freeze_values=(0, 1, 2),
+            seed=7,
+        )
+
+    def test_paper_range_gives_99_configurations(self):
+        grid = human_only_grid(self._full_range_cfg())
+        # 11 staffing levels x 9 valid (R, F_freeze) pairs: R=1 admits only F=0, R=2
+        # admits {0,1}, and R=4 and R=13 admit all three.
+        assert len(grid) == 99
+
+    def test_every_candidate_is_a_zero_agent_team(self, search_cfg):
+        zero = (0,) * AGENT_ROLE_COUNT
+        for cfg in human_only_grid(search_cfg):
+            assert cfg.A_dev == zero
+            assert cfg.A_qa == zero
+
+    def test_candidates_are_distinct_and_respect_the_freeze_bound(self, search_cfg):
+        grid = human_only_grid(search_cfg)
+        keys = [(c.N, c.R, c.F_freeze) for c in grid]
+        assert len(keys) == len(set(keys))
+        assert all(0 <= c.F_freeze <= c.R - 1 for c in grid)
+
+    def test_grid_is_deterministic(self, search_cfg):
+        assert human_only_grid(search_cfg) == human_only_grid(search_cfg)
+
+    def test_run_evaluates_exactly_the_grid(self, search_cfg, medium_params):
+        settings = SimulationHorizon(T=3, K=2, master_seed=42)
+        cfg = dataclasses.replace(search_cfg, strategy="human_only")
+        outcome = _run_human_only(cfg, settings, medium_params,
+                                  np.random.default_rng(0), progress_every=0)
+        grid = human_only_grid(cfg)
+        assert outcome.n_evaluated == len(grid)
+        # A zero-agent team never fails the monitoring gate, so all of them simulate.
+        assert outcome.n_simulated == len(grid)
+        assert all(c.A_dev == (0,) * AGENT_ROLE_COUNT for _, c, _ in outcome.aggs)
+
+    def test_run_ignores_the_rng(self, search_cfg, medium_params):
+        # Deterministic: `rng` is accepted only to match the two search strategies.
+        settings = SimulationHorizon(T=3, K=2, master_seed=42)
+        cfg = dataclasses.replace(search_cfg, strategy="human_only")
+        a = _run_human_only(cfg, settings, medium_params, np.random.default_rng(0),
+                            progress_every=0)
+        b = _run_human_only(cfg, settings, medium_params, np.random.default_rng(999),
+                            progress_every=0)
+        assert [k for k, _, _ in a.aggs] == [k for k, _, _ in b.aggs]
+        assert ([agg.cost_mean for _, _, agg in a.aggs]
+                == [agg.cost_mean for _, _, agg in b.aggs])
+
+    def test_manifest_carries_no_search_bookkeeping(self, search_cfg, medium_params):
+        settings = SimulationHorizon(T=3, K=2, master_seed=42)
+        cfg = dataclasses.replace(search_cfg, strategy="human_only")
+        outcome = _run_human_only(cfg, settings, medium_params,
+                                  np.random.default_rng(0), progress_every=0)
+        for entry in outcome.manifest.values():
+            assert "generation" not in entry
+            assert "restart" not in entry and "step" not in entry
+
+    def test_the_searches_can_never_reach_a_zero_agent_team(self, search_cfg,
+                                                            medium_params):
+        # The enumerator is the sole producer: both samplers keep the a_1 >= 1 floor.
+        draws = _random_draws(search_cfg, np.random.default_rng(5), 200, medium_params)
+        assert all(c.A_dev[0] >= 1 for c in draws)

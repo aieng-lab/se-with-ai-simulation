@@ -30,9 +30,10 @@ Generate visualizations from optimization results:
     python -m src.main visualize results/search_default [--out results/search_default/plots]
     python -m src.main visualize results/run1 results/run2 --out results/comparison
 
-Consolidate a finished campaign into its tables and the five-dimension optima figure:
+Consolidate a finished campaign into its tables and the five-dimension optima figures:
     python -m src.main campaign [results/experiments] [--out results/analysis]
     python -m src.main campaign --share human --x debt --color agent
+    python -m src.main campaign --figures-only    (redraw from an existing optima.csv)
 """
 
 from __future__ import annotations
@@ -45,20 +46,27 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from .analysis import final_distribution, mean_trajectory
 from .config import (
     AGENT_ROLE_NAMES,
     BACKGROUND_ROLE_INDICES,
     SAMPLE_POLICIES,
+    RESULT_MODES,
     SCENARIO_GROUPS,
-    SEARCH_STRATEGIES,
     TeamConfiguration,
     supervised_agent_count,
 )
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .results import load_result, load_traces, save_result, save_traces
-from .search_configurations import _run_descent, _run_evolutionary_search, write_samples
+from .search_configurations import (
+    _run_descent,
+    _run_evolutionary_search,
+    _run_human_only,
+    human_only_grid,
+    write_samples,
+)
 from .selection import (
     aggregate_config_result,
     parsimony_key,
@@ -66,7 +74,7 @@ from .selection import (
     satisfies_throughput,
     throughput_floor,
 )
-from .campaign import build_tables, search_dirs
+from .campaign import baseline_uplift, build_tables, expected_modes, search_dirs
 from .simulation import ConfigResult, ConfigTrace, run_configuration
 from .visualization import COST_SHARES, visualize_campaign, visualize_multi, visualize_single
 
@@ -248,6 +256,12 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         print(f"             {search_cfg.n_samples_initial} initial + "
               f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring, "
               f"elite {search_cfg.n_elite}")
+    elif strategy == "human_only":
+        # Not a search: the human-only baseline of §4.1 fixes both composition vectors at
+        # zero, so its configuration space is small enough to enumerate in full.
+        n_grid = len(human_only_grid(search_cfg))
+        print(f"Budget:      none; exhaustive enumeration of the {n_grid}-point "
+              f"zero-agent grid")
     else:
         # The descent is not budgeted (§4.2): each restart runs to a local optimum and the
         # evaluations it took are reported at the end.
@@ -266,6 +280,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     runner = {
         "evolutionary": _run_evolutionary_search,
         "descent": _run_descent,
+        "human_only": _run_human_only,
     }[strategy]
     outcome = runner(
         search_cfg, horizon, params, rng, initial_state,
@@ -427,6 +442,25 @@ CAMPAIGN_CHANNEL_DEFAULTS: dict[str, str] = {
 
 
 def _cmd_campaign(args: argparse.Namespace) -> None:
+    out_dir = Path(args.out)
+    optima_path = out_dir / "optima.csv"
+
+    if args.figures_only:
+        # Redraw from the table a previous run already consolidated: the campaign is
+        # finished, so re-reading 864 result directories would only rewrite the same CSVs.
+        if not optima_path.is_file():
+            print(f"Error: {optima_path} does not exist; run the campaign without "
+                  f"--figures-only first.", file=sys.stderr)
+            sys.exit(1)
+        optima = pd.read_csv(optima_path)
+        print(f"Loaded {len(optima)} reported optima from {optima_path}")
+        if optima.empty:
+            print("\nNo optimum was reported; skipping the figures.")
+            return
+        _campaign_figures(optima, out_dir, args)
+        print("\nDone.")
+        return
+
     results_dir = Path(args.results_dir)
     if not results_dir.is_dir():
         print(f"Error: {results_dir} is not a directory.", file=sys.stderr)
@@ -439,20 +473,28 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
 
     optima, scenarios = build_tables(results_dir, args.config_dir)
 
-    out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    optima_path = out_dir / "optima.csv"
     scenarios_path = out_dir / "scenarios.csv"
     optima.to_csv(optima_path, index=False)
     scenarios.to_csv(scenarios_path, index=False)
 
-    n_scenarios = len({sid for sid, _, _ in searches})
+    uplift = baseline_uplift(optima)
+    uplift_path = out_dir / "baseline_uplift.csv"
+    if not uplift.empty:
+        uplift.to_csv(uplift_path, index=False)
+
+    scenario_ids = {sid for sid, _, _ in searches}
+    n_scenarios = len(scenario_ids)
     print(f"Collected {len(searches)} search(es) over {n_scenarios} scenario(s)")
     print(f"  {optima_path}   {len(optima)} reported optima")
-    print(f"  {scenarios_path}   {len(scenarios)} (scenario, strategy) pairs")
-    missing = len(SEARCH_STRATEGIES) * n_scenarios - len(searches)
+    print(f"  {scenarios_path}   {len(scenarios)} (scenario, mode) pairs")
+    if not uplift.empty:
+        print(f"  {uplift_path}   {len(uplift)} optima with a human-only reference")
+    # A baseline scenario is enumerated once and has no search counterpart, so the
+    # expected mode count is per scenario rather than a flat len(SEARCH_STRATEGIES).
+    missing = sum(len(expected_modes(sid)) for sid in scenario_ids) - len(searches)
     if missing:
-        print(f"  note: {missing} (scenario, strategy) pair(s) have no results yet")
+        print(f"  note: {missing} (scenario, mode) pair(s) have no results yet")
     if len(optima) < len(searches):
         print(f"  note: {len(searches) - len(optima)} search(es) simulated no candidate")
 
@@ -460,12 +502,22 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print("\nNo optimum was reported; skipping the figures.")
         return
 
+    _campaign_figures(optima, out_dir, args)
+    print("\nDone.")
+
+
+def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
+                      args: argparse.Namespace) -> None:
+    """The channel flags of the `campaign` subcommand, applied to the figures.
+
+    The CLI names a channel `--color` where the plot functions take `color_group`, so the
+    mapping lives here rather than being repeated at both call sites.
+    """
     visualize_campaign(
         optima, out_dir, args.format, share=args.share,
         x_group=args.x, y_group=args.y, color_group=args.color,
         marker_group=args.marker, size_group=args.size,
     )
-    print("\nDone.")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -510,7 +562,7 @@ def main(argv: list[str] | None = None) -> None:
                          help="Path to search config JSON (e.g. config/search_default.json)")
     p_optimize.add_argument("--out", required=True, metavar="DIR",
                          help="Output directory for optimization results")
-    p_optimize.add_argument("--strategy", choices=list(SEARCH_STRATEGIES), default=None,
+    p_optimize.add_argument("--strategy", choices=list(RESULT_MODES), default=None,
                          help="Override strategy from config")
     p_optimize.add_argument(
         "--samples", choices=list(SAMPLE_POLICIES), default=None,
@@ -557,6 +609,9 @@ def main(argv: list[str] | None = None) -> None:
     p_camp.add_argument("--share", default="agent", choices=list(COST_SHARES),
                         help="Which cost driver's share of the total goes on the x axis "
                              "(default: agent)")
+    p_camp.add_argument("--figures-only", action="store_true",
+                        help="Redraw the figures from an existing OUT/optima.csv instead "
+                             "of re-reading the campaign and rewriting the CSVs")
     for channel, default in CAMPAIGN_CHANNEL_DEFAULTS.items():
         p_camp.add_argument(
             f"--{channel}", default=default, choices=list(SCENARIO_GROUPS),

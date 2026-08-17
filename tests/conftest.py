@@ -40,6 +40,8 @@ def base_params():
         H_capacity=40.0, H_monitoring_overhead=2.0,
         H_review_time=4.0, H_escalation_time=2.0,
         h_feature=8.0, h_fix=4.0, c_comm=1.0, f_fix=0.10,
+        # Human-only QA (paper §4.1); inert for every agent-supported fixture team.
+        f_qa=0.2, h_review=1.0, d_qa=0.8,
         r_bugs=0.02, r_bugs_human=0.8,
         theta_maj=0.18, theta_sec=0.10,
         d_CR=0.7, d_SA=0.85, d_test=0.6, c_test_ceil=2.0,

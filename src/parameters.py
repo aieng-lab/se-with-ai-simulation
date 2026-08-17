@@ -36,10 +36,20 @@ class ScenarioParameters:
     h_fix: float                     # Human hours per bug fixed
     c_comm: float                    # Per-peer communication overhead
     f_fix: float                     # Fraction of residual capacity used for bug fixing; 1-f_fix goes to coding
+    # The three below drive the human quality-assurance stage of the human-only baseline
+    # (paper §4.1, Eqs. hafter_qa / cov_qa / qa_human).  They are read only when the team
+    # has no agents at all (`config.is_human_only`), so they are inert for every
+    # agent-supported configuration of the §4.2 campaign.
+    f_qa: float                      # Share of net capacity reserved for QA in dev sprints
+    h_review: float                  # Human hours to review one implemented feature in full
+    d_qa: float                      # Probability a fully reviewed bug is detected
 
     # --- Bug injection  ---
-    r_bugs: float                    # Base bug injection rate per feature
-    r_bugs_human: float              # Human vs agent bug injection scale factor (0, 1]
+    r_bugs: float                    # Base bug injection rate per feature (agents)
+    # Absolute Poisson rate of bugs per human-implemented feature (paper Eq. Binj-human,
+    # Table tab:params:injection).  NOT a scale factor on r_bugs, and not amplified by the
+    # debt factor (2 - delta_D): human-written code injects at a fixed per-feature rate.
+    r_bugs_human: float
     theta_maj: float                 # Major bug fraction [0, 1)
     theta_sec: float                 # Security bug fraction [0, 1)
 
@@ -87,6 +97,14 @@ class ScenarioParameters:
             raise ValueError(f"theta_sec must be in (0, 1), got {self.theta_sec}")
         if not (0.0 <= self.f_fix <= 1.0):
             raise ValueError(f"f_fix must be in [0, 1], got {self.f_fix}")
+        if self.r_bugs_human <= 0.0:
+            raise ValueError(f"r_bugs_human must be > 0, got {self.r_bugs_human}")
+        if not (0.0 <= self.f_qa < 1.0):
+            raise ValueError(f"f_qa must be in [0, 1), got {self.f_qa}")
+        if self.h_review <= 0.0:
+            raise ValueError(f"h_review must be > 0, got {self.h_review}")
+        if not (0.0 <= self.d_qa <= 1.0):
+            raise ValueError(f"d_qa must be in [0, 1], got {self.d_qa}")
         if self.theta_maj + self.theta_sec >= 1.0:
             raise ValueError(
                 f"theta_maj + theta_sec must be < 1 (leaves room for minor), "

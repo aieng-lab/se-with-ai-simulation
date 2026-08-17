@@ -7,6 +7,11 @@ the best configuration in an *enumerated* neighbourhood until it reaches a local
 Uniform random sampling (`_random_draws`) is not a strategy of its own — it is the shared
 initialiser both of them seed from (§3.11.2).
 
+`_run_human_only` sits beside them but is not a third strategy: the human-only baseline of
+§4.1 fixes both composition vectors at zero, leaving 99 configurations that are enumerated
+exhaustively.  It is the only producer of zero-agent teams — the samplers, `_mutate` and
+`neighbourhood` all keep their `a_1 >= 1` floor, so neither search can reach one.
+
 Output layout
 -------------
     RESULTS_DIR/
@@ -87,6 +92,11 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
         raise ValueError(f"sigma must be >= 1, got {sigma}")
 
     r = params.r_arrival
+    # W_3 counts only the agent-injected bug stream of Eq. (Binj-agent), matching the
+    # paper's Eq. (workload).  Since Eq. (Binj-human) became an absolute rate the human
+    # stream is no longer proportional to r_bugs and is therefore not represented here;
+    # that under-counts the inflow, but harmlessly — rho_3 = r_fix * delta_min is in the
+    # hundreds, so u_3 = 1 either way, even at r_arrival = 1000.
     W_3 = params.r_bugs * (2.0 - params.delta_min) * r
     workload = {
         0: (1.0 + params.f_arch_chg) * r,                       # k=1 Feature Implementation
@@ -725,6 +735,64 @@ def _run_descent(
             print(f"  Restart {restart}: {step} step(s), cost = {current_agg.cost_mean:.0f}, "
                   f"total evaluated = {outcome.n_evaluated}, "
                   f"simulated = {outcome.n_simulated}", flush=True)
+
+    return outcome
+
+
+def human_only_grid(search_cfg: SearchConfiguration) -> list[TeamConfiguration]:
+    """Every zero-agent team in the search range, in a deterministic order.
+
+    The human-only baseline of paper §4.1 fixes both composition vectors at zero, so only
+    `(N, R, F_freeze)` remain free and the configuration space collapses to
+    `|N_values| * |{(R, F) : F in F_freeze_values, 0 <= F <= R-1}|` — 99 points at the
+    §4.2 range (11 staffing levels x 9 valid `(R, F_freeze)` pairs).
+    """
+    zero = (0,) * AGENT_ROLE_COUNT
+    return [
+        TeamConfiguration(N=N, A_dev=zero, R=R, F_freeze=F, A_qa=zero)
+        for N in search_cfg.N_values
+        for R in search_cfg.R_values
+        for F in search_cfg.F_freeze_values
+        if 0 <= F <= R - 1
+    ]
+
+
+def _run_human_only(
+    search_cfg: SearchConfiguration,
+    settings: SimulationHorizon,
+    params,
+    rng: np.random.Generator,
+    initial_state: SystemState | None = None,
+    progress_every: int = 100,
+) -> SearchOutcome:
+    """Exhaustive enumeration of the human-only baseline grid (paper §4.1).
+
+    Not a search strategy: at 99 candidates there is nothing to search and no budget to
+    spend, so `budget`, `n_starts` and the evolutionary settings are all ignored and the
+    result is deterministic — `rng` is accepted only to match the signature of
+    `_run_evolutionary_search` / `_run_descent`, and is unused.
+
+    `saturation_bounds` is likewise never called: it bounds supervised roles that the
+    baseline does not staff.  Every candidate still passes through `_evaluate`, so an
+    infeasible one counts as an evaluation exactly as in the two search strategies.
+    """
+    keep_samples = search_cfg.samples != "none"
+    outcome = SearchOutcome(manifest={}, aggs=[], results={})
+    grid = human_only_grid(search_cfg)
+
+    for cfg in grid:
+        key = _config_key(cfg, outcome.n_evaluated)
+        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
+        outcome.manifest[key] = entry
+        if agg is not None:
+            outcome.aggs.append((key, cfg, agg))
+            if keep_samples:
+                outcome.results[key] = cr    # type: ignore[assignment]
+        _progress(outcome.n_evaluated, len(grid), outcome, progress_every)
+
+    if progress_every:
+        print(f"  Enumerated {outcome.n_evaluated} zero-agent configuration(s), "
+              f"simulated = {outcome.n_simulated}", flush=True)
 
     return outcome
 

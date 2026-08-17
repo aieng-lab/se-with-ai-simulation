@@ -13,6 +13,10 @@ written by ``python -m src.main optimize`` and emits:
     scenarios.csv   one row per (scenario, strategy): realised evaluation counts,
                     feasibility rejections, and wall-clock time — the search-effort
                     figures §4.2 promises to report
+    baseline_uplift.csv
+                    written only when the tree holds human-only baselines (§4.1): each
+                    search optimum against the baseline at its human / project /
+                    bugimpact tiers, with the cost ratio between them
 
 The table schemas live in ``src/campaign.py``.
 
@@ -31,8 +35,12 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from src.campaign import build_tables, search_dirs   # noqa: E402
-from src.config import SEARCH_STRATEGIES             # noqa: E402
+from src.campaign import (   # noqa: E402
+    baseline_uplift,
+    build_tables,
+    expected_modes,
+    search_dirs,
+)
 
 DEFAULT_RESULTS_DIR = "results/experiments"
 
@@ -66,11 +74,18 @@ def main(argv: list[str] | None = None) -> int:
     optima.to_csv(optima_path, index=False)
     scenarios.to_csv(scenarios_path, index=False)
 
+    uplift = baseline_uplift(optima)
+    if not uplift.empty:
+        uplift.to_csv(out_dir / "baseline_uplift.csv", index=False)
+
     n_scenarios = len({sid for sid, _, _ in searches})
     print(f"Collected {len(searches)} search(es) over {n_scenarios} scenario(s)")
     print(f"  {optima_path}   {len(optima)} reported optima")
     print(f"  {scenarios_path}   {len(scenarios)} (scenario, strategy) pairs")
-    missing = len(SEARCH_STRATEGIES) * n_scenarios - len(searches)
+    # A human-only baseline scenario is enumerated once and has no search
+    # counterpart, so the expected mode count is per scenario.
+    missing = sum(len(expected_modes(sid)) for sid in {s for s, _, _ in searches}) \
+        - len(searches)
     if missing:
         print(f"  note: {missing} (scenario, strategy) pair(s) have no results yet")
     if len(optima) < len(searches):

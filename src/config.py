@@ -51,6 +51,17 @@ TIER_INITIALS: dict[str, str] = {
     "low": "l", "medium": "m", "high": "h", "veryhigh": "v", "pessimistic": "p",
 }
 
+# Sentinel "tier" for a group a scenario does not use.  The human-only baseline of §4.1
+# has no agents, and after Eq. (Binj-human) became an absolute rate no `agent`- or
+# `debt`-group parameter reaches it at all, so those two groups are marked `a-X` / `d-X`
+# rather than pinned to a tier that would imply a choice was made.  Deliberately kept out
+# of TIER_INITIALS and ALL_SCENARIO_TIERS: it must never enter the 432-scenario product
+# (`scenario_tier_combinations`) nor the figure tier channels.  `config/<group>_unused.json`
+# supplies the placeholder values, so the `<group>_<tier>.json` convention still holds and
+# `campaign.scenario_params_for_id` needs no special case.
+UNUSED_TIER: str = "unused"
+UNUSED_TIER_INITIAL: str = "X"
+
 
 def scenario_tiers(group: str) -> tuple[str, ...]:
     """The tiers `group` is defined at, in mild -> extreme order."""
@@ -74,12 +85,14 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 
     One ``<group initial>-<tier initial>`` token per group, in SCENARIO_GROUPS order.
     Both initial sets are distinct, so the label round-trips to the tier tuple
-    (`src.campaign.tiers_from_scenario_id`).
+    (`src.campaign.tiers_from_scenario_id`).  UNUSED_TIER is accepted and renders as `X`,
+    which is how the human-only baseline marks the groups it does not use.
     """
     if len(tiers) != len(SCENARIO_GROUPS):
         raise ValueError(f"expected {len(SCENARIO_GROUPS)} tiers, got {len(tiers)}")
+    initials = {**TIER_INITIALS, UNUSED_TIER: UNUSED_TIER_INITIAL}
     return "_".join(
-        f"{group[0]}-{TIER_INITIALS[tier]}"
+        f"{group[0]}-{initials[tier]}"
         for group, tier in zip(SCENARIO_GROUPS, tiers)
     )
 
@@ -95,6 +108,15 @@ SAMPLE_POLICIES: tuple[str, ...] = ("all", "best", "none")
 # random sampling is not a strategy — it is the shared initialiser both of them seed from
 # (§3.11.2).
 SEARCH_STRATEGIES: tuple[str, ...] = ("evolutionary", "descent")
+
+# Everything a result directory can be produced by.  The human-only baseline of §4.1 is
+# *not* a search strategy — its configuration space is 99 points and is enumerated
+# exhaustively, so there is nothing to search and no budget to spend.  It is kept out of
+# SEARCH_STRATEGIES because the paper compares two search strategies at unequal effort and
+# `scripts/generate_search_configs.py` builds its description text from that tuple; it is
+# added here because `optimize --strategy`, `campaign.search_dirs` and the result tree all
+# range over modes rather than over strategies.
+RESULT_MODES: tuple[str, ...] = SEARCH_STRATEGIES + ("human_only",)
 
 AGENT_ROLE_NAMES: tuple[str, ...] = (
     "Feature Implementation Agent",           # k=1
@@ -189,8 +211,17 @@ class TeamConfiguration:
             raise ValueError(f"A_dev must have length {AGENT_ROLE_COUNT}, got {len(self.A_dev)}")
         if any(a < 0 for a in self.A_dev):
             raise ValueError(f"A_dev entries must be >= 0, got {self.A_dev}")
-        if self.A_dev[0] < 1:
-            raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
+        # A_dev is either the all-zero vector — the human-only baseline of paper §4.1,
+        # where the developers implement and review everything themselves — or a team
+        # with at least one Feature Implementation Agent.  A composition that deploys
+        # agents but no implementer is neither and stays rejected.
+        if any(self.A_dev):
+            if self.A_dev[0] < 1:
+                raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
+        elif self.A_qa is not None and any(self.A_qa):
+            raise ValueError(
+                "A_qa must be all-zero when A_dev is all-zero (human-only baseline)"
+            )
 
         # Validate F_freeze
         if not (0 <= self.F_freeze <= self.R - 1):
@@ -248,13 +279,24 @@ class TeamConfiguration:
         return supervised_agent_count(self.active_A(is_frozen))
 
 
+def is_human_only(config: TeamConfiguration) -> bool:
+    """True for the human-only baseline of paper §4.1: a team with no agents at all.
+
+    `__post_init__` forces A_qa to zero whenever A_dev is zero, so A_dev alone decides.
+    This is the gate that switches `src.sprint` onto the human quality-assurance path of
+    Eqs. (hafter_qa), (cov_qa) and (qa_human), and that `src.visualization` reads to draw
+    the baseline outside the tier channels — do not re-derive it inline.
+    """
+    return not any(config.A_dev)
+
+
 @dataclass(frozen=True, slots=True)
 class SearchConfiguration:
     """Parameters controlling a configuration-space search."""
 
     scenario_paths: dict[str, str]          # one path per entry of SCENARIO_GROUPS
     horizon_path: str
-    strategy: str                           # one of SEARCH_STRATEGIES
+    strategy: str                           # one of RESULT_MODES
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
     R_values: tuple[int, ...]
     F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
@@ -278,9 +320,9 @@ class SearchConfiguration:
                 f"scenario_paths must have exactly one entry per scenario group "
                 f"{list(SCENARIO_GROUPS)}; missing={missing}, unknown={unknown}"
             )
-        if self.strategy not in SEARCH_STRATEGIES:
+        if self.strategy not in RESULT_MODES:
             raise ValueError(
-                f"strategy must be one of {list(SEARCH_STRATEGIES)}, got {self.strategy!r}"
+                f"strategy must be one of {list(RESULT_MODES)}, got {self.strategy!r}"
             )
         if not self.N_values:
             raise ValueError("N_values must be non-empty")

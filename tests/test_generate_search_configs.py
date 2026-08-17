@@ -120,3 +120,55 @@ class TestOverwriteGuard:
         assert script.main(["--out-dir", str(tmp_path)]) == 0
         assert script.main(["--out-dir", str(tmp_path)]) == 1
         assert script.main(["--out-dir", str(tmp_path), "--force"]) == 0
+
+
+class TestBaselineGrid:
+    """`--baseline` writes the 36 human-only scenarios of paper §4.1."""
+
+    @pytest.fixture(scope="class")
+    def baseline_dir(self, script, tmp_path_factory):
+        out_dir = tmp_path_factory.mktemp("baseline_configs")
+        assert script.main(["--baseline", "--out-dir", str(out_dir)]) == 0
+        return out_dir
+
+    def test_writes_thirty_six_configs(self, baseline_dir):
+        # 3 human x 4 project x 3 bugimpact; debt and agent are held at the sentinel.
+        assert len(list(baseline_dir.glob("search_*.json"))) == 36
+
+    def test_every_id_marks_debt_and_agent_unused(self, baseline_dir):
+        for path in baseline_dir.glob("search_*.json"):
+            sid = json.loads(path.read_text())["scenario_id"]
+            assert "_d-X_" in sid and "_a-X_" in sid
+            assert path.name == f"search_{sid}.json"
+
+    def test_every_config_runs_in_human_only_mode(self, baseline_dir):
+        for path in baseline_dir.glob("search_*.json"):
+            assert json.loads(path.read_text())["search"]["strategy"] == "human_only"
+
+    def test_configs_load_and_point_at_the_unused_placeholders(self, baseline_dir):
+        for path in baseline_dir.glob("search_*.json"):
+            cfg = load_search_config(str(path))
+            assert cfg.strategy == "human_only"
+            assert cfg.scenario_paths["debt"].endswith("debt_unused.json")
+            assert cfg.scenario_paths["agent"].endswith("agent_unused.json")
+            for group in SCENARIO_GROUPS:
+                assert Path(cfg.scenario_paths[group]).is_file()
+
+    def test_the_varying_tiers_are_covered_exactly_once(self, baseline_dir):
+        seen = set()
+        for path in baseline_dir.glob("search_*.json"):
+            cfg = load_search_config(str(path))
+            seen.add(tuple(cfg.scenario_paths[g]
+                           for g in ("human", "project", "bugimpact")))
+        assert len(seen) == 36
+
+    def test_baseline_and_campaign_ids_never_collide(self, script):
+        campaign = {script.scenario_id(t) for t in scenario_tier_combinations()}
+        baseline = {script.scenario_id(t) for t in script.baseline_tier_combinations()}
+        assert len(baseline) == 36
+        assert not (campaign & baseline)
+
+    def test_refuses_to_overwrite_without_force(self, script, tmp_path):
+        assert script.main(["--baseline", "--out-dir", str(tmp_path)]) == 0
+        assert script.main(["--baseline", "--out-dir", str(tmp_path)]) == 1
+        assert script.main(["--baseline", "--out-dir", str(tmp_path), "--force"]) == 0

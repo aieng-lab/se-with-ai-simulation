@@ -18,8 +18,9 @@ paper/
 
 src/                    Python simulation package
     config.py           TeamConfiguration, SimulationHorizon, SearchConfiguration,
-                        SCENARIO_GROUPS, SEARCH_STRATEGIES, SAMPLE_POLICIES
-    parameters.py       ScenarioParameters (36 fields)
+                        SCENARIO_GROUPS, SEARCH_STRATEGIES, RESULT_MODES,
+                        SAMPLE_POLICIES, is_human_only, UNUSED_TIER
+    parameters.py       ScenarioParameters (39 fields)
     state.py            SystemState
     rng.py              reproducible PCG-64 seeding (FNV-1a config hash)
     io.py               load_simulation_horizon / load_team_config / load_scenario_params
@@ -33,7 +34,8 @@ src/                    Python simulation package
     results.py          to_dataframe, save_result/load_result, save_traces/load_traces
     analysis.py         mean_trajectory, quantile_band, final_distribution, convergence_check
     campaign.py         minimal campaign consolidation: optima.csv + scenarios.csv schemas
-    search_configurations.py evolutionary search + greedy neighbourhood descent
+    search_configurations.py evolutionary search + greedy neighbourhood descent +
+                        _run_human_only / human_only_grid (the §4.1 baseline)
     visualization.py    matplotlib plot functions + visualize_single/visualize_multi/
                         visualize_campaign helpers
     main.py             CLI: `python -m src.main run|analyze|optimize|visualize|campaign`
@@ -41,7 +43,12 @@ src/                    Python simulation package
 config/
     horizon_default.json      Monte Carlo protocol of §4.2: T=104, K=100, master_seed=42
     team_default.json         default team configuration (N, R, F_freeze, A_dev, A_qa)
-    human_{low,medium,high}.json      scenario group: human developers (§4.1)
+    human_{low,medium,high}.json      scenario group: human developers (§4.2.1);
+                                      carries f_qa / h_review / d_qa, read only by a
+                                      zero-agent team
+    {debt,agent}_unused.json  inert placeholders for the two groups the §4.1 baseline
+                              does not use; the scenario id says `d-X` / `a-X`
+    search_baseline/search_<id>.json  the 36 generated baseline scenarios (§4.1)
     project_{low,medium,high,veryhigh}.json  scenario group: project dynamics
                                       (veryhigh = the extreme-velocity tier, §4.1)
     debt_{low,medium,high}.json       scenario group: debt dynamics
@@ -56,16 +63,16 @@ config/
     startstate_default.json   initial SystemState values (all-zero baseline)
 
 scripts/
-    generate_search_configs.py  write the 432 config/search/*.json from search_default.json
+    generate_search_configs.py  write the 432 config/search/*.json from search_default.json;
+                                --baseline writes the 36 config/search_baseline/*.json
     collect_results.py          consolidate a campaign into optima.csv + scenarios.csv
 run_experiments.sh      campaign driver: 864 searches in parallel, resumable (§4.2)
 
-tests/                  pytest suite (377 tests, ~35 s — the campaign figure dominates)
+tests/                  pytest suite (452 tests, ~90 s — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
-    experiments/        the §4.2 campaign: 432 scenario dirs × 2 strategies.  The 324
-                        pre-`pessimistic` scenarios are finished, all 648 jobs exit 0 with
-                        an admissible c*; the 108 `a-p` scenarios (216 jobs) are NOT run
-                        yet.  `index.tsv` per job
+    experiments/        the §4.2 campaign: 432 scenario dirs × 2 strategies, complete —
+                        all 864 jobs, the 108 `a-p` scenarios included, exit 0 with an
+                        admissible c*.  `index.tsv` per job
     analysis/           optima.csv, scenarios.csv, optima_matrix_<strategy>.png,
                         human_agent_matrix_<strategy>.png
 ```
@@ -116,13 +123,24 @@ Useful `optimize` flags: `--samples {all,best,none}` controls which candidates g
 ~12 KB × 10,000 per search), and `--progress-every N` throttles the progress lines
 (`0` silences them).
 
+**Run the human-only baseline** (§4.1 — a team with no agents at all; 99 configurations,
+enumerated exhaustively rather than searched, ~20 s per scenario):
+```bash
+python scripts/generate_search_configs.py --baseline   # 36 config/search_baseline/*.json
+python -m src.main optimize config/search_baseline/search_h-h_p-l_d-X_a-X_b-m.json \
+    --out results/baseline_one --strategy human_only
+CONFIG_DIR=config/search_baseline STRATEGIES=human_only ./run_experiments.sh   # all 36
+```
+Results land in `results/experiments/<scenario_id>/human_only/`, beside `evolutionary/`
+and `descent/`, and `python -m src.main campaign` picks them up automatically.
+
 **Run the full §4.2 campaign** (432 scenarios × 2 strategies = 864 searches; ~215 core-hours
-for the evolutionary half, an order of magnitude less for the descent half). The 648 jobs of
-the pre-`pessimistic` grid are already on disk and are skipped, so a re-invocation runs only
-the 216 `a-p` jobs (~55 core-hours):
+for the evolutionary half, an order of magnitude less for the descent half). All 864 jobs
+are on disk and are skipped, so a re-invocation is a no-op unless `FORCE=1` or a new
+scenario appears:
 ```bash
 python scripts/generate_search_configs.py --force   # writes the 432 config/search/*.json
-                                              # (--force: the 324 old ones already exist)
+                                              # (--force: they already exist)
 DRY_RUN=1 ./run_experiments.sh                # list the 864 jobs
 FILTER='*_a-p_*' ./run_experiments.sh         # just the pessimistic agent tier
 LIMIT=2 ./run_experiments.sh                  # smoke test
@@ -138,17 +156,26 @@ line per finished job. Other env knobs: `FILTER` (config glob), `STRATEGIES`, `S
 ```bash
 python -m src.main campaign [results/experiments] [--out results/analysis]
 python -m src.main campaign --share human --x debt --color agent   # re-assign channels
+python -m src.main campaign --figures-only     # redraw from an existing optima.csv
 ```
+`--figures-only` skips `build_tables` entirely and reads `<--out>/optima.csv` instead, so it
+redraws every figure without re-walking the 864 result directories or rewriting either CSV.
+That is the path to use on the finished campaign whenever only the plotting code changed.
+`baseline_uplift.csv` appears whenever the tree holds §4.1 baselines: one row per
+(campaign scenario, search strategy) that has a baseline at the same `human`/`project`/
+`bugimpact` tiers, with `cost_ratio = cost_mean(baseline) / cost_mean(c*)`. The join is on
+three groups, not five, because the baseline is inert in `debt` and `agent` — so one
+baseline row is the reference for all 12 of their combinations.
 `optima.csv` is one row per (scenario, strategy) describing `c*`: the five control
 variables, both composition vectors, cost with CI, the three drivers in dollars *and* as
 shares of the total (`cost_{quality,human,agent}_share`), value with CI, `value_ratio`,
 `|I*|`, the per-role work counts and the contribution split. `scenarios.csv` is the search
 effort per (scenario, strategy).
 
-Two §5 figures per strategy, both drawn by `visualization._draw_matrix` — the five-channel
+Four §5 figures per strategy, all drawn by `visualization._draw_matrix` — the five-channel
 tier grid — so they read identically and differ only in the pair of columns on the axes.
 One point per scenario's `c*`; two scenario groups facet the grid (`agent` columns ×
-`human` rows → 4×3) and the other three become marker colour (`debt`), shape (`project`)
+`human` rows → 4 columns × 3 rows) and the other three become marker colour (`debt`), shape (`project`)
 and size (`bugimpact`). Two groups have four tiers, and where each sits is deliberate:
 **`project` must stay on the shape channel** — shape is the only per-point channel whose
 fourth level reads as a peer rather than as "more" — while **`agent` belongs on a facet
@@ -162,16 +189,43 @@ would draw every scenario twice.
 
 - `optima_matrix_<strategy>.png` (`plot_optima_matrix`): y = total cost per feature,
   x = the share of it one driver accounts for (`--share`, default `agent`). Read it knowing
-  the x axis is close to mechanical: total cost spans four decades ($75 – $918 k per
-  feature) while the agent bill per feature barely moves (median $13.52, range
-  $2.78 – $64.38), so the agent share is essentially 1/cost and the panels show a
-  near-diagonal. Those figures are the 324-scenario campaign; the `a-p` column is expected
-  to break that pattern, since the pessimistic tier is what finally makes the agent bill a
-  material share of the total (a smoke search lands at $306 of $6,572 per feature).
+  the x axis is close to mechanical in the three realistic agent columns: total cost spans
+  four decades ($75 – $918 k per feature) while the agent bill per feature barely moves
+  (median $13.52, range $2.78 – $64.38 there), so the agent share is essentially 1/cost and
+  those panels show a near-diagonal. The `a-p` column is the one that breaks it: at 10× the
+  token price the agent bill is $40 – $783 per feature (median $277) and its share reaches
+  28 %, so the column is the whole diagonal shifted right by roughly a decade.
 - `human_agent_matrix_<strategy>.png` (`plot_human_agent_matrix`): the two cost drivers the
   team composition actually controls against each other — x = agent cost, y = developer
-  cost, both $ per feature, both log. The agent axis spans barely a decade, so it is ticked
-  1-2-5 per decade in dollars rather than by decade.
+  cost, both $ per feature, both log. The two are the same unit, so **both axes carry the
+  same range** (`_common_log_limits` over both columns, $1 – $10 k for the current campaign)
+  at an equal aspect, with the 1:1 diagonal drawn: which side of it a point falls on is
+  which driver its optimum spends more on, and almost every optimum sits above it. The
+  price is that the agent axis is no longer scaled to its own spread — one decade within a
+  column against the four the developer cost spans — so within-column agent differences
+  read small, which is their true size. `_draw_matrix`'s `shared_limits` is what does this;
+  passing it also makes the panels square, and it is only ever valid for two columns in the
+  same unit (never for `plot_optima_matrix`, whose x is a share, and never for the ratio
+  figure below, whose x is a rank).
+- `quality_development_matrix_<strategy>.png` (`plot_quality_development_matrix`): the other
+  half of that split — the two team drivers added back together (x = `cost_human_mean +
+  cost_agent_mean`, a column derived on a copy inside the plot function, **not** in
+  `optima.csv`) against the one the composition only influences (y = `cost_quality_mean`).
+  Same unit again, so same treatment as `human_agent_matrix`: shared log range ($7.50 –
+  $918 k for the current campaign), equal aspect, 1:1 diagonal. Above the line the escaped
+  bugs cost more than the whole team that built the features, which is where 782 of the 864
+  optima sit — the reason the total-cost picture is mostly a picture of the quality term.
+- `agent_human_ratio_matrix_<strategy>.png` (`plot_agent_human_ratio_matrix`): the
+  human/agent trade-off collapsed to one number, y = `cost_agent_mean / cost_human_mean`
+  (log, five decades: 0.0008 – 127), against x = **that ratio's percentile rank within the
+  frame handed in**, i.e. within one strategy's 432 scenarios, on a linear axis. The panels
+  therefore share one empirical distribution and each is a fragment of it: a panel's
+  horizontal position says where its scenarios sit campaign-wide, so the reading is which
+  part of the axis a panel occupies and how far it spreads vertically — *not* the slope,
+  which every ECDF has by construction. Filtering the frame before calling re-ranks what is
+  left, so do not pre-slice it. The dashed line at y = 1 is parity; only 23 % of optima are
+  above it, and they are concentrated in the `a-p` column (median ratio 0.70 there against
+  0.026 / 0.060 / 0.112 at the `low` / `medium` / `high` agent tiers).
 
 **Generate visualizations:**
 ```bash
@@ -232,7 +286,12 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 - **Exhaustive search over compositions is infeasible**: `src/search_configurations.py` draws each supervised role independently and uniformly in `{0, …, u_k}` (`{1, …, u_1}` for the dev implementer) and/or mutates both vectors evolutionarily. Stars-and-bars composition sampling is gone. Every draw is structurally valid by construction, so `_random_draws` returns `TeamConfiguration`s directly — there is no discarded-draw path in the sampler.
 - **Feasibility pre-filter** runs before any simulation. One rejection path, recorded and skipped: the human-capacity condition of §3.6 Eq. (feas_monitoring) (`failed_step = 1`). It still **counts as one evaluation** (§4.2), in both strategies, so `n_evaluated` is the evaluation count — the budget spend for the evolutionary search, the reported search effort for the descent — and `n_simulated` the realised simulation count; both are written to `manifest.json`. Rejected candidates are reported, never silently redrawn.
 - **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
-- **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 36 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, but **the grid is not a cube**: two groups carry a fourth tier, each a deliberate stress case rather than an observed operating point — `project`'s `veryhigh` (`r_arrival = 1000` issues/week, unrealistic extreme velocity; the high tier at 75 is already managed by two FTE) and `agent`'s `pessimistic` (the low tier's capability at 10× the high tier's `c_token`; both halves of the agent grounding, the SWE-bench scores and the token prices, are optimistic). That gives 3^3 · 4 · 4 = 432 scenarios. Read the tiers through `config.scenario_tiers(group)` / `config.scenario_tier_combinations()` / `config.scenario_id(tiers)`, never `SCENARIO_TIERS` (the three base tiers) — anything iterating `SCENARIO_TIERS` per group silently drops the `p-v` and `a-p` scenarios. `ALL_SCENARIO_TIERS` is the plotting/ordinal order and `TIER_INITIALS` the `l`/`m`/`h`/`v`/`p` codes the scenario ids and the LaTeX scenario codes share; a tier initial may coincide with a *group* initial (`a-p`), since the id token format is `<group>-<tier>`. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score. `pessimistic` is the only tier that changes cost without changing behaviour — `c_token` enters `simulation.cost_components` alone, so it can neither make a candidate infeasible nor move a saturation bound.
+- **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 39 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, but **the grid is not a cube**: two groups carry a fourth tier, each a deliberate stress case rather than an observed operating point — `project`'s `veryhigh` (`r_arrival = 1000` issues/week, unrealistic extreme velocity; the high tier at 75 is already managed by two FTE) and `agent`'s `pessimistic` (the low tier's capability at 10× the high tier's `c_token`; both halves of the agent grounding, the SWE-bench scores and the token prices, are optimistic). That gives 3^3 · 4 · 4 = 432 scenarios. Read the tiers through `config.scenario_tiers(group)` / `config.scenario_tier_combinations()` / `config.scenario_id(tiers)`, never `SCENARIO_TIERS` (the three base tiers) — anything iterating `SCENARIO_TIERS` per group silently drops the `p-v` and `a-p` scenarios. `ALL_SCENARIO_TIERS` is the plotting/ordinal order and `TIER_INITIALS` the `l`/`m`/`h`/`v`/`p` codes the scenario ids and the LaTeX scenario codes share; a tier initial may coincide with a *group* initial (`a-p`), since the id token format is `<group>-<tier>`. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` *decreases* with tier, and the `agent` group's `r_bugs`/`d_test` are non-monotonic because tiers follow model price, not benchmark score. `pessimistic` is the only tier that changes cost without changing behaviour — `c_token` enters `simulation.cost_components` alone, so it can neither make a candidate infeasible nor move a saturation bound.
+- **The human-only baseline is gated structurally, on the team having no agents at all** (paper §4.1). `config.is_human_only(cfg)` is `not any(cfg.A_dev)` — `TeamConfiguration` forces `A_qa` to zero whenever `A_dev` is zero — and it is the single switch for both baseline changes in `step_sprint`: the `f_qa` capacity reservation of Eq. (hafter_qa), and the human review stage of Eqs. (cov_qa)/(qa_human) that **replaces** Step 5's Test → CR → SA pipeline. There is no mode flag and no `_solo` parameter file: `f_qa` / `h_review` / `d_qa` sit in the ordinary `config/human_*.json` and are simply never read by an agent-supported team. Consequence worth keeping: an agent-supported run is bit-identical to before the baseline landed — the two paths are mutually exclusive, so no stray RNG draw enters. `tests/test_sprint.py` pins that in both directions.
+- **`A_dev` may be the all-zero vector, and only the all-zero vector.** `TeamConfiguration.__post_init__` accepts either an all-zero `A_dev` (with an all-zero `A_qa`) or one with `a_dev,1 ≥ 1`; `(0,1,0,…)` still raises. The samplers, `_mutate_composition` and `_composition_neighbours` all keep their `a_1 ≥ 1` floor, so **neither search strategy can ever reach a zero-agent team** — `_run_human_only` is its sole producer.
+- **The baseline is provably independent of the `debt` and `agent` groups**, which is why its grid is human(3) × project(4) × bugimpact(3) = **36 scenarios** and not 432. Every `delta_D` consumer multiplies an agent count or `W_agent`; every agent-group parameter multiplies an agent count, or dies in `Φ(·,0) = 0`, or acts on a test suite that never grows. §4.1's "simplified model without debt dynamics" therefore needs **no bypass code** — it is already true, and `tests/test_sprint.py::TestHumanOnlyDebtIsInert` pins it rather than the transition enforcing it. The two inert groups take the `UNUSED_TIER` sentinel, rendered `X`, so a baseline id reads `h-m_p-v_d-X_a-X_b-l`; `config/{debt,agent}_unused.json` supply the placeholder values so the `<group>_<tier>.json` convention holds and `campaign.scenario_params_for_id` needs no special case. `UNUSED_TIER` is deliberately **outside** `TIER_INITIALS` and `ALL_SCENARIO_TIERS` — it must never enter `scenario_tier_combinations()` nor the figure tier channels.
+- **`r_bugs_human` is an absolute per-feature rate, not a scale factor** (paper Eq. Binj-human): `B_human(t) ~ Poisson(impl_human'(t) · r_bugs,human)`, with **no** `(2 − δ_D)` amplifier. Human-written code injects at a fixed rate; only the agent stream of Eq. (Binj-agent) is debt-amplified. Values are 0.20 / 0.12 / 0.08 by human tier. This is a change to the **shared** model — it moves mixed-team results too (roughly ×4 on the escaped-bug cost at the medium agent tier) — so **the 864-job campaign on disk predates it and must be re-run before any §5 number is quoted**. `saturation_bounds`' `W_3` deliberately still counts only the agent stream, matching the paper's Eq. (workload); it under-counts, but `u_3 = 1` regardless because `ρ_3 = r_fix·δ_min` is in the hundreds.
+- **The baseline is drawn as an overlay, never as its own figure set.** `visualize_campaign` splits the `human_only` rows out *before* the per-strategy loop and passes them to `_draw_matrix` as a `baseline` frame: one fixed black `*`, outside `_TIER_COLORS`/`_TIER_MARKERS`/`_TIER_SIZES` entirely. Do **not** promote it to a fifth tier shape — the existing note that a fifth shape would not survive the smallest size tier still holds. `_baseline_cell` matches a baseline row on the *facet* groups only and treats `UNUSED_TIER` as matching every tier, which is what repeats the same reference points down all four `agent` columns; say so in the caption, it is a reference level rather than an `a-X` observation. The ratio figure takes no baseline at all — a team with no agents has no agent/developer ratio. Axis floors and shared ranges are computed over `_with_baseline(df, baseline)`, or the baseline's exactly-zero agent cost would drop silently off a log axis.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
 - **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `best` — the `ConfigResult`s are buffered in memory and only `c*` and `I*` are written, *after* `report_optimum` has run. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`.
 - **The selection rule of §3.10 replaces the CI-aware Pareto frontier, and it is a *total preorder*.** `selection.prefers` is Deb's feasibility rule as the lexicographic key `(violation, cost_mean)`: two violators are separated by whose shortfall is smaller, an admissible configuration precedes every violator, and two admissible ones are separated by cost alone. So `rank` is a plain stable sort, `best_index` is a `min`, and **none of the non-transitivity machinery the old CI-aware multi-objective rule needed applies** — there is no O(n²) unpruned dominance loop and no ordering hazard. Do not reintroduce a dominance relation: with one objective there is nothing for it to do.
@@ -253,7 +312,12 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 
 Uniform random sampling is **not** a strategy — it is the shared initialiser
 (`_random_draws`) both strategies seed from. `SEARCH_STRATEGIES` in `src/config.py` is the
-authority. **`budget` (`E`) is the evolutionary strategy's alone** — the descent is bounded
+authority — and it holds exactly the paper's two *search* strategies. The §4.1 human-only
+baseline is a third **result mode**, not a strategy: its configuration space is 99 points,
+so `_run_human_only` enumerates it outright and `budget` / `n_starts` are never read.
+`RESULT_MODES = SEARCH_STRATEGIES + ("human_only",)` is what `optimize --strategy`,
+`campaign.search_dirs` and the result tree range over; anything comparing search *effort*
+must keep using `SEARCH_STRATEGIES`. **`budget` (`E`) is the evolutionary strategy's alone** — the descent is bounded
 by convergence, not by money, so the two are not compared at equal effort and the effort
 the descent needed is itself a reported result (`n_evaluated`).
 

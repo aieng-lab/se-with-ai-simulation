@@ -21,7 +21,9 @@ This one takes the ``optima.csv`` table of :mod:`src.campaign`, not a per-search
                             color_group, title)                         -> Figure
 
 Both share `_draw_matrix`, which owns the five-channel tier grid; they differ only in the
-pair of columns they put on the axes.
+pair of columns they put on the axes.  All but the ratio figure take an optional `baseline`
+frame — the human-only optima of §4.1 — drawn as a fixed black marker outside the three
+per-point tier channels; see `_draw_matrix` and `_baseline_cell`.
 
 Public API — result-directory helpers
 --------------------------------------
@@ -44,9 +46,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter, PercentFormatter
 
-from .config import ALL_SCENARIO_TIERS, SCENARIO_GROUPS
+from .config import ALL_SCENARIO_TIERS, SCENARIO_GROUPS, UNUSED_TIER
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -319,6 +321,17 @@ _TIER_MARKER_FILLED = {"low": False, "medium": False, "high": True, "veryhigh": 
 _TIER_SIZES = {"low": 3.0, "medium": 16.0, "high": 60.0, "veryhigh": 150.0,
                "pessimistic": 150.0}
 
+# The human-only baseline of paper §4.1 sits *outside* the three tier channels above: it
+# is a reference level, not an observation at some tier combination, and it varies only
+# three of the five groups.  It therefore gets one fixed style — black, one shape used by
+# no tier, one size — rather than a fourth entry anywhere above.  Do not promote it into
+# _TIER_MARKERS: a fifth tier shape would not survive the smallest size tier, which is
+# exactly why the baseline is drawn on its own channel instead.
+_BASELINE_COLOR = "black"
+_BASELINE_MARKER = "*"
+_BASELINE_SIZE = 90.0
+_BASELINE_LABEL = "human-only baseline"
+
 #: The cost drivers of Eq. (cost_rep) that `plot_optima_matrix` can put on x, as the
 #: ``cost_<driver>_share`` column of `optima.csv` and the axis label it prints.
 COST_SHARES: dict[str, str] = {
@@ -341,10 +354,21 @@ def _percent_tick(value: float, _pos: int | None = None) -> str:
 
 
 def _dollar_tick(value: float, _pos: int | None = None) -> str:
-    """Tick label for a dollar amount: ``$5``, ``$20``, ``$1.5k``, …"""
+    """Tick label for a dollar amount: ``$5``, ``$20``, ``$1.5k``, ``$1M``, …"""
+    if value >= 1e6:
+        return f"\\${value / 1e6:g}M"
     if value >= 1000:
         return f"\\${value / 1000:g}k"
     return f"\\${value:g}"
+
+
+def _ratio_tick(value: float, _pos: int | None = None) -> str:
+    """Tick label for a dimensionless ratio on a log axis: ``0.001``, ``0.1``, ``1``, ``100``.
+
+    Matplotlib's default would write the sub-unit decades in scientific mathtext; a ratio
+    reads better as the plain number, and the axis is only five decades wide.
+    """
+    return f"{value:g}"
 
 
 def _tiers_present(df: "pd.DataFrame", column: str) -> list[str]:
@@ -374,6 +398,29 @@ def _log_floor(df: "pd.DataFrame", column: str) -> float | None:
     return None
 
 
+def _common_log_limits(
+    df: "pd.DataFrame",
+    columns: tuple[str, ...],
+    floors: tuple[float | None, ...] = (),
+) -> tuple[float, float]:
+    """One padded (min, max) covering every column of `columns`, for a log axis.
+
+    Used where two columns share a unit and must therefore share a range; the `floors` of
+    :func:`_log_floor` are included, since a clipped zero is drawn at its floor and would
+    otherwise fall outside the limits.
+    """
+    parts = [df[c].to_numpy(dtype=float) for c in columns]
+    parts.append(np.array([f for f in floors if f is not None], dtype=float))
+    values = np.concatenate(parts)
+    positive = values[values > 0]
+    if positive.size == 0:
+        raise ValueError(f"no positive values in {list(columns)}; cannot scale a log axis")
+    lo, hi = float(positive.min()), float(positive.max())
+    # 5 % of the span in log space, so the extreme points do not sit on the frame.
+    pad = 0.05 * max(np.log10(hi / lo), 0.4)
+    return 10.0 ** (np.log10(lo) - pad), 10.0 ** (np.log10(hi) + pad)
+
+
 def _marker_kwargs(marker_tier: str, color, area: float) -> dict:
     """Scatter keywords drawing `marker_tier`'s shape in `color` at `area` pt².
 
@@ -400,6 +447,24 @@ def _density_style(n: int) -> tuple[float, float]:
     return 0.4, 0.30
 
 
+#: Width (inches) reserved to the right of the panels for the three channel legends, and
+#: the vertical gap (inches) between two of them.  Both are absolute: the legends are the
+#: same objects whatever the grid, so their column must not grow with the facet count.
+_LEGEND_WIDTH_IN = 1.9
+_LEGEND_GAP_IN = 0.25
+
+
+def _figure_bbox(fig: "Figure", artist) -> "matplotlib.transforms.Bbox":
+    """`artist`'s bounding box in figure coordinates.
+
+    A legend has no extent until a renderer has laid it out, and nothing has drawn the
+    figure yet at the point the next legend needs placing; the Agg canvas this module
+    pins at import time hands one over without a draw pass.
+    """
+    renderer = fig.canvas.get_renderer()
+    return artist.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+
+
 def _check_matrix_groups(df: "pd.DataFrame", channels: dict[str, str]) -> None:
     """Validate the five channel→group assignments of :func:`plot_optima_matrix`."""
     unknown = {c: g for c, g in channels.items() if g not in SCENARIO_GROUPS}
@@ -423,6 +488,44 @@ def _check_matrix_groups(df: "pd.DataFrame", channels: dict[str, str]) -> None:
         raise KeyError(f"{missing} are not columns of the optima table")
 
 
+def _with_baseline(
+    df: "pd.DataFrame",
+    baseline: "pd.DataFrame | None",
+) -> "pd.DataFrame":
+    """`df` and `baseline` stacked, for computing axis floors and ranges over both.
+
+    The baseline points are drawn on the same axes as the search optima, so a floor or a
+    shared range derived from `df` alone would clip them off the figure — its agent cost
+    and agent share are exactly 0, which no log axis can place.
+    """
+    if baseline is None or baseline.empty:
+        return df
+    import pandas as pd    # runtime-only: the module-level import is TYPE_CHECKING
+
+    return pd.concat([df, baseline], ignore_index=True)
+
+
+def _baseline_cell(
+    baseline: "pd.DataFrame",
+    x_group: str, x_tier: str,
+    y_group: str, y_tier: str,
+) -> "pd.DataFrame":
+    """The baseline rows belonging in the panel at (`x_tier`, `y_tier`).
+
+    A baseline row carries `UNUSED_TIER` for every group it does not vary, and such a
+    group constrains nothing: the row belongs in *every* tier of it.  So a facet on
+    `agent` — which the baseline holds at `a-X` — repeats the same reference points down
+    each column, while a facet on `human`, which it does vary, selects properly.
+    """
+    cell = baseline
+    for group, tier in ((x_group, x_tier), (y_group, y_tier)):
+        column = f"tier_{group}"
+        if column not in cell.columns:
+            continue
+        cell = cell[(cell[column] == tier) | (cell[column] == UNUSED_TIER)]
+    return cell
+
+
 def _draw_matrix(
     df: "pd.DataFrame",
     x_group: str,
@@ -439,6 +542,8 @@ def _draw_matrix(
     yscale: str = "log",
     x_floor: float | None = None,
     y_floor: float | None = None,
+    shared_limits: tuple[float, float] | None = None,
+    baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
     """The five-channel tier grid, for any pair of columns.
 
@@ -446,6 +551,18 @@ def _draw_matrix(
     three proxy legends live here and nowhere else; callers validate the channel assignment
     (:func:`_check_matrix_groups`) and supply the two plot columns.  `x_floor` / `y_floor`
     clip non-positive values onto a log axis (see :func:`_log_floor`).
+
+    `shared_limits` puts the *same* range on both axes — only meaningful when the two
+    columns are in the same unit.  The panels then also get an equal aspect, so a decade is
+    the same length on both and the 1:1 diagonal runs at 45°; without that the equal range
+    would be a claim the picture does not keep.
+
+    `baseline` holds the human-only optima of §4.1, which carry no tier for the two groups
+    they do not vary and are therefore drawn outside the three per-point channels: one
+    fixed black marker, matched to a panel by the *facet* groups alone.  Where a facet
+    group is one the baseline does not vary (`agent` on the default layout), every column
+    gets the same points — the baseline is a reference level, not an observation at that
+    tier, and the caption must say so.
     """
     columns = _tier_groups(df, f"tier_{x_group}")
     rows = _tier_groups(df, f"tier_{y_group}")
@@ -459,9 +576,12 @@ def _draw_matrix(
     color_tiers = _tiers_present(df, f"tier_{color_group}")
 
     with plt.style.context(_STYLE):
+        # A panel carrying one range on both axes is square, so it needs its width back:
+        # 4.2 × 4.2 rather than the wide 5.0 × 4.2 of an unconstrained pair of columns.
+        panel_w = 4.2 if shared_limits is not None else 5.0
         fig, axes = plt.subplots(
             len(rows), len(columns),
-            figsize=(5.0 * len(columns), 4.2 * len(rows)),
+            figsize=(panel_w * len(columns), 4.2 * len(rows)),
             sharex=True, sharey=True,
             squeeze=False,
         )
@@ -495,8 +615,31 @@ def _draw_matrix(
                                 **_marker_kwargs(marker_tier, _TIER_COLORS[color_tier],
                                                  area),
                             )
+                if baseline is not None and not baseline.empty:
+                    # Matched on the facet groups only, and on a group the baseline does
+                    # not vary every tier of it matches — which is what puts the same
+                    # reference points in every agent column of the default layout.
+                    b_cell = _baseline_cell(baseline, x_group, x_tier, y_group, y_tier)
+                    if not b_cell.empty:
+                        bx = b_cell[x_col].to_numpy(dtype=float)
+                        by = b_cell[y_col].to_numpy(dtype=float)
+                        if x_floor is not None:
+                            bx = np.where(bx > 0, bx, x_floor)
+                        if y_floor is not None:
+                            by = np.where(by > 0, by, y_floor)
+                        # Labelled so the overlay is identifiable on the finished axes —
+                        # the figure legend is built from proxies, not from this handle.
+                        ax.scatter(bx, by, s=_BASELINE_SIZE, marker=_BASELINE_MARKER,
+                                   color=_BASELINE_COLOR, linewidths=0, zorder=5,
+                                   label=_BASELINE_LABEL)
                 ax.set_xscale(xscale)
                 ax.set_yscale(yscale)
+                if shared_limits is not None:
+                    ax.set_xlim(*shared_limits)
+                    ax.set_ylim(*shared_limits)
+                    # On a log axis the aspect is read in decades, so this is what makes
+                    # the two equal ranges equally long on the page.
+                    ax.set_aspect("equal", adjustable="box")
                 ax.set_title(f"n = {len(cell)}", fontsize=8, loc="right")
                 if r == 0:
                     ax.set_title(f"{x_group} = {x_tier}", fontsize=10, loc="center")
@@ -524,18 +667,36 @@ def _draw_matrix(
                 for t in size_tiers
             ]),
         )
-        fig.tight_layout(rect=(0.0, 0.0, 0.86, 1.0))
-        # Stack the three legends by their own height: a four-tier channel (`project` or
-        # `agent`) needs one more row than a three-tier one, or the next legend rides over it.
-        anchor_y = 0.92
+        if baseline is not None and not baseline.empty:
+            legend_specs = legend_specs + ((_BASELINE_LABEL, [
+                Line2D([], [], linestyle="none", marker=_BASELINE_MARKER,
+                       markersize=float(np.sqrt(_BASELINE_SIZE)) * 1.2,
+                       color=_BASELINE_COLOR, label="no agents"),
+            ]),)
+        # The legend column is a fixed width in *inches*, not a figure fraction: a group
+        # with four tiers on the column axis widens the figure, and a fraction would hand
+        # the extra inch to the legends rather than to the panels.
+        right = 1.0 - _LEGEND_WIDTH_IN / fig.get_figwidth()
+        fig.tight_layout(rect=(0.0, 0.0, right, 1.0))
+        # Stack the three legends by their *measured* heights.  A per-entry guess cannot
+        # do it: an entry is as tall as its marker (the size channel's largest is 18 pt
+        # against the 8 pt text), the tier counts differ per channel, and the conversion
+        # to the figure fraction the anchor speaks depends on the number of facet rows.
+        anchor_y = 0.97
+        # The channel names run out after the three per-point channels; the baseline
+        # legend that may follow them is not a channel and carries its label alone.
+        channel_names = ("colour", "shape", "size")
         for i, (group, handles) in enumerate(legend_specs):
-            fig.legend(
+            title = (f"{group} ({channel_names[i]})" if i < len(channel_names)
+                     else str(group))
+            legend = fig.legend(
                 handles=handles, loc="upper left", frameon=True, fontsize=8,
-                title=f"{group} (" + ("colour", "shape", "size")[i] + ")",
+                title=title,
                 title_fontsize=8, labelspacing=0.9,
-                bbox_to_anchor=(0.875, anchor_y),
+                bbox_to_anchor=(right + 0.15 * _LEGEND_WIDTH_IN / fig.get_figwidth(),
+                                anchor_y),
             )
-            anchor_y -= 0.065 + 0.045 * len(handles)
+            anchor_y = _figure_bbox(fig, legend).y0 - _LEGEND_GAP_IN / fig.get_figheight()
     return fig
 
 
@@ -548,6 +709,7 @@ def plot_optima_matrix(
     color_group: str = "debt",
     share: str = "agent",
     title: str = "",
+    baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
     """The reported optimum of every scenario, all five scenario groups separated at once.
 
@@ -561,8 +723,8 @@ def plot_optima_matrix(
     Two groups carry a fourth tier, `project` and `agent`, and they are placed accordingly:
     `project` belongs on the shape channel, the only *per-point* channel whose fourth level
     reads as a peer of the other three rather than as "more" of them, while `agent` sits on
-    a facet axis, where a fourth tier costs nothing but one extra column (the default grid
-    is therefore 4×3).
+    a facet axis, where a fourth tier costs nothing but one extra column (over the full
+    §4.2 grid the default is therefore 4 columns × 3 rows, one column per agent tier).
 
     Both axes are log-scaled and shared across all panels so the tiers compare directly.
     The x axis needs the log scale in particular because the agent bill is a low-single-digit
@@ -592,7 +754,8 @@ def plot_optima_matrix(
         # and renders the whole thing, `c*` included, literally.
         ylabel="↓  cost of $c^\\star$   (\\$ / feature)",
         title=title or f"Reported optima — {x_group} × {y_group}",
-        x_floor=_log_floor(df, x_col),
+        x_floor=_log_floor(_with_baseline(df, baseline), x_col),
+        baseline=baseline,
     )
     # Shares read as percentages; the minor ticks stay unlabelled or a three-decade axis
     # carries eight labels per decade.
@@ -610,6 +773,7 @@ def plot_human_agent_matrix(
     marker_group: str = "project",
     color_group: str = "debt",
     title: str = "",
+    baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
     """The two team cost drivers of each optimum against each other, on the same tier grid.
 
@@ -620,10 +784,16 @@ def plot_human_agent_matrix(
 
     This is the part of the bill the team composition actually controls — the quality term
     is what the escaped bugs cost afterwards — so the panel is the human/agent trade-off
-    itself rather than a view of the total.  Note the two axes are not comparable in
-    magnitude: the agent bill sits in the tens of dollars per feature across the whole
-    campaign while the human one spans four decades, which is why both are log-scaled and
-    why a diagonal here is not a 1:1 exchange.
+    itself rather than a view of the total.
+
+    Both axes carry the **same range**, the union of the two columns padded in log space
+    (:func:`_common_log_limits`), at an equal aspect.  The two are the same unit, so the
+    comparison the figure exists for is the one *between* them: where a point sits relative
+    to the 1:1 diagonal is which driver the optimum spends more on, and that reading is only
+    available when a dollar is the same distance on both axes.  The price is that the agent
+    axis is no longer scaled to its own spread — it holds one decade inside a column against
+    the four the developer cost spans — so within-column agent differences read small, which
+    is the honest depiction of their size.
     """
     channels = {
         "x_group": x_group, "y_group": y_group, "size_group": size_group,
@@ -634,6 +804,12 @@ def plot_human_agent_matrix(
         if column not in df.columns:
             raise KeyError(f"{column!r} is not a column of the optima table")
 
+    # The baseline's agent cost is exactly 0, so the floor and the shared range are taken
+    # over both frames: computed from `df` alone the floor would be None and every baseline
+    # point would silently drop off the log axis.
+    scaled = _with_baseline(df, baseline)
+    x_floor = _log_floor(scaled, "cost_agent_mean")
+    y_floor = _log_floor(scaled, "cost_human_mean")
     fig = _draw_matrix(
         df,
         x_group=x_group, y_group=y_group, size_group=size_group,
@@ -644,16 +820,168 @@ def plot_human_agent_matrix(
         ylabel="↓  developer cost   (\\$ / feature)",
         title=title or f"Developer vs. agent cost at $c^\\star$ — "
                        f"{x_group} × {y_group}",
-        x_floor=_log_floor(df, "cost_agent_mean"),
-        y_floor=_log_floor(df, "cost_human_mean"),
+        x_floor=x_floor, y_floor=y_floor,
+        shared_limits=_common_log_limits(
+            scaled, ("cost_agent_mean", "cost_human_mean"), (x_floor, y_floor)
+        ),
+        baseline=baseline,
     )
-    # The agent axis spans barely a decade, so the default decade ticks label it once and
-    # the panel becomes unreadable; tick it at 1-2-5 per decade in dollars instead.  The
-    # developer axis spans four decades and its decade ticks are fine.
+    # One range on both axes means one ticking on both: decades in dollars, with the 2 and
+    # the 5 as unlabelled minor ticks so a point can still be placed inside its decade.
     for ax in fig.get_axes():
-        ax.xaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
-        ax.xaxis.set_major_formatter(FuncFormatter(_dollar_tick))
-        ax.xaxis.set_minor_formatter(NullFormatter())
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_locator(LogLocator(base=10.0))
+            axis.set_major_formatter(FuncFormatter(_dollar_tick))
+            axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
+            axis.set_minor_formatter(NullFormatter())
+        # The 1:1 line: above it the developers cost more than the agents, below it less.
+        ax.plot(ax.get_xlim(), ax.get_xlim(), color="0.6", linewidth=0.8,
+                linestyle=(0, (4, 3)), zorder=0)
+    return fig
+
+
+def plot_quality_development_matrix(
+    df: "pd.DataFrame",
+    x_group: str = "agent",
+    y_group: str = "human",
+    size_group: str = "bugimpact",
+    marker_group: str = "project",
+    color_group: str = "debt",
+    title: str = "",
+    baseline: "pd.DataFrame | None" = None,
+) -> "Figure":
+    """What the escaped bugs cost against what the team cost, on the same tier grid.
+
+    The other half of the split :func:`plot_human_agent_matrix` starts: there the two drivers
+    the composition *controls* are separated from each other, here they are added back
+    together (`cost_development_mean = cost_human_mean + cost_agent_mean`, x) and set against
+    the one driver it only influences, the bill the defects that reached production sent
+    (`cost_quality_mean`, y).  The sum is a column of neither `optima.csv` nor of any other
+    table — it is derived here, on a copy, since it exists only for this figure.
+
+    Both axes are dollars per feature, so the figure gets the same-unit treatment of
+    :func:`plot_human_agent_matrix`: one shared log range, an equal aspect, and the 1:1
+    diagonal.  Above the line the escaped bugs cost more than the whole team that built the
+    features, which over the §4.2 campaign is almost everywhere — the quality term spans some
+    four and a half decades where the development cost spans three.
+    """
+    channels = {
+        "x_group": x_group, "y_group": y_group, "size_group": size_group,
+        "marker_group": marker_group, "color_group": color_group,
+    }
+    _check_matrix_groups(df, channels)
+    for column in ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"):
+        if column not in df.columns:
+            raise KeyError(f"{column!r} is not a column of the optima table")
+
+    def _with_development(frame):
+        return frame.assign(
+            cost_development_mean=frame["cost_human_mean"] + frame["cost_agent_mean"])
+
+    df = _with_development(df)
+    if baseline is not None and not baseline.empty:
+        baseline = _with_development(baseline)
+    scaled = _with_baseline(df, baseline)
+    x_floor = _log_floor(scaled, "cost_development_mean")
+    y_floor = _log_floor(scaled, "cost_quality_mean")
+    fig = _draw_matrix(
+        df,
+        x_group=x_group, y_group=y_group, size_group=size_group,
+        marker_group=marker_group, color_group=color_group,
+        x_col="cost_development_mean", y_col="cost_quality_mean",
+        # Both labels escape the dollar sign; see plot_optima_matrix.
+        # Short enough not to collide with the next panel's; the title carries the
+        # definition of "development cost".
+        xlabel="↓  development cost   (\\$ / feature)",
+        ylabel="↓  escaped-bug cost   (\\$ / feature)",
+        title=title or f"Escaped-bug vs. development cost (developers + agents) at "
+                       f"$c^\\star$ — {x_group} × {y_group}",
+        x_floor=x_floor, y_floor=y_floor,
+        shared_limits=_common_log_limits(
+            scaled, ("cost_development_mean", "cost_quality_mean"), (x_floor, y_floor)
+        ),
+        baseline=baseline,
+    )
+    # One range on both axes means one ticking on both; see plot_human_agent_matrix.
+    for ax in fig.get_axes():
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_locator(LogLocator(base=10.0))
+            axis.set_major_formatter(FuncFormatter(_dollar_tick))
+            axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
+            axis.set_minor_formatter(NullFormatter())
+        # The 1:1 line: above it the bugs that escaped cost more than building the features.
+        ax.plot(ax.get_xlim(), ax.get_xlim(), color="0.6", linewidth=0.8,
+                linestyle=(0, (4, 3)), zorder=0)
+    return fig
+
+
+def plot_agent_human_ratio_matrix(
+    df: "pd.DataFrame",
+    x_group: str = "agent",
+    y_group: str = "human",
+    size_group: str = "bugimpact",
+    marker_group: str = "project",
+    color_group: str = "debt",
+    title: str = "",
+) -> "Figure":
+    """How lopsided the agent/developer split is at each optimum, against its own percentile.
+
+    y is `cost_agent_mean / cost_human_mean`, the same trade-off
+    :func:`plot_human_agent_matrix` draws as a plane, collapsed to the one number that says
+    which side it fell on: above 1 the agents outbilled the developers.  Over the §4.2
+    campaign it spans five decades, hence the log axis and the reference line at 1.
+
+    x is that ratio's **percentile rank within `df`**, so the panels share one empirical
+    distribution and each is a fragment of it: where a panel's points sit horizontally is
+    where its scenarios sit in the campaign-wide ordering, and a panel that occupies the
+    right end is one whose tiers push the bill onto the agents.  The rank is therefore taken
+    over the frame as handed in — `visualize_campaign` passes one strategy's scenarios, and
+    filtering the frame further before calling re-ranks what is left against itself.
+
+    Ranking makes the x axis linear and uniform by construction; the reading is in the
+    *vertical* spread of a panel and in which part of the axis it occupies, not in the
+    slope, which is an artefact of every ECDF.
+    """
+    channels = {
+        "x_group": x_group, "y_group": y_group, "size_group": size_group,
+        "marker_group": marker_group, "color_group": color_group,
+    }
+    _check_matrix_groups(df, channels)
+    for column in ("cost_agent_mean", "cost_human_mean"):
+        if column not in df.columns:
+            raise KeyError(f"{column!r} is not a column of the optima table")
+
+    ratio = df["cost_agent_mean"] / df["cost_human_mean"]
+    df = df.assign(
+        cost_agent_human_ratio=ratio,
+        # Ties share their mean rank, so equal ratios land on one x rather than on an
+        # arbitrary order of the rows.
+        cost_agent_human_ratio_pct=ratio.rank(method="average", pct=True),
+    )
+    fig = _draw_matrix(
+        df,
+        x_group=x_group, y_group=y_group, size_group=size_group,
+        marker_group=marker_group, color_group=color_group,
+        x_col="cost_agent_human_ratio_pct", y_col="cost_agent_human_ratio",
+        xlabel="percentile of the agent / developer cost ratio",
+        # No "↓" here: unlike a cost, neither direction of the ratio is the better one.
+        ylabel="agent cost / developer cost",
+        title=title or f"Agent-to-developer cost ratio at $c^\\star$ — "
+                       f"{x_group} × {y_group}",
+        # x is a rank in [0, 1] — a log axis would only stretch the first percentile.
+        xscale="linear",
+        y_floor=_log_floor(df, "cost_agent_human_ratio"),
+    )
+    for ax in fig.get_axes():
+        # A rank axis is uniform, so it takes the plain percent formatter rather than the
+        # decade-aware `_percent_tick` the log share axis of `plot_optima_matrix` needs.
+        ax.xaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
+        ax.yaxis.set_major_locator(LogLocator(base=10.0))
+        ax.yaxis.set_major_formatter(FuncFormatter(_ratio_tick))
+        ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
+        ax.yaxis.set_minor_formatter(NullFormatter())
+        # Parity: above the line the agents cost more than the developers they work for.
+        ax.axhline(1.0, color="0.6", linewidth=0.8, linestyle=(0, (4, 3)), zorder=0)
     return fig
 
 
@@ -777,28 +1105,56 @@ def visualize_campaign(
     share: str = "agent",
     **channels: str,
 ) -> None:
-    """Both campaign matrices, once per strategy in the campaign's ``optima.csv``.
+    """All four campaign matrices, once per strategy in the campaign's ``optima.csv``.
 
-    The strategies get their own figures rather than one shared pair: they report an
+    The strategies get their own figures rather than one shared set: they report an
     optimum per scenario independently, so overlaying them would draw every scenario twice
     and hide exactly the disagreement between the two searches that is worth reading.
     `channels` passes `x_group` / `y_group` / `size_group` / `marker_group` /
-    `color_group` through to both; `share` reaches only
+    `color_group` through to all four; `share` reaches only
     :func:`plot_optima_matrix`, the one with a share on an axis.
+
+    Note that each figure is handed one strategy's slice, which is what makes the percentile
+    axis of :func:`plot_agent_human_ratio_matrix` a within-strategy ranking.
     """
     if "strategy" not in optima.columns:
         raise KeyError("'strategy' is not a column of the optima table")
 
-    for strategy in sorted(optima["strategy"].unique()):
-        sub = optima[optima["strategy"] == strategy]
+    # The human-only baseline is split out *before* the loop: it is a reference level
+    # overlaid on each strategy's figures, not a strategy with a figure set of its own.
+    is_baseline = optima["strategy"] == "human_only"
+    baseline = optima[is_baseline]
+    searches = optima[~is_baseline]
+    if baseline.empty:
+        baseline = None
+
+    for strategy in sorted(searches["strategy"].unique()):
+        sub = searches[searches["strategy"] == strategy]
         suffix = f", {strategy} search ({len(sub)} scenarios)"
+        if baseline is not None:
+            suffix += f" + {len(baseline)} human-only baselines"
         print(f"\n── Optima matrices: {strategy} ({len(sub)} scenarios) ──")
 
-        fig = plot_optima_matrix(sub, share=share,
+        fig = plot_optima_matrix(sub, share=share, baseline=baseline,
                                  title=f"Reported optima{suffix}", **channels)
         save_figure(fig, out_dir, f"optima_matrix_{strategy}", fmt)
 
         fig = plot_human_agent_matrix(
-            sub, title=f"Developer vs. agent cost at $c^\\star${suffix}", **channels,
+            sub, baseline=baseline,
+            title=f"Developer vs. agent cost at $c^\\star${suffix}", **channels,
         )
         save_figure(fig, out_dir, f"human_agent_matrix_{strategy}", fmt)
+
+        fig = plot_quality_development_matrix(
+            sub, baseline=baseline, **channels,
+            title=f"Escaped-bug vs. development cost, developers + agents, "
+                  f"at $c^\\star${suffix}",
+        )
+        save_figure(fig, out_dir, f"quality_development_matrix_{strategy}", fmt)
+
+        # No baseline here: a team with no agents has no agent/developer ratio, and 0 on a
+        # five-decade log axis is not a position the figure can honestly give it.
+        fig = plot_agent_human_ratio_matrix(
+            sub, title=f"Agent-to-developer cost ratio at $c^\\star${suffix}", **channels,
+        )
+        save_figure(fig, out_dir, f"agent_human_ratio_matrix_{strategy}", fmt)

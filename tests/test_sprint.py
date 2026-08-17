@@ -5,7 +5,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-from src.config import TeamConfiguration, net_capacity
+from src.config import AGENT_ROLE_COUNT, TeamConfiguration, net_capacity
 from src.sprint import _volume_factor, step_sprint
 from src.state import SystemState
 
@@ -717,3 +717,220 @@ class TestContributionAccounting:
         arch_impl = (actions.units[0] - actions.impl_agents) / ARCH_IMPL_COST_UNITS
         assert arch_impl == pytest.approx(2.0)
         assert actions.impl_agents == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# Human bug injection is a fixed per-feature rate (paper Eq. Binj-human)
+# ---------------------------------------------------------------------------
+
+class TestHumanBugInjectionIsFixedRate:
+    """Eq. (Binj-human): human-written code is not amplified by the debt factor."""
+
+    @staticmethod
+    def _human_only_cfg(N=4):
+        zero = (0,) * AGENT_ROLE_COUNT
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=13, F_freeze=0)
+
+    def _bugs_after(self, params, delta_min, seed=7, sprints=6):
+        p = dataclasses.replace(params, delta_min=delta_min, f_qa=0.0, d_qa=0.0)
+        state = _run_sprints(sprints, self._human_only_cfg(), p,
+                             np.random.default_rng(seed), initial_backlog=200)
+        return (state.B_hid_min + state.B_hid_maj + state.B_hid_sec
+                + state.B_kno_min + state.B_kno_maj + state.B_kno_sec)
+
+    def test_debt_tier_does_not_change_the_human_bug_count(self, base_params):
+        # With no agents, D_tech and the architecture queue still grow, so delta_D moves;
+        # under the old multiplicative rate that would change the injected count.  It must
+        # not now: the two debt extremes of §4.1 give the identical stream.
+        mild = self._bugs_after(base_params, delta_min=0.94)
+        harsh = self._bugs_after(base_params, delta_min=0.60)
+        assert mild == harsh
+
+    def test_rate_scales_the_injected_count(self, base_params):
+        low = self._bugs_after(dataclasses.replace(base_params, r_bugs_human=0.05), 0.77)
+        high = self._bugs_after(dataclasses.replace(base_params, r_bugs_human=0.50), 0.77)
+        assert high > low
+
+    def test_agent_stream_is_still_debt_amplified(self, base_params):
+        # The agent half of Eq. (Binj-agent) keeps the (2 - delta_D) factor, so an
+        # agent-supported team must still respond to the debt tier.  Implementers only —
+        # no detection agents, so every injected bug stays in B_hid — with R past the
+        # horizon so no release empties it and f_fix = 0 so no human drains it.
+        # delta_D also throttles the implementation capacity (Eq. impl_agents), which would
+        # confound a bug count: heavy debt means fewer features and so fewer bugs whatever
+        # the rate.  So give the implementers capacity far past the backlog, which makes
+        # impl equal to the demand in both runs, and vary only the debt carried in.
+        A = [0] * AGENT_ROLE_COUNT
+        A[0] = 5
+        cfg = TeamConfiguration(N=2, A_dev=tuple(A), R=99, F_freeze=0)
+        p = dataclasses.replace(base_params, delta_min=0.10, delta_exp=1.0, r_F=1000.0,
+                                r_bugs=0.5, r_bugs_human=1e-9, f_fix=1.0, r_arrival=1e-9)
+
+        def run(D_tech):
+            state = SystemState(F_backlog=200, D_tech=D_tech)
+            actions = step_sprint(0, state, cfg, p, np.random.default_rng(11))
+            bugs = state.B_hid_min + state.B_hid_maj + state.B_hid_sec
+            return actions.impl_agents, bugs
+
+        impl_clean, bugs_clean = run(0.0)
+        impl_dirty, bugs_dirty = run(1.0)
+        assert impl_clean == impl_dirty == 200   # the confound is held out
+        assert bugs_dirty > bugs_clean           # (2 - delta_D) still amplifies
+
+
+# ---------------------------------------------------------------------------
+# The human-only baseline of paper §4.1
+# ---------------------------------------------------------------------------
+
+class TestHumanOnlyCapacityReservation:
+    """Eq. (hafter_qa): f_qa of net capacity is reserved, in dev sprints only."""
+
+    @staticmethod
+    def _cfg(F_freeze, N=4):
+        zero = (0,) * AGENT_ROLE_COUNT
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=F_freeze)
+
+    def _impl_at(self, params, f_qa, t, F_freeze=0):
+        p = dataclasses.replace(params, f_qa=f_qa)
+        state = SystemState(F_backlog=10_000)
+        return step_sprint(t, state, self._cfg(F_freeze), p, np.random.default_rng(5))
+
+    def test_dev_sprint_implementation_falls_by_one_minus_f_qa(self, base_params):
+        full = self._impl_at(base_params, 0.0, t=0).impl_human
+        reserved = self._impl_at(base_params, 0.25, t=0).impl_human
+        # impl_human = floor(N (1-f_fix)(1-f_qa) H_after_esc / h_feature); the floor makes
+        # this exact only up to one feature, and the backlog is far past both.
+        assert reserved == pytest.approx(full * 0.75, abs=1.0)
+        assert reserved < full
+
+    def test_freeze_sprint_reserves_nothing(self, base_params):
+        # R=4, F_freeze=2 -> sprints 2 and 3 of each cycle are frozen.  A freeze sprint
+        # implements nothing and redirects everything to fixing, so f_qa must not bite.
+        free = self._impl_at(base_params, 0.0, t=2, F_freeze=2).fixes_human
+        reserved = self._impl_at(base_params, 0.4, t=2, F_freeze=2).fixes_human
+        assert reserved == free
+
+    def test_dev_sprint_bug_fixing_is_also_reduced(self, base_params):
+        # The paper puts H_after_qa in *both* the implementation and the bug-fixing
+        # equations, so the reservation is not paid out of coding time alone.
+        state_full = SystemState(F_backlog=10_000, B_kno_min=5_000)
+        state_res = SystemState(F_backlog=10_000, B_kno_min=5_000)
+        full = step_sprint(0, state_full, self._cfg(0),
+                           dataclasses.replace(base_params, f_qa=0.0),
+                           np.random.default_rng(5)).fixes_human
+        reserved = step_sprint(0, state_res, self._cfg(0),
+                               dataclasses.replace(base_params, f_qa=0.5),
+                               np.random.default_rng(5)).fixes_human
+        assert reserved < full
+
+    def test_agent_team_ignores_f_qa(self, base_config, base_params):
+        # f_qa is baseline-only: an agent-supported team must be bit-identical under it.
+        a = _run_sprints(5, base_config, dataclasses.replace(base_params, f_qa=0.0),
+                         np.random.default_rng(3))
+        b = _run_sprints(5, base_config, dataclasses.replace(base_params, f_qa=0.9),
+                         np.random.default_rng(3))
+        assert dataclasses.asdict(a) == dataclasses.asdict(b)
+
+
+class TestHumanOnlyDetection:
+    """Eqs. (cov_qa) / (qa_human): the human review stage replaces Test -> CR -> SA."""
+
+    @staticmethod
+    def _cfg(N=4):
+        zero = (0,) * AGENT_ROLE_COUNT
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=13, F_freeze=0)
+
+    def _run(self, params, **overrides):
+        p = dataclasses.replace(params, **overrides)
+        return _run_sprints(6, self._cfg(), p, np.random.default_rng(9),
+                            initial_backlog=400)
+
+    def test_a_zero_agent_team_now_detects_bugs(self, base_params):
+        # Without the human stage nothing detects anything: Phi(., 0) = 0 and cov_test = 0,
+        # so B_kno stayed identically 0 and every bug escaped at the release.
+        state = self._run(base_params, f_qa=0.2, d_qa=0.9, r_bugs_human=0.5)
+        assert state.B_kno_min + state.B_kno_maj + state.B_kno_sec > 0
+
+    def test_zero_detection_rate_leaves_every_bug_hidden(self, base_params):
+        state = self._run(base_params, f_qa=0.2, d_qa=0.0, r_bugs_human=0.5)
+        assert state.B_kno_min == state.B_kno_maj == state.B_kno_sec == 0
+        assert state.B_hid_min + state.B_hid_maj + state.B_hid_sec > 0
+
+    def test_higher_detection_rate_finds_more(self, base_params):
+        weak = self._run(base_params, f_qa=0.2, d_qa=0.2, r_bugs_human=0.5)
+        strong = self._run(base_params, f_qa=0.2, d_qa=0.95, r_bugs_human=0.5)
+        assert (strong.B_kno_min + strong.B_kno_maj + strong.B_kno_sec
+                > weak.B_kno_min + weak.B_kno_maj + weak.B_kno_sec)
+
+    def test_coverage_clamps_at_one_when_little_is_implemented(self, base_params):
+        # cov_qa = min(1, f_qa N H_net / (h_review max(1, impl))).  With a huge reservation
+        # and one feature of demand the ratio is far above 1, so p_qa is exactly d_qa and
+        # raising the reservation further changes nothing.
+        def run(f_qa):
+            p = dataclasses.replace(base_params, f_qa=f_qa, d_qa=1.0,
+                                    r_bugs_human=2.0, h_review=0.01, r_arrival=1e-9)
+            return _run_sprints(4, self._cfg(), p, np.random.default_rng(4),
+                                initial_backlog=2)
+
+        a, b = run(0.30), run(0.60)
+        assert a.B_hid_min == b.B_hid_min == 0
+        assert a.B_kno_min == b.B_kno_min
+
+    def test_thin_coverage_detects_less_than_full_coverage(self, base_params):
+        # h_review far above what the reservation buys drives cov_qa below 1.
+        thin = self._run(base_params, f_qa=0.2, d_qa=0.9, r_bugs_human=0.5,
+                         h_review=200.0)
+        full = self._run(base_params, f_qa=0.2, d_qa=0.9, r_bugs_human=0.5,
+                         h_review=0.01)
+        assert (thin.B_kno_min + thin.B_kno_maj + thin.B_kno_sec
+                < full.B_kno_min + full.B_kno_maj + full.B_kno_sec)
+
+    def test_agent_team_still_uses_the_agentic_pipeline(self, base_config, base_params):
+        # The two paths are mutually exclusive; a team with agents must be unaffected by
+        # d_qa and must still respond to its review agents.
+        a = _run_sprints(5, base_config, dataclasses.replace(base_params, d_qa=0.0),
+                         np.random.default_rng(6))
+        b = _run_sprints(5, base_config, dataclasses.replace(base_params, d_qa=1.0),
+                         np.random.default_rng(6))
+        assert dataclasses.asdict(a) == dataclasses.asdict(b)
+
+
+class TestHumanOnlyDebtIsInert:
+    """§4.1 runs "without debt dynamics" — and that is already true, not enforced."""
+
+    def test_all_debt_parameters_leave_the_run_unchanged(self, base_params):
+        zero = (0,) * AGENT_ROLE_COUNT
+        cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+
+        def run(**debt):
+            p = dataclasses.replace(base_params, **debt)
+            return _run_sprints(10, cfg, p, np.random.default_rng(13),
+                                initial_backlog=300)
+
+        mild = run(delta_min=0.94, delta_exp=1.0, delta_impl=0.0, delta_fix=0.0,
+                   Gamma_doc=0.0)
+        harsh = run(delta_min=0.60, delta_exp=2.0, delta_impl=0.5, delta_fix=0.5,
+                    Gamma_doc=1.0)
+        # D_tech itself still accumulates — nothing reads it — so compare everything else.
+        a, b = dataclasses.asdict(mild), dataclasses.asdict(harsh)
+        a.pop("D_tech"), b.pop("D_tech")
+        assert a == b
+
+    def test_all_agent_parameters_leave_the_run_unchanged(self, base_params):
+        # The other half of the §4.1 claim: the baseline is independent of the agent tier,
+        # which is what lets its grid drop that dimension entirely.
+        zero = (0,) * AGENT_ROLE_COUNT
+        cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+
+        def run(**agent):
+            p = dataclasses.replace(base_params, f_qa=0.15, d_qa=0.8, **agent)
+            return _run_sprints(10, cfg, p, np.random.default_rng(17),
+                                initial_backlog=300)
+
+        cheap = run(r_F=1.0, r_arch_chg=1.0, r_fix=1.0, r_refactor=0.01, r_test=1.0,
+                    r_doc=1.0, r_bugs=0.001, d_CR=0.1, d_SA=0.1, d_test=0.1,
+                    c_test_ceil=0.1, alpha_size=0.01, rho_esc=0.001)
+        rich = run(r_F=500.0, r_arch_chg=99.0, r_fix=999.0, r_refactor=1.0, r_test=99.0,
+                   r_doc=99.0, r_bugs=0.9, d_CR=0.99, d_SA=0.99, d_test=0.99,
+                   c_test_ceil=5.0, alpha_size=0.9, rho_esc=0.9)
+        assert dataclasses.asdict(cheap) == dataclasses.asdict(rich)

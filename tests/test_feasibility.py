@@ -111,3 +111,27 @@ class TestQaCompositionIsChecked:
         report = check_feasibility(cfg, self._params(base_params))
         assert not report.feasible
         assert "A_dev" in report.reason
+
+
+class TestHumanOnlyBaseline:
+    """A zero-agent team (paper §4.1) has no monitoring load, so it is always feasible."""
+
+    _N_VALUES = (0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00)
+
+    def test_feasible_at_every_staffing_level_in_the_search_range(self, base_params):
+        zero = (0,) * AGENT_ROLE_COUNT
+        for N in self._N_VALUES:
+            cfg = TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+            report = check_feasibility(cfg, base_params)
+            assert report.feasible, f"N={N}: {report.reason}"
+            assert report.failed_step is None
+
+    def test_feasible_even_when_monitoring_would_exhaust_any_real_team(self, base_params):
+        # The condition is n_sup/N * H_mon * (1 - Gamma_doc) < H_net; with n_sup = 0 the
+        # left side is 0 whatever the overhead, so only H_net >= 0 can still bite.
+        from dataclasses import replace
+        p = replace(base_params, H_monitoring_overhead=1000.0, Gamma_doc=0.0)
+        zero = (0,) * AGENT_ROLE_COUNT
+        assert check_feasibility(
+            TeamConfiguration(N=2, A_dev=zero, A_qa=zero, R=4), p
+        ).feasible

@@ -1,0 +1,10 @@
+{
+  "description": "Inert placeholder for the debt group, used only by the human-only baseline of paper/main.tex Section 4.1. A baseline team has no agents, and every consumer of the debt amplifier delta_D multiplies an agent count or the agent workload W_agent (feature implementation, code review, security audit, agent bug fixing, escalations); since Eq. (Binj-human) became an absolute rate, delta_D no longer reaches the human bug stream either. Gamma_doc scales a monitoring overhead that is zero, and delta_impl/delta_fix feed a D_tech that nothing reads. The values are therefore arbitrary and are copied from the medium tier; the scenario id says d-X rather than d-m so that no tier choice is implied. tests/test_sprint.py pins the inertness.",
+  "debt": {
+    "delta_impl": 0.06,
+    "delta_fix": 0.06,
+    "delta_min": 0.77,
+    "delta_exp": 1.5,
+    "Gamma_doc": 0.34
+  }
+}

@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 from src.campaign import (
+    baseline_uplift,
     build_tables,
+    expected_modes,
+    is_baseline_scenario,
     optimum_row,
     scenario_params_for_id,
     scenario_row,
@@ -17,7 +20,7 @@ from src.campaign import (
     team_config,
     tiers_from_scenario_id,
 )
-from src.config import AGENT_ROLE_COUNT, SCENARIO_GROUPS
+from src.config import AGENT_ROLE_COUNT, SCENARIO_GROUPS, SEARCH_STRATEGIES
 
 
 class TestScenarioIds:
@@ -195,3 +198,125 @@ class TestTeamConfig:
         cfg = team_config(row)
         assert cfg.N == 2.0 and cfg.R == 4 and cfg.F_freeze == 1
         assert cfg.A_dev[0] == 1 and cfg.A_qa[2] == 1
+
+
+# ---------------------------------------------------------------------------
+# The human-only baseline of paper §4.1
+# ---------------------------------------------------------------------------
+
+_BASELINE_SID = "h-m_p-m_d-X_a-X_b-m"
+
+
+def _baseline_objective(cost=5000.0, value=12.0) -> dict:
+    obj = _objective(cost=cost, value=value)
+    obj.update({
+        "A_dev": [0] * AGENT_ROLE_COUNT,
+        "A_qa": [0] * AGENT_ROLE_COUNT,
+        "cost_quality_mean": cost * 0.8,
+        "cost_human_mean": cost * 0.2,
+        "cost_agent_mean": 0.0,          # no agents, so no token bill at all
+        "actions_mean": [0.0] * AGENT_ROLE_COUNT,
+        "impl_agents_mean": 0.0, "impl_human_mean": 10.0, "fixes_agent_mean": 0.0,
+    })
+    return obj
+
+
+@pytest.fixture
+def campaign_with_baseline(campaign) -> Path:
+    d = campaign / _BASELINE_SID / "human_only"
+    d.mkdir(parents=True)
+    (d / "manifest.json").write_text(json.dumps({
+        "scenario_id": _BASELINE_SID, "strategy": "human_only",
+        "horizon": {"path": "config/horizon_default.json", "T": 104, "K": 100,
+                    "master_seed": 42},
+        "n_evaluated": 99, "n_simulated": 99, "best_admissible": True,
+        "wall_clock_s": 20.0,
+    }))
+    (d / "search_summary.json").write_text(json.dumps({
+        "best": "N2_R4_00003",
+        "indistinguishable": ["N2_R4_00003"],
+        "throughput_floor": 11.76,
+        "objectives": {"N2_R4_00003": _baseline_objective()},
+    }))
+    return campaign
+
+
+class TestScenarioIdSentinel:
+    def test_round_trips_the_unused_marker(self):
+        tiers = tiers_from_scenario_id(_BASELINE_SID)
+        assert tiers["debt"] == "unused" and tiers["agent"] == "unused"
+        assert tiers["human"] == "medium" and tiers["project"] == "medium"
+
+    def test_is_baseline_scenario(self):
+        assert is_baseline_scenario(_BASELINE_SID)
+        assert not is_baseline_scenario(_SID)
+
+    def test_params_resolve_to_the_unused_placeholders(self):
+        # `<group>_unused.json` keeps the file-name convention, so no special case is
+        # needed anywhere: the params load exactly like any other scenario's.
+        params = scenario_params_for_id(_BASELINE_SID)
+        assert params.r_arrival > 0 and params.r_bugs > 0
+
+    def test_expected_modes_differ_by_scenario_kind(self):
+        assert expected_modes(_BASELINE_SID) == ("human_only",)
+        assert expected_modes(_SID) == SEARCH_STRATEGIES
+
+
+class TestBaselineInTheTables:
+    def test_search_dirs_picks_up_the_human_only_directory(self, campaign_with_baseline):
+        found = {(sid, mode) for sid, mode, _ in search_dirs(campaign_with_baseline)}
+        assert (_BASELINE_SID, "human_only") in found
+        assert (_SID, "evolutionary") in found
+
+    def test_optima_carries_the_baseline_row(self, campaign_with_baseline):
+        optima, _ = build_tables(campaign_with_baseline)
+        row = optima[optima["strategy"] == "human_only"].iloc[0]
+        assert row["scenario_id"] == _BASELINE_SID
+        assert row["cost_agent_mean"] == 0.0
+        assert row["cost_agent_share"] == 0.0
+        assert all(row[f"a_dev_{k + 1}"] == 0 for k in range(AGENT_ROLE_COUNT))
+
+    def test_team_config_round_trips_an_all_zero_row(self, campaign_with_baseline):
+        optima, _ = build_tables(campaign_with_baseline)
+        row = optima[optima["strategy"] == "human_only"].iloc[0]
+        cfg = team_config(row)
+        assert cfg.A_dev == (0,) * AGENT_ROLE_COUNT
+        assert cfg.A_qa == (0,) * AGENT_ROLE_COUNT
+
+
+class TestBaselineUplift:
+    def test_joins_on_the_three_varying_groups(self, campaign_with_baseline):
+        optima, _ = build_tables(campaign_with_baseline)
+        uplift = baseline_uplift(optima)
+        assert len(uplift) == 1
+        row = uplift.iloc[0]
+        assert row["scenario_id"] == _SID
+        assert row["strategy"] == "evolutionary"
+        assert row["baseline_scenario_id"] == _BASELINE_SID
+        # baseline 5000 against the search optimum's 1000
+        assert row["cost_ratio"] == pytest.approx(5.0)
+
+    def test_the_baseline_matches_every_debt_and_agent_combination(self, tmp_path):
+        # One baseline is the reference for every (debt, agent) pair at its other tiers,
+        # since neither group reaches a zero-agent team.
+        import pandas as pd
+
+        base = {"strategy": "human_only", "scenario_id": _BASELINE_SID,
+                "tier_human": "medium", "tier_project": "medium",
+                "tier_bugimpact": "medium", "tier_debt": "unused",
+                "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
+                "F_freeze": 1, "value_mean": 12.0}
+        rows = [base]
+        for debt in ("low", "medium", "high"):
+            for agent in ("low", "medium", "high", "pessimistic"):
+                rows.append({**base, "strategy": "evolutionary",
+                             "scenario_id": f"h-m_p-m_d-{debt[0]}_a-{agent[0]}_b-m",
+                             "tier_debt": debt, "tier_agent": agent,
+                             "cost_mean": 200.0})
+        uplift = baseline_uplift(pd.DataFrame(rows))
+        assert len(uplift) == 12
+        assert uplift["cost_ratio"].tolist() == pytest.approx([4.0] * 12)
+
+    def test_no_baseline_yields_an_empty_table(self, campaign):
+        optima, _ = build_tables(campaign)
+        assert baseline_uplift(optima).empty

@@ -117,7 +117,7 @@ class TestLoadScenarioParams:
         params = load_scenario_params(tier_paths("medium"))
         assert params.r_arrival == pytest.approx(12.0)
         assert params.r_bugs == pytest.approx(0.03)
-        assert params.r_bugs_human == pytest.approx(0.74)
+        assert params.r_bugs_human == pytest.approx(0.12)
         assert params.c_salary == pytest.approx(150_000.0)
         assert params.c_token[0] == pytest.approx(3.80)
 
@@ -152,7 +152,7 @@ class TestLoadScenarioParams:
             tier_paths("medium", project="config/project_high.json")
         )
         assert params.r_arrival == pytest.approx(75.0)
-        assert params.r_bugs_human == pytest.approx(0.74)   # human group still medium
+        assert params.r_bugs_human == pytest.approx(0.12)   # human group still medium
 
     def test_groups_partition_all_parameters(self):
         """Union of the group files must be exactly the ScenarioParameters fields."""

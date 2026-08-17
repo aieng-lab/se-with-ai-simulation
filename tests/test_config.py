@@ -7,13 +7,17 @@ import pytest
 from src.config import (
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
+    RESULT_MODES,
     TIER_INITIALS,
+    UNUSED_TIER,
+    UNUSED_TIER_INITIAL,
     SearchConfiguration,
     SCENARIO_GROUPS,
     SCENARIO_TIERS,
     SEARCH_STRATEGIES,
     SimulationHorizon,
     TeamConfiguration,
+    is_human_only,
     scenario_id,
     scenario_tier_combinations,
     scenario_tiers,
@@ -49,6 +53,26 @@ class TestScenarioTierGrid:
     def test_every_tier_has_a_distinct_initial(self):
         assert set(TIER_INITIALS) == set(ALL_SCENARIO_TIERS)
         assert len(set(TIER_INITIALS.values())) == len(ALL_SCENARIO_TIERS)
+
+    def test_unused_sentinel_collides_with_no_tier(self):
+        # `X` marks a group a scenario does not use (the baseline's `d-X` / `a-X`), so it
+        # must not be readable as a tier: `tiers_from_scenario_id` inverts the initials.
+        assert UNUSED_TIER_INITIAL not in TIER_INITIALS.values()
+        assert UNUSED_TIER not in TIER_INITIALS
+        assert UNUSED_TIER not in ALL_SCENARIO_TIERS
+        # …and it must never enter the 432-scenario product.
+        for group in SCENARIO_GROUPS:
+            assert UNUSED_TIER not in scenario_tiers(group)
+
+    def test_scenario_id_renders_the_unused_sentinel(self):
+        tiers = tuple(UNUSED_TIER if g in ("debt", "agent") else "low"
+                      for g in SCENARIO_GROUPS)
+        assert scenario_id(tiers) == "h-l_p-l_d-X_a-X_b-l"
+
+    def test_result_modes_extend_the_search_strategies(self):
+        assert set(SEARCH_STRATEGIES) < set(RESULT_MODES)
+        assert "human_only" in RESULT_MODES
+        assert "human_only" not in SEARCH_STRATEGIES
 
     def test_unknown_group_raises(self):
         with pytest.raises(ValueError, match="unknown scenario group"):
@@ -213,6 +237,28 @@ class TestBackgroundServiceBudget:
         A[2] += 2  # keep sum correct
         with pytest.raises(ValueError):
             TeamConfiguration(N=2, A_dev=tuple(A), R=4)
+
+    def test_zero_agent_team_is_the_human_only_baseline(self):
+        # Paper §4.1: A_dev = A_qa = 0 is a legal team, and the only one `is_human_only`
+        # accepts.  A_qa is canonicalised to zero anyway at F_freeze == 0, so use a freeze
+        # window to show the all-zero A_qa is accepted on its own merits.
+        zero = (0,) * AGENT_ROLE_COUNT
+        cfg = TeamConfiguration(N=2, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+        assert is_human_only(cfg)
+        assert cfg.A_dev == zero and cfg.A_qa == zero
+
+    def test_agent_supported_team_is_not_human_only(self):
+        cfg = TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=_VALID_A_QA, R=4, F_freeze=1)
+        assert not is_human_only(cfg)
+
+    def test_zero_A_dev_with_nonzero_A_qa_raises(self):
+        # A team that deploys no agents while implementing cannot acquire some during the
+        # freeze: it is not the baseline and it has no implementer either.
+        zero = (0,) * AGENT_ROLE_COUNT
+        A_qa = list(zero)
+        A_qa[2] = 1
+        with pytest.raises(ValueError, match="A_qa must be all-zero"):
+            TeamConfiguration(N=2, A_dev=zero, A_qa=tuple(A_qa), R=4, F_freeze=1)
 
     def test_single_impl_agent_valid(self):
         A = _A((1, 1), (3, 1), (4, 1), (5, 1), (7, 2))  # sum=6, a_1=1
