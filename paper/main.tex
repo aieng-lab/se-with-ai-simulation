@@ -771,9 +771,10 @@ Architecture change requests are generated at rate $f_\mathrm{arch,chg}$ per
 feature implemented this sprint,
 giving Poisson-distributed arrivals that fill the change-request queue:
 \begin{align}
-  \mathrm{arch\_chg\_new}(t) &\sim \mathrm{Poisson}\!\bigl(f_\mathrm{arch,chg}\cdot\mathrm{impl}(t)\bigr) \\
+  \mathrm{arch\_chg\_new}(t) &\sim \mathrm{Poisson}\!\bigl(f_\mathrm{arch,chg}\cdot\mathrm{impl}(t)\bigr)
+  \label{eq:arch_chg_new} \\
   Q_\mathrm{arch}(t) &= Q_\mathrm{arch}(t-1) + \mathrm{arch\_chg\_new}(t).
-  \label{eq:arch_chg_new}
+  \label{eq:Q_arch_new}
 \end{align}
 
 Then, the Architecture Agents drain $Q_\mathrm{arch}$ at rate $r_\mathrm{arch,chg}$ per agent.
@@ -1059,7 +1060,7 @@ Every configuration is scored by a mean over $K$ Monte Carlo replications. The o
   \label{eq:topset}
 \end{equation}
 
-Two configurations in $\mathcal{I}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{I}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported. It is possible that $\mathbf{c}^\star$ itself is parsimony-domonated, namely when a smaller team that runs the same process is statistically tied with it. To avoid under-reporting the best performance, we do not apply the tie-breaking rule to $\mathbf{c}^\star$ so this can never be removed.
+Two configurations in $\mathcal{I}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{I}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported. It is possible that $\mathbf{c}^\star$ itself is parsimony-dominated, namely when a smaller team that runs the same process is statistically tied with it. To avoid under-reporting the best performance, we do not apply the tie-breaking rule to $\mathbf{c}^\star$ so this can never be removed.
 
 % ---- 3.11 ----
 \subsection{Search Strategy}
@@ -1145,8 +1146,13 @@ The search needs a way to produce valid initial configurations. We sample these 
         $a_{\mathrm{qa},4}$ independently and uniformly from 
         $\{0, 1, \ldots, \bar{a}_4\}$ with $\bar{a}_4 = \lfloor r_\mathrm{arrival}/2 \rfloor$,
         i.e., we allow up to one instance of each service per two features that arrive in a sprint.\footnote{While this is only based on features, the number of bugs is limited by the number of features, which also limits the refactorings.}
-  \item Discard the candidate if it violates the human-capacity feasibility condition of
-        Eq.~\eqref{eq:feas_monitoring}.
+  \item Check the candidate against the human-capacity feasibility condition of
+        Eq.~\eqref{eq:feas_monitoring}. A candidate that violates it is recorded as
+        infeasible not not simulated.
+\end{enumerate}
+
+Not resampling keeps the sampling distribution of the steps above intact --- a rejection
+loop would condition every draw on the staffing level that happened to be drawn with it ---
 \end{enumerate}
 
 Note that the sampling does not require that the throughput constraint for the value achieved is fulfilled. 
