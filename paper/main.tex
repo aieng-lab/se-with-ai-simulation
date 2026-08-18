@@ -179,7 +179,7 @@ The \textit{Architecture Agent} creates proposals for architecture updates for h
 The \textit{Bug Fixing Agent} drains the known-bug
 queue. The work conducted by the Feature Implementation and Bug Fixing Agents introduces technical debt.
 The \textit{Refactoring Agent} improves the internal quality of the system autonomously and reduces technical debt.
-From a conceptual perspective, the \textit{Architecture Agent} is responsible for high-stakes structural changes that require human review, while the \textit{Refactoring Agent} is responsible for low-stakes internal improvements that can be executed autonomously without review. 
+From a conceptual perspective, the \textit{Architecture Agent} is responsible for high-stakes structural changes that require human review, while the \textit{Refactoring Agent} is responsible for low-stakes internal improvements that can be executed autonomously without review. Consequently, the Refactoring Agent is not supervised and consumes no monitoring capacity from the human developers. 
 
 The review roles (k = 5,6) inspect
 every code change synchronously in the same sprint as injection. The \textit{Code Review
@@ -248,14 +248,15 @@ $\mathbf{A}_\mathrm{qa}$ described below.
 
 $\mathbf{A}_\mathrm{dev} = (a_{dev,1},\ldots,a_{dev,8}) \in \mathbb{N}_{\geq 0}^{8}$ is the
 development-phase composition and $\mathbf{A}_\mathrm{qa} = (a_{qa,1},\ldots,a_{qa,8}) \in \mathbb{N}_{\geq 0}^{8}$ is the QA composition. As established in Section~\ref{sec:model:roles}, the roles split into two tiers with respect to human oversight: the \emph{supervised} roles
-$\mathcal{K}_\mathrm{sup} = \{1,2,3,4,7,8\}$ and the two autonomous review services
-$\mathcal{K}_\mathrm{bg} = \{5,6\}$. We write
+$\mathcal{K}_\mathrm{sup} = \{1,2,3,7,8\}$ and the autonomous roles
+$\mathcal{K}_\mathrm{aut} = \{4,5,6\}$, i.e., the Refactoring Agent and the two review
+services, whose work the developers do not review (Section~\ref{sec:model:roles}). We write
 \begin{equation}
   n_\mathrm{sup}(t) = \sum_{k \in \mathcal{K}_\mathrm{sup}} a_{\cdot,k}
   \label{eq:nsup}
 \end{equation}
 for the number of active supervised agents in sprint $t$, where the placeholder $\cdot$ stands for the composition that is active in sprint $t$, i.e., $\mathrm{dev}$ during development sprints and $\mathrm{qa}$ during feature-freeze sprints. We use this notation throughout wherever a statement holds for both phases. Every supervised agent consumes monitoring effort from the human developers, so the admissible compositions are limited by the human-capacity feasibility condition of Section~\ref{sec:model:transition}, Eq.~\eqref{eq:feas_monitoring}. Leaving supervised slots unfilled may be optimal in some cases to reduce coordination overhead and free up human capacity for review, escalation, and implementation work.
-The counts $a_{\cdot,5}$ and $a_{\cdot,6}$ of the background services are unbounded, since these agents require no supervision and therefore consume no human monitoring capacity. The only brake on them is their token cost, since at some point investing more in detecting possible bugs yields diminishing returns. The dev-phase and QA-phase counts are independent of each other, so a service can be staffed differently during a feature freeze than during development.
+None of the autonomous roles consumes human monitoring capacity. For the two review services, the counts $a_{\cdot,5}$ and $a_{\cdot,6}$ are therefore unbounded and the only brake on them is their token cost, since at some point investing more in detecting possible bugs yields diminishing returns. The Refactoring Agent is unsupervised in the same way, but the debt it can remove is limited by the debt the team accumulates, so its count stays bounded by the work that reaches it. We write $\mathcal{K}_\mathrm{bnd} = \mathcal{K}_\mathrm{sup} \cup \{4\} = \{1,2,3,4,7,8\}$ for the roles that are bounded in this way and derive the bounds in Section~\ref{sec:model:search}. The dev-phase and QA-phase counts are independent of each other, so a service can be staffed differently during a feature freeze than during development.
 $\mathbf{A}_\mathrm{dev}$ must satisfy $a_{dev,1} \geq 1$, i.e., there must be at least one Feature
 Implementation Agent in the development phase. This also ensures that there is $value$, i.e., that at least some features are implemented and the simulation does not trivially collapse to zero throughput.
 For $F_\mathrm{freeze} \geq 1$, $\mathbf{A}_\mathrm{qa}$ is required to have $a_{qa,1} = a_{qa,2} = 0$, to ensure that no new features are added during a feature freeze and that all agents are redeployed to QA roles. If $F_\mathrm{freeze}=0$, the QA composition is never active and has no effect on the simulation. We therefore fix $\mathbf{A}_\mathrm{qa} = \mathbf{0}$ in that case.
@@ -1135,11 +1136,15 @@ Both search strategies need a way to produce a valid initial configurations. We 
         $F_\mathrm{freeze} = 0$ was drawn in step~2, then $\mathbf{A}_\mathrm{qa} = \mathbf{0}$
         by Section~\ref{sec:model:team} and this step is skipped, as is the QA half of
         step~5.
-  \item Draw the background service counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$ and,
+  \item Draw the review service counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$ and,
         when $F_\mathrm{freeze} \geq 1$, $a_{\mathrm{qa},5}$, $a_{\mathrm{qa},6}$
         independently and uniformly from
         $\{0, 1, \ldots, \lfloor r_\mathrm{arrival} \rfloor\}$, i.e., we allow up to one instance
         of each service per feature that arrives in a sprint.
+  \item Draw the refactoring service counts $a_{\mathrm{dev},4}$ and, when $F_\mathrm{freeze} \geq 1$,
+        $a_{\mathrm{qa},4}$ independently and uniformly from 
+        $\{0, 1, \ldots, \lfloor r_\mathrm{arrival}/2 \rfloor\}$,
+        i.e., we allow up to one instance of each service per two features that arrive in a sprint.\footnote{While this is only based on features, the number of bugs is limited by the number of features, which also limits the refactorings.}
   \item Discard the candidate if it violates the human-capacity feasibility condition of
         Eq.~\eqref{eq:feas_monitoring}.
 \end{enumerate}
@@ -1363,7 +1368,7 @@ The agent cost parameters are summarized in Table~\ref{tab:scenario:agents}. Whi
 \begin{itemize}
   \item Code review is assumed to be comparable to bug fixing, since similar analysis needs to be performed to understand the code and its implications. Security audits are more thorough and assumed to be ten times more expensive than normal code review.
   \item Architecture and design changes possibly require an analysis of the whole code base to understand the implications. Therefore, we assume that these carry high costs, comparable to the cost of implementing five features.
-  \item Refactoring is assumed to be comparable to implementing a feature, since it requires a similar amount of analysis and code changes. Since we assume that refactorings are required to account for the debt introduced by feature additions and bug fixes, we scale the parameters with respect this and assume that each refactoring agent can fully reduce the debt introduced for a single feature or bug fix. Consequently, we set the rates based on $\delta_\mathrm{impl}$ and $\delta_\mathrm{fix}$. We assume that the agents tier capabilities are comparable to the low debt dynamics, giving us a debt reduction of 0.02 for the low tier, 0.06 for the medium tier, and 0.13 for the high tier. We then set the cost of refactoring to be the same as the cost of implementing a feature, since it requires code analysis and code changes that might affect multiple files. 
+  \item Refactoring is assumed to be comparable to implementing a feature, since it requires a similar amount of analysis and code changes. Since we assume that refactorings are required to account for the debt introduced by feature additions and bug fixes, we scale the parameters with respect this and assume that each refactoring agent can reduce the debt introduced for a single feature or bug fix. Consequently, we set the rates based on $\delta_\mathrm{impl}$ and $\delta_\mathrm{fix}$. We assume that the agents tier capabilities are comparable to the debt dynamics, giving us a debt reduction of 0.02 for the low tier, 0.06 for the medium tier, and 0.13 for the high tier. We then set the cost of refactoring to be the same as the cost of implementing a feature, since it requires code analysis and code changes that might affect multiple files. 
   \item Writing tests and documentation are assumed to be comparable to bug fixing, since it requires a similar analysis of a local context.
 \end{itemize}
 We further ground the pricing based on the API pricing of Claude Sonnet~5, Opus~5, and Fable~5 for low, medium, and high, respectively.
@@ -1470,7 +1475,7 @@ $\omega_\mathrm{sec}$ & 48{,}000 & 1{,}000{,}000 & 120{,}000{,}000 & Breach/inci
 Since we have five orthogonal aspects, three of them with three levels and both the project dynamics and the agent costs with four, we have a total of $3^3 \cdot 4 \cdot 4 = 432$ scenarios. We solve each of these problems twice, once with evolutionary search and once with greedy neighbourhood descent (Section~\ref{sec:model:search}), which yields 864 searches in total.
 All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two results is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
 
-The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range from a quarter-FTE up to ten FTE, i.e., a ``two-pizza team''. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what such a team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 38 supervised agents at that tier, which three FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved.
+The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range from a quarter-FTE up to ten FTE, i.e., a ``two-pizza team''. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what such a team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 37 supervised agents at that tier, which three FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved.
 
 The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many supervised agents a staffing level can carry: with $H_\mathrm{mon,overhead} = 2.5$\,h and the documentation reduction factors $\Gamma_\mathrm{doc} \in \{0, 0.34, 0.40\}$ of Table~\ref{tab:scenario:debt}, monitoring alone exhausts a full-time developer's net capacity at roughly 16, 24, and 27 supervised agents \emph{per FTE}, respectively.
 
