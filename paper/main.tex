@@ -1077,17 +1077,16 @@ release cadence $R \in \mathcal{R}$, and the feature-freeze length $F_\mathrm{fr
 The sets $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{freeze}$ are
 explicit finite sets. This allows both the definition of ranges and of non-contiguous values, e.g., $\mathcal{N} = \{0.5, 1, 2\}$.
 
-Once $N \in \mathcal{N}$ is fixed, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricted by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations~\eqref{eq:impl_agents} and \eqref{eq:impl}, the architecture work, bug fixing, refactoring, test development, and documentation are also bounded by the inflow of work that reaches them (see Eqs.~\eqref{eq:arch_chg_done}, \eqref{eq:r_bugs_eff}, \eqref{eq:debt_update}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). Writing $\lambda_k$ for the work that reaches role $k$ in one development sprint, this gives us the following fixed-point upper bounds, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
+Once $N \in \mathcal{N}$ is fixed, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricted by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations~\eqref{eq:impl_agents} and \eqref{eq:impl}, the architecture work, bug fixing, test development, and documentation are also bounded by the inflow of work that reaches them (see Eqs.~\eqref{eq:arch_chg_done}, \eqref{eq:r_bugs_eff}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). Writing $\lambda_k$ for the work that reaches role $k$ in one development sprint, this gives us the following fixed-point upper bounds, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
 \begin{align}
   \lambda_1 &= (1 + f_\mathrm{arch,chg})\,r_\mathrm{arrival}, &
   \lambda_2 &= f_\mathrm{arch,chg}\,r_\mathrm{arrival}, \nonumber\\
   \lambda_3 &= r_\mathrm{bugs}\,(2-\delta_\mathrm{min})\,r_\mathrm{arrival}, &
-  \lambda_4 &= \delta_\mathrm{impl}\,r_\mathrm{arrival} + \delta_\mathrm{fix}\,\lambda_3, \nonumber\\
-  \lambda_7 &= c_\mathrm{test,ceil}\,r_\mathrm{arrival}, &
+  \lambda_7 &= c_\mathrm{test,ceil}\,r_\mathrm{arrival}, \nonumber\\
   \lambda_8 &= r_\mathrm{arrival}.
   \label{eq:workload}
 \end{align}
-The workload is matched against the throughput $\eta_k$ an agent of role $k$ can have, accounting for the debt amplifier.We use its floor $\delta_\mathrm{min}$, i.e., the least favourable and therefore most permissive case:
+The workload is matched against the throughput $\eta_k$ an agent of role $k$ can have, accounting for the debt amplifier. We use its floor $\delta_\mathrm{min}$, i.e., the least favourable and therefore most permissive case:
 \begin{equation}
   \begin{aligned}
     \eta_1 &= r_F\,\delta_\mathrm{min}, &
@@ -1100,7 +1099,7 @@ The workload is matched against the throughput $\eta_k$ an agent of role $k$ can
   \label{eq:sat_rates}
 \end{equation}
 
-The two background detection services are not constrained at all, so instead of a search range we specify a sampling distribution for them below. The feature-freeze duration is additionally constrained by the release cadence: once $R$ is sampled, only values from $\mathcal{F}_\mathrm{freeze}$ with $0 \leq F_\mathrm{freeze} \leq R-1$ are admissible.
+The two background detection services and the Refactoring Agent are not constrained by Eq.~\eqref{eq:sat_bound}, so instead of a search range we specify a sampling distribution for them below. The feature-freeze duration is additionally constrained by the release cadence: once $R$ is sampled, only values from $\mathcal{F}_\mathrm{freeze}$ with $0 \leq F_\mathrm{freeze} \leq R-1$ are admissible.
 
 This gives us constraints
 \begin{equation}
@@ -1134,7 +1133,7 @@ The search needs a way to produce valid initial configurations. We sample these 
         $\{0, \ldots, \bar{a}_k\}$ for the remaining $k \in \mathcal{K}_\mathrm{sup}$.
   \item Draw the supervised part of $\mathbf{A}_\mathrm{qa}$ in the same way, i.e.,
         $a_{\mathrm{qa},k}$ uniformly from $\{0, \ldots, \bar{a}_k\}$ for
-        $k \in \{3,4,7,8\}$, and $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$. If
+        $k \in \{3,7,8\}$, and $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$. If
         $F_\mathrm{freeze} = 0$ was drawn in step~2, then $\mathbf{A}_\mathrm{qa} = \mathbf{0}$
         by Section~\ref{sec:model:team} and this step is skipped, as is the QA half of
         step~5.
@@ -1145,7 +1144,7 @@ The search needs a way to produce valid initial configurations. We sample these 
         of each service per feature that arrives in a sprint.
   \item Draw the refactoring service counts $a_{\mathrm{dev},4}$ and, when $F_\mathrm{freeze} \geq 1$,
         $a_{\mathrm{qa},4}$ independently and uniformly from 
-        $\{0, 1, \ldots, \lfloor r_\mathrm{arrival}/2 \rfloor\}$,
+        $\{0, 1, \ldots, \bar{a}_4\}$ with $\bar{a}_4 = \lfloor r_\mathrm{arrival}/2 \rfloor$,
         i.e., we allow up to one instance of each service per two features that arrive in a sprint.\footnote{While this is only based on features, the number of bugs is limited by the number of features, which also limits the refactorings.}
   \item Discard the candidate if it violates the human-capacity feasibility condition of
         Eq.~\eqref{eq:feas_monitoring}.
@@ -1192,7 +1191,7 @@ first three when $F_\mathrm{freeze} = 0$:
           \item \emph{Adjust service}: apply $\pm 1$ to one of the three autonomous roles
                 $\mathcal{K}_\mathrm{aut} = \{4,5,6\}$, floored at zero. This operation is separate
                 from the three above because these roles require no supervision and are not part of
-                the pool that the three operations above redistribute. The two code review services have no upper bound, the refactoring services is restricted by $\bar{a}_4$.
+                the pool that the three operations above redistribute. The two code review services have no upper bound, the refactoring service is restricted by $\bar{a}_4$.
         \end{itemize}
   \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero. This choice is only available when $F_\mathrm{freeze} \geq 1$, i.e., the QA composition can only be modified, if it is active.
 \end{itemize}
