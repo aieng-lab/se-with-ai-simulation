@@ -1364,7 +1364,7 @@ We further ground the pricing based on the API pricing of Claude Sonnet~5, Opus~
 
 We model the throughput using the same assumptions on the relation between the throughput of the models as for the cost parameters, but base these estimations on the latency of the models, i.e., the time to solve a task. Since a concrete latency is hard to define as this depends not only on model size, but also on the current load of cloud providers, we do not estimate this on single latency values that are reported. As for the other tasks, we ground this in SWE-bench, where the reference solutions require 107 lines of code on average~\citep{scaleSWEBenchPublic}. Based on data from \cite{baumann2026swechat}, autonomous coding required 12.6 minutes on average per 100 commit lines. Assuming that agents only run during work hours, this would result in 178 features per sprint, resulting in the throughput rates reported in Table~\ref{tab:scenario:agents}.
 
-We estimate the agentic bug introduction rate based on the SWE-bench Verified benchmark score, assuming that each failure in the benchmark results in a bug in the code base. We collect the data for Claude Sonnet~5, Opus~5, and Fable~5 analogously to the cost estimations. The values are taken from the vals.ai leaderboard~\citep{valsai2026swebench}, i.e., we do not use Anthropic's estimates but those of independent benchmark executions. While we are aware that these results likely overestimate the actual benchmark performance~\citep{liang2026swe}, we nevertheless use this as an (optimistic) estimate for the capabilities of the agents.
+We estimate the agentic bug introduction rate based on the SWE-bench Verified benchmark score, assuming that each failure in the benchmark results in a bug in the code base. We collect the data for Claude Sonnet~5, Opus~5, and Fable~5 analogously to the cost estimations. The values are taken from the vals.ai leaderboard~\citep{valsai2026swebench}, i.e., we do not use Anthropic's estimates but those of independent benchmark executions.\footnote{On the leaderboard, Opus~5 has a minimally higher score than Fable~5. We attribute this to a measurement artifact and use the best-performing value for the high-tier and the second-best for the medium tier for internal consistency.} While we are aware that these results likely overestimate the actual benchmark performance~\citep{liang2026swe}, we nevertheless use this as an (optimistic) estimate for the capabilities of the agents.
 
 We use CyberBench~\cite{liu2024cyberbench} to estimate the security bug detection rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for the detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that are not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude~5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026swebench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available; we therefore estimate that the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e., the SWE-bench scores reduced by 0.2.
 
@@ -1387,7 +1387,7 @@ Role & Parameter & Low & Medium & High & Pess. & Source \\
 \multirow{3}{2.2cm}{1 -- Feature Impl.}
   & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & 76.00 & \cite{morph2026aicodingcosts} \\
   & $r_F$                  & 178  & 178  & 178  & 178   & Based on 12.6\,min per 100 lines of code \cite{baumann2026swechat,scaleSWEBenchPublic} \\
-  & $r_\mathrm{bugs}$      & 0.20 & 0.03 & 0.05 & 0.20  & \cite{valsai2026swebench} \\
+  & $r_\mathrm{bugs}$      & 0.20 & 0.05 & 0.03 & 0.20  & \cite{valsai2026swebench} \\
 \midrule
 \multirow{2}{2.2cm}{2 -- Architecture \& Design}
   & $c_\mathrm{token}$     & 11.40 & 19.00 & 38.00 & 380.00 & 5 times the cost of feature implementation \\
@@ -1413,7 +1413,7 @@ Role & Parameter & Low & Medium & High & Pess. & Source \\
 \multirow{4}{2.2cm}{7 -- Test Development}
   & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & 18.00 & Same as bug fixing \\
   & $r_\mathrm{test}$      & 747  & 747  & 747  & 747   & Same as bug fixing \\
-  & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & 0.60  & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
+  & $d_\mathrm{test}$      & 0.60 & 0.75 & 0.77 & 0.60  & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
   & $c_\mathrm{test,ceil}$ & 0.48 & 0.54 & 0.60 & 0.48  & \cite{SCHWARTZ2018106} \\
 \midrule
 \multirow{2}{2.2cm}{8 -- Dev.\ Documentation}
