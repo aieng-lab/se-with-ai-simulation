@@ -141,7 +141,7 @@ horizon is $T$. The simulation configuration is defined by the team composition 
 $\mathbf{c} = (N, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$. The parameters
 $N$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Section~\ref{sec:model:roles}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 21-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
 
-We derive the metrics that describe how well a team configuration performs from the terminal state(Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We require that a configuration keeps up with the work the project generates while minimizing costs to formualte this as search problem (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe different search strategies to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
+We derive the metrics that describe how well a team configuration performs from the terminal state(Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We require that a configuration keeps up with the work the project generates while minimizing costs to formualte this as search problem (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe the search strategy we use to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
 
 % TODO - figure with the overall model structure: team composition parameters, scenario parameters, state vector, transition steps, and objective calculations.
 
@@ -1060,12 +1060,12 @@ Every configuration is scored by a mean over $K$ Monte Carlo replications. The o
 Two configurations in $\mathcal{I}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{I}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported.
 
 % ---- 3.11 ----
-\subsection{Search Strategies}
+\subsection{Search Strategy}
 \label{sec:model:search}
 
 Exhaustive search of the configuration space for the optimal process and team configuration is impossible, because the counts of the two background services are unbounded (Section~\ref{sec:model:team}). Even under an arbitrary cap of 99 agents per service, the four background counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$, $a_{\mathrm{qa},5}$, and $a_{\mathrm{qa},6}$ alone already give $100^4 = 10^8$ combinations, which the human staffing level, the release cadence, the feature-freeze length, and the supervised parts of both compositions multiply further.
 
-We therefore search Eq.~\eqref{eq:objective} heuristically, with two search strategies. \emph{Evolutionary search} maintains a population of configurations and improves it through mutation and selection. \emph{Greedy neighbourhood descent} repeatedly moves from a configuration to the cheapest configuration in its immediate neighbourhood until no improvement remains. 
+We therefore search Eq.~\eqref{eq:objective} heuristically with an \emph{evolutionary search}, which maintains a population of configurations and improves it through mutation and selection.
 
 \subsubsection{Search range}
 
@@ -1107,7 +1107,7 @@ This gives us constraints
   \qquad k \in \mathcal{K}_\mathrm{sup}.
   \label{eq:sat_bound}
 \end{equation}
-where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:sosp}, this defines the region that the search strategies explore:
+where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:sosp}, this defines the region that the search explores:
 \begin{equation}
   \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{X} \;:\;
     a_{\mathrm{dev},k} \leq u_k \;\wedge\;
@@ -1120,7 +1120,7 @@ where $\sigma \geq 1$ is a headroom factor that allows the search to explore con
 \subsubsection{Random configuration sampling}
 \label{sec:model:search:random}
 
-Both search strategies need a way to produce a valid initial configurations. We sample these configurations as follows:
+The search needs a way to produce valid initial configurations. We sample these configurations as follows:
 \begin{enumerate}
   \item Draw $N$ and $R$ uniformly from $\mathcal{N}$ and $\mathcal{R}$ respectively.
   \item Draw $F_\mathrm{freeze}$ uniformly from the admissible values
@@ -1213,17 +1213,6 @@ The mixture of drawing most mutations from the elite and some from the rest of t
 
 \paragraph{Final selection.}
 At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations$\mathcal{P}_G$.
-
-\subsubsection{Greedy Neighbourhood Descent}
-\label{sec:model:search:descent}
-
-Our second strategy is a local search that repeatedly moves to the best configuration in the immediate vicinity of the current one. This strategy is less explorative than the evolutionary search, but should converge to local optima more quickly. By repeating the search from different random starting points, the chances of finding a global optimum increase. 
-
-\paragraph{Neighbourhood.}
-The neighbourhood of a configuration $\mathbf{c}$ consists of all configurations that the mutation operator of Section~\ref{sec:model:search:evo} can reach from $\mathbf{c}$ in one step, enumerated rather than sampled: the two adjacent staffing levels in $\mathcal{N}$, the two adjacent feature-freeze lengths within $[0, R-1]$, and, for each of $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$, every single-agent addition to and removal from a supervised role, every transfer of one agent between two supervised roles, and a $\pm 1$ change to each background service. As in the mutation operator, $R$ is not changed, the saturation bounds of Eq.~\eqref{eq:sat_bound} are respected, and the structural constraints on $\mathbf{A}_\mathrm{qa}$ are preserved.
-
-\paragraph{Descent.}
-Starting from a configuration drawn with the sampler of Section~\ref{sec:model:search:random}, we iteratively determine the neighbour that $\prec$ ranks best. The descent terminates when no neighbour is preferred, i.e., at a local optimum. We repeat this $n_\mathrm{start}$ times with independently sampled starting points. The descent is not bounded by an evaluation budget: each restart runs until it converges, and how many configurations this required is a result we report rather than a quantity we fix in advance. Configurations are evaluated at most once, so a neighbour that an earlier step or restart has already visited is free, and a restart whose incumbent has a fully visited neighbourhood terminates without any further evaluations.
 
 
 % ============================================================
@@ -1472,7 +1461,7 @@ $\omega_\mathrm{sec}$ & 48{,}000 & 1{,}000{,}000 & 120{,}000{,}000 & Breach/inci
 \label{sec:setup:sweep}
 
 \paragraph{Scenario grid.}
-Since we have five orthogonal aspects, three of them with three levels and both the project dynamics and the agent costs with four, we have a total of $3^3 \cdot 4 \cdot 4 = 432$ scenarios. We solve each of these problems twice, once with evolutionary search and once with greedy neighbourhood descent (Section~\ref{sec:model:search}), which yields 864 searches in total.
+Since we have five orthogonal aspects, three of them with three levels and both the project dynamics and the agent costs with four, we have a total of $3^3 \cdot 4 \cdot 4 = 432$ scenarios. We solve each of these problems with the evolutionary search of Section~\ref{sec:model:search}, which yields 432 searches in total.
 All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two results is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
 
 The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range from a quarter-FTE up to ten FTE, i.e., a ``two-pizza team''. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what such a team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 37 supervised agents at that tier, which three FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved.
@@ -1481,7 +1470,7 @@ The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many sup
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. We set the tolerance of the throughput constraint of Eq.~\eqref{eq:throughput_constraint} to $\epsilon = 0.02$, i.e., require delivery of at least 98\% of the arriving features. 
 
-The evolutionary search receives a budget of $E = 10\,000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. The greedy neighbourhood descent receives no budget. Preliminary runs showed that a descent converges quickly and that a whole search typically requires only a few hundred evaluations, so a budget of comparable size would simply have been left unspent. We instead use $n_\mathrm{start} = 20$ independently sampled starting points and let every restart run until it reaches a local optimum, and report the number of configurations that were evaluated together with the results in Section~\ref{sec:results}. The two strategies are therefore not compared at equal effort; instead, the effort the descent requires becomes an observed quantity, which we can then relate to the fixed effort the evolutionary search spends and to the quality of the optima both of them report. How many evaluations a descent needs depends on the scenario, because the width of a neighbourhood follows the saturation bounds of Eq.~\eqref{eq:sat_bound}: the smaller project tiers cap most roles at one agent and give narrow neighbourhoods, whereas the very high project tier admits many agents per role and makes each descent step considerably more expensive.
+The evolutionary search receives a budget of $E = 10\,000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations.
 
 \begin{table}[t]
 \caption{Experiment constants and search range.}
@@ -1505,12 +1494,11 @@ $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two
 $\sigma$                        & 2                   & Allows up to twice the agents required for their steady-state workload \\[2pt]
 $\epsilon$                      & 0.02                & At least 98\% of the arriving features must be delivered \\[2pt]
 \midrule
-\multicolumn{3}{l}{\emph{Search effort per scenario and strategy}} \\[2pt]
-$E$                             & 10{,}000             & Evolutionary search: candidate evaluations \\[2pt]
-$n_\mathrm{init}$               & 1{,}000             & Evolutionary search: 10\% of $E$ on the initial pool \\[2pt]
-$G$ / $n_\mathrm{off}$          & 90 / 100            & Evolutionary search: 90\% of $E$ on the generation loop \\[2pt]
-$n_\mathrm{elite}$              & 100                 & Evolutionary search: size of the elite that parents are drawn from \\[2pt]
-$n_\mathrm{start}$              & 20                  & Descent: independent restarts, each run to a local optimum; the resulting number of evaluations is reported, not fixed \\
+\multicolumn{3}{l}{\emph{Search effort per scenario}} \\[2pt]
+$E$                             & 10{,}000             & Candidate evaluations per scenario \\[2pt]
+$n_\mathrm{init}$               & 1{,}000             & 10\% of $E$ on the initial pool \\[2pt]
+$G$ / $n_\mathrm{off}$          & 90 / 100            & 90\% of $E$ on the generation loop \\[2pt]
+$n_\mathrm{elite}$              & 100                 & Size of the elite that parents are drawn from \\
 \bottomrule
 \end{tabularx}
 \end{table}
