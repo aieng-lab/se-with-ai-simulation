@@ -131,8 +131,9 @@ def step_sprint(
     # ------------------------------------------------------------------
     is_frozen = (t % config.R) >= (config.R - config.F_freeze)
     A_active = config.active_A(is_frozen)
-    # Only the supervised roles consume human oversight; the background detection
-    # services (k=5,6) are exempt (see config.SUPERVISED_ROLE_INDICES).
+    # Only the supervised roles K_sup = {1,2,3,7,8} consume human oversight; the two
+    # detection services (k=5,6) and the Refactoring Agent (k=4) run autonomously and are
+    # exempt (see config.SUPERVISED_ROLE_INDICES / AUTONOMOUS_ROLE_INDICES).
     n_supervised = supervised_agent_count(A_active)
 
     # ------------------------------------------------------------------
@@ -262,13 +263,13 @@ def step_sprint(
         # grows so cov_test = 0), which is exactly why the baseline needs this path.
         #
         # cov_qa matches the capacity reserved by Eq. (hafter_qa) against the review the
-        # sprint demands — h_review hours for each implemented feature — and is the share
+        # sprint demands — h_qa hours for each implemented feature — and is the share
         # of features that can be reviewed in full.  f_qa is calibrated so that it is 1 in
         # steady state; it drops below only when the team implements more than its own
         # reservation covers.  There is no human security-audit analogue, so security bugs
         # are caught at the same d_qa as any other class.
         cov_qa = min(1.0, params.f_qa * config.N * H_net
-                          / (params.h_review * max(1, impl)))
+                          / (params.h_qa * max(1, impl)))
         p_qa = cov_qa * params.d_qa
         qa_det_min = int(rng.binomial(bugs_min, p_qa)) if bugs_min > 0 else 0
         qa_det_maj = int(rng.binomial(bugs_maj, p_qa)) if bugs_maj > 0 else 0
@@ -393,10 +394,13 @@ def step_sprint(
     D_raw = (state.D_tech
              + params.delta_impl * impl
              + params.delta_fix * total_fixes)
-    # r_refactor is denominated in D_tech units (§4.1): one agent removes a tenth of the
-    # maximum debt per sprint, i.e. clearing a fully degraded code base occupies one agent
-    # for ten sprints.  There is no countable artefact here, which is why k=4 is billed
-    # per deployed instance rather than per unit of output (see the units vector below).
+    # r_refactor is denominated in D_tech units (§4.2.4): one agent removes the debt that
+    # one feature or one bug fix adds, so it is calibrated against delta_impl / delta_fix
+    # and takes the same 0.02 / 0.06 / 0.13 values by agent tier.  Nothing throttles the
+    # removal apart from the clip at 0 — the Refactoring Agent has no queue, is not slowed
+    # by delta_D, and removes debt even in a sprint that created none.  There is no
+    # countable artefact here, which is why k=4 is billed per deployed instance rather
+    # than per unit of output (see the units vector below).
     D_new = max(0.0, min(1.0,
         D_raw - params.r_refactor * A_active[3],   # Refactoring Agent (k=4, index 3)
     ))
@@ -433,8 +437,8 @@ def step_sprint(
     # Roles 1-3 and 7-8 are demand-driven and idle when no work reaches them: through the
     # queues they drain, and through the coverage caps above.  Three roles have no discrete
     # unit of output and are charged per deployed instance per sprint (r_4 = r_5 = r_6 = 1,
-    # §3.7): the two background review services, and the Refactoring Agent, whose output is
-    # a reduction of the normalised D_tech rather than a countable artefact.
+    # §3.7): the two review services, and the Refactoring Agent, whose output is a
+    # reduction of the normalised D_tech rather than a countable artefact.
     return SprintActions(
         units=(
             # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each

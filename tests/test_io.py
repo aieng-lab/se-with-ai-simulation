@@ -116,7 +116,7 @@ class TestLoadScenarioParams:
     def test_returns_correct_values(self):
         params = load_scenario_params(tier_paths("medium"))
         assert params.r_arrival == pytest.approx(12.0)
-        assert params.r_bugs == pytest.approx(0.03)
+        assert params.r_bugs == pytest.approx(0.05)
         assert params.r_bugs_human == pytest.approx(0.12)
         assert params.c_salary == pytest.approx(150_000.0)
         assert params.c_token[0] == pytest.approx(3.80)
@@ -145,6 +145,53 @@ class TestLoadScenarioParams:
         assert agent_fields   # guard against the key set silently going empty
         for name in agent_fields:
             assert getattr(pess, name) == pytest.approx(getattr(low, name)), name
+
+    def test_agent_capability_tiers_follow_the_swe_bench_scores(self):
+        """Paper tab:scenario:agents, r_bugs / d_test rows.
+
+        The footnote there resolves the leaderboard's near-tie in favour of the high
+        tier, so both rows are monotone: the more expensive the tier, the fewer bugs it
+        injects and the better it tests.  The values are 1 - score and score - 0.2 for
+        scores 0.80 / 0.95 / 0.97, and the pair has been swapped between medium and high
+        in the config once already, which is what this pins.
+        """
+        low, med, high = (
+            load_scenario_params(tier_paths("medium", agent=f"config/agent_{t}.json"))
+            for t in ("low", "medium", "high")
+        )
+        assert (low.r_bugs, med.r_bugs, high.r_bugs) == pytest.approx((0.20, 0.05, 0.03))
+        assert (low.d_test, med.d_test, high.d_test) == pytest.approx((0.60, 0.75, 0.77))
+
+    def test_refactoring_throughput_tracks_the_debt_a_work_item_adds(self):
+        """Paper §4.2.4: one Refactoring Agent removes the debt of one feature/bug fix.
+
+        `r_refactor` is therefore calibrated against `delta_impl` / `delta_fix` and takes
+        the same 0.02 / 0.06 / 0.13 by agent tier — it is *not* the tier-invariant 0.10
+        it was while the role's throughput was denominated differently.
+        """
+        rates = [
+            load_scenario_params(tier_paths("medium", agent=f"config/agent_{t}.json")).r_refactor
+            for t in ("low", "medium", "high")
+        ]
+        assert rates == pytest.approx([0.02, 0.06, 0.13])
+        debt = [
+            load_scenario_params(tier_paths("medium", debt=f"config/debt_{t}.json")).delta_impl
+            for t in ("low", "medium", "high")
+        ]
+        assert rates == pytest.approx(debt)
+
+    def test_documentation_relief_falls_as_the_debt_tier_rises(self):
+        """Paper tab:scenario:debt, Gamma_doc row: 0.40 / 0.34 / 0.0.
+
+        The debt group's tiers run mild -> severe, and Gamma_doc is a *relief* factor, so
+        it decreases where delta_impl increases.  Low and high were swapped in the config
+        once, which is what this pins.
+        """
+        gammas = [
+            load_scenario_params(tier_paths("medium", debt=f"config/debt_{t}.json")).Gamma_doc
+            for t in ("low", "medium", "high")
+        ]
+        assert gammas == pytest.approx([0.40, 0.34, 0.0])
 
     def test_groups_can_be_mixed(self):
         """The five groups are orthogonal, so tiers combine freely (paper §4.1)."""
@@ -211,12 +258,12 @@ class TestLoadSearchConfig:
         cfg = load_search_config("config/search_default.json")
         assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
         assert cfg.horizon_path == "config/horizon_default.json"
-        assert cfg.strategy == "evolutionary"
+        # The template runs the search; the §4.1 baseline is opted into per config.
+        assert cfg.human_only is False
 
     def test_default_search_config_matches_paper_search_range(self):
-        # Paper §4.2, Table 6: search range, the evolutionary E = 10,000 evaluation
-        # budget split 10 % / 90 % between the initial pool and the generation loop, and
-        # the n_starts restarts of the descent, which is budgeted by convergence instead.
+        # Paper §4.2, Table 6: search range, and the E = 10,000 evaluation budget split
+        # 10 % / 90 % between the initial pool and the generation loop.
         cfg = load_search_config("config/search_default.json")
         # Staffing levels from a one-day-per-week part-timer to a two-pizza team;
         # N is a staffing level, so the values are floats.
@@ -230,7 +277,6 @@ class TestLoadSearchConfig:
         assert cfg.n_generations * cfg.n_offspring == 9_000
         assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.budget
         assert cfg.n_elite == 100
-        assert cfg.n_starts == 20
         assert cfg.samples == "best"
         assert cfg.seed == 42
 

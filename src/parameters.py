@@ -41,7 +41,7 @@ class ScenarioParameters:
     # has no agents at all (`config.is_human_only`), so they are inert for every
     # agent-supported configuration of the §4.2 campaign.
     f_qa: float                      # Share of net capacity reserved for QA in dev sprints
-    h_review: float                  # Human hours to review one implemented feature in full
+    h_qa: float                      # Human hours to review one implemented feature in full
     d_qa: float                      # Probability a fully reviewed bug is detected
 
     # --- Bug injection  ---
@@ -101,8 +101,8 @@ class ScenarioParameters:
             raise ValueError(f"r_bugs_human must be > 0, got {self.r_bugs_human}")
         if not (0.0 <= self.f_qa < 1.0):
             raise ValueError(f"f_qa must be in [0, 1), got {self.f_qa}")
-        if self.h_review <= 0.0:
-            raise ValueError(f"h_review must be > 0, got {self.h_review}")
+        if self.h_qa <= 0.0:
+            raise ValueError(f"h_qa must be > 0, got {self.h_qa}")
         if not (0.0 <= self.d_qa <= 1.0):
             raise ValueError(f"d_qa must be in [0, 1], got {self.d_qa}")
         if self.theta_maj + self.theta_sec >= 1.0:

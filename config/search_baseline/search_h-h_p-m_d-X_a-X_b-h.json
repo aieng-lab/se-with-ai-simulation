@@ -10,7 +10,6 @@
   },
   "horizon": "config/horizon_default.json",
   "search": {
-    "strategy": "human_only",
     "N_values": [
       0.25,
       0.5,
@@ -42,8 +41,8 @@
     "n_generations": 90,
     "n_offspring": 100,
     "n_elite": 100,
-    "n_starts": 20,
     "samples": "best",
-    "seed": 42
+    "seed": 42,
+    "human_only": true
   }
 }

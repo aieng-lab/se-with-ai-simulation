@@ -11,7 +11,8 @@ That preorder ranks by the *mean* cost, which is a Monte Carlo estimate.  We the
 report the minimiser `c*` together with the *indistinguishable set* `I*` of admissible
 configurations whose 95% bootstrap CI overlaps `c*`'s (Eq. topset), reduced by the
 parsimony tie-break: of two equally good teams running the same process, only the one that
-uses no more agents anywhere is reported.
+uses no more agents anywhere is reported.  `c*` is exempt from that tie-break and stays in
+`I*` unconditionally, so the best measured performance is never under-reported.
 
 Nothing here is a Pareto frontier.  With a single objective the preference relation is a
 total preorder, so ranking is a sort, `c*` is its first element, and none of the
@@ -233,19 +234,25 @@ def indistinguishable_set(
     result does not depend on ordering, because `parsimony_dominates` is antisymmetric and
     every remover is itself a member.
 
-    The tie-break can remove the raw minimiser `c*`: if a smaller team running the same
-    process is statistically tied with it, then reporting the larger one is exactly what
-    §3.10 forbids.  Use `report_optimum` to get a `(c*, I*)` pair that is consistent —
-    it re-picks the optimum from the surviving members.  Empty only for an empty pool.
+    `c*` itself is *exempt* from the tie-break and can never be dropped, even when a
+    smaller team running the same process is statistically tied with it: §3.10 keeps it in
+    so that the best measured performance is not under-reported.  `c*` is therefore always
+    a member of a non-empty result, and `report_optimum` returns the raw minimiser.
 
-    When no candidate is admissible, `c*` is the least-violating one and `I*` holds it
-    alone — reporting that is the caller's job (`satisfies_throughput` is the check).
+    Empty in exactly two cases: an empty pool, and a pool in which *no* candidate satisfies
+    the throughput constraint.  In the latter §3.10 says no `c*` exists and `I*` is empty —
+    the caller still reports the least-violating candidate and marks it inadmissible
+    (`report_optimum` returns its index beside the empty set).
     """
     best = best_index(aggs, floor)
     if best is None:
         return []
     if keys is not None and len(keys) != len(aggs):
         raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
+    if not satisfies_throughput(aggs[best], floor):
+        # Nothing in the pool keeps up with the project, so there is no `c*` for the set to
+        # be built around (§3.10).  `report_optimum` reports the least-violating candidate.
+        return []
 
     lo, hi = aggs[best].cost_ci
     members = [
@@ -258,7 +265,8 @@ def indistinguishable_set(
         return members
     return [
         i for i in members
-        if not any(parsimony_dominates(keys[j], keys[i]) for j in members if j != i)
+        if i == best
+        or not any(parsimony_dominates(keys[j], keys[i]) for j in members if j != i)
     ]
 
 
@@ -267,18 +275,20 @@ def report_optimum(
     floor: float,
     keys: "Sequence[ParsimonyKey] | None" = None,
 ) -> tuple[int | None, list[int]]:
-    """The `(c*, I*)` pair to report, guaranteed consistent (§3.10).
+    """The `(c*, I*)` pair to report (§3.10).
 
-    `I*` is `indistinguishable_set`, and `c*` is the `prefers`-best of *its* members rather
-    than of the whole pool.  The two differ only when the parsimony tie-break removed the
-    raw minimiser in favour of a smaller team it is tied with — in which case that smaller
-    team is the honest answer, and reporting the raw minimiser beside a set that excludes
-    it would contradict the tie-break that removed it.
+    `c*` is the `prefers`-minimal candidate of the whole pool and `I*` is
+    `indistinguishable_set`.  The parsimony tie-break never removes `c*` — §3.10 exempts it
+    so that the best measured performance is not under-reported — so `c*` is a member of
+    every non-empty `I*`.
 
-    `c*` is therefore always a member of the returned `I*`.
+    The one case where it is not is the inadmissible one: when no candidate satisfies the
+    throughput constraint, §3.10 says `I*` is empty, and this returns the least-violating
+    candidate (equivalently the highest-value one) beside it.  Callers must mark that
+    result as inadmissible; `satisfies_throughput` on the returned entry is the check.
+    Both halves are None/empty only for an empty pool.
     """
-    members = indistinguishable_set(aggs, floor, keys)
-    if not members:
+    best = best_index(aggs, floor)
+    if best is None:
         return None, []
-    best = min(members, key=lambda i: _preference_key(aggs[i], floor))
-    return best, members
+    return best, indistinguishable_set(aggs, floor, keys)

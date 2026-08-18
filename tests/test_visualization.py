@@ -283,14 +283,13 @@ class TestAgentHumanRatioMatrix:
 
 
 class TestVisualizeCampaign:
-    def test_all_matrices_per_strategy(self, tmp_path):
-        visualize_campaign(_few(("evolutionary", "descent")), tmp_path)
+    def test_all_four_matrices_are_written(self, tmp_path):
+        """One search (§3.11), so the per-mode loop runs once and writes four figures."""
+        visualize_campaign(_few(("evolutionary",)), tmp_path)
         assert sorted(p.name for p in tmp_path.glob("*.png")) == [
-            "agent_human_ratio_matrix_descent.png",
             "agent_human_ratio_matrix_evolutionary.png",
-            "human_agent_matrix_descent.png", "human_agent_matrix_evolutionary.png",
-            "optima_matrix_descent.png", "optima_matrix_evolutionary.png",
-            "quality_development_matrix_descent.png",
+            "human_agent_matrix_evolutionary.png",
+            "optima_matrix_evolutionary.png",
             "quality_development_matrix_evolutionary.png",
         ]
 
@@ -415,14 +414,12 @@ class TestBaselineOverlay:
 
 class TestVisualizeCampaignWithBaseline:
     def test_the_baseline_gets_no_figure_set_of_its_own(self, tmp_path):
-        df = pd.concat([_few(("evolutionary", "descent")), _baseline(3)],
-                       ignore_index=True)
+        df = pd.concat([_few(("evolutionary",)), _baseline(3)], ignore_index=True)
         visualize_campaign(df, tmp_path, fmt="png")
         written = {p.name for p in tmp_path.glob("*.png")}
         assert not any("human_only" in name for name in written)
-        for strategy in ("evolutionary", "descent"):
-            assert f"optima_matrix_{strategy}.png" in written
-            assert f"agent_human_ratio_matrix_{strategy}.png" in written
+        assert "optima_matrix_evolutionary.png" in written
+        assert "agent_human_ratio_matrix_evolutionary.png" in written
 
     def test_a_campaign_without_a_baseline_still_works(self, tmp_path):
         visualize_campaign(_few(("evolutionary",)), tmp_path, fmt="png")

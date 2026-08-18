@@ -372,8 +372,8 @@ class TestDetectionGating:
         assert many.B_kno > few.B_kno
 
 
-class TestBackgroundServicesSkipOversight:
-    """Background services consume no monitoring capacity and raise no escalations."""
+class TestAutonomousRolesSkipOversight:
+    """K_aut = {4,5,6} consumes no monitoring capacity and raises no escalations."""
 
     def test_extra_background_agents_do_not_change_the_run(self, base_config, base_params):
         # alpha_size=0 makes detection independent of the service counts, so any
@@ -389,8 +389,27 @@ class TestBackgroundServicesSkipOversight:
         b = _run_sprints(8, loaded, params, np.random.default_rng(24), initial_backlog=100)
         assert dataclasses.asdict(a) == dataclasses.asdict(b)
 
+    def test_extra_refactoring_agents_do_not_change_the_run(self, base_config, base_params):
+        """Role 4 is autonomous since paper §3.3, so it must not move H_after_mon.
+
+        `r_refactor = 0` strips the one legitimate effect the role has — the debt it
+        removes in Eq. (debt_update) — leaving only the oversight question.  Its bill is
+        not part of the state, so a run with 40 of them must be bit-identical.
+        """
+        params = dataclasses.replace(base_params, alpha_size=0.0, rho_esc=0.5,
+                                     r_refactor=0.0)
+        lean = dataclasses.replace(
+            base_config, A_dev=_A(k1=2, k3=1, k4=1, k5=1, k6=1, k7=1), F_freeze=0,
+        )
+        loaded = dataclasses.replace(
+            base_config, A_dev=_A(k1=2, k3=1, k4=40, k5=1, k6=1, k7=1), F_freeze=0,
+        )
+        a = _run_sprints(8, lean, params, np.random.default_rng(24), initial_backlog=100)
+        b = _run_sprints(8, loaded, params, np.random.default_rng(24), initial_backlog=100)
+        assert dataclasses.asdict(a) == dataclasses.asdict(b)
+
     def test_supervised_agents_do_change_the_run(self, base_config, base_params):
-        """Guard against the previous test passing for the wrong reason."""
+        """Guard against the previous tests passing for the wrong reason."""
         params = dataclasses.replace(base_params, alpha_size=0.0, rho_esc=0.5)
         lean = dataclasses.replace(
             base_config, A_dev=_A(k1=2, k3=1, k4=1, k5=1, k6=1, k7=1), F_freeze=0,
@@ -863,12 +882,12 @@ class TestHumanOnlyDetection:
                 > weak.B_kno_min + weak.B_kno_maj + weak.B_kno_sec)
 
     def test_coverage_clamps_at_one_when_little_is_implemented(self, base_params):
-        # cov_qa = min(1, f_qa N H_net / (h_review max(1, impl))).  With a huge reservation
+        # cov_qa = min(1, f_qa N H_net / (h_qa max(1, impl))).  With a huge reservation
         # and one feature of demand the ratio is far above 1, so p_qa is exactly d_qa and
         # raising the reservation further changes nothing.
         def run(f_qa):
             p = dataclasses.replace(base_params, f_qa=f_qa, d_qa=1.0,
-                                    r_bugs_human=2.0, h_review=0.01, r_arrival=1e-9)
+                                    r_bugs_human=2.0, h_qa=0.01, r_arrival=1e-9)
             return _run_sprints(4, self._cfg(), p, np.random.default_rng(4),
                                 initial_backlog=2)
 
@@ -877,11 +896,11 @@ class TestHumanOnlyDetection:
         assert a.B_kno_min == b.B_kno_min
 
     def test_thin_coverage_detects_less_than_full_coverage(self, base_params):
-        # h_review far above what the reservation buys drives cov_qa below 1.
+        # h_qa far above what the reservation buys drives cov_qa below 1.
         thin = self._run(base_params, f_qa=0.2, d_qa=0.9, r_bugs_human=0.5,
-                         h_review=200.0)
+                         h_qa=200.0)
         full = self._run(base_params, f_qa=0.2, d_qa=0.9, r_bugs_human=0.5,
-                         h_review=0.01)
+                         h_qa=0.01)
         assert (thin.B_kno_min + thin.B_kno_maj + thin.B_kno_sec
                 < full.B_kno_min + full.B_kno_maj + full.B_kno_sec)
 

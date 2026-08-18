@@ -714,7 +714,7 @@ def plot_optima_matrix(
     """The reported optimum of every scenario, all five scenario groups separated at once.
 
     `df` is the ``optima.csv`` table of :mod:`src.campaign`, filtered to a **single**
-    strategy — mixing the two would draw each scenario twice.  One point per scenario:
+    result mode — mixing modes would draw each scenario twice.  One point per scenario:
     y is the cost of its `c*` in $ per feature, x is the share of that cost the `share`
     driver accounts for (`cost_<share>_share`).
 
@@ -935,7 +935,7 @@ def plot_agent_human_ratio_matrix(
     distribution and each is a fragment of it: where a panel's points sit horizontally is
     where its scenarios sit in the campaign-wide ordering, and a panel that occupies the
     right end is one whose tiers push the bill onto the agents.  The rank is therefore taken
-    over the frame as handed in — `visualize_campaign` passes one strategy's scenarios, and
+    over the frame as handed in — `visualize_campaign` passes one mode's scenarios, and
     filtering the frame further before calling re-ranks what is left against itself.
 
     Ranking makes the x axis linear and uniform by construction; the reading is in the
@@ -1105,23 +1105,23 @@ def visualize_campaign(
     share: str = "agent",
     **channels: str,
 ) -> None:
-    """All four campaign matrices, once per strategy in the campaign's ``optima.csv``.
+    """All four campaign matrices, once per result mode in the campaign's ``optima.csv``.
 
-    The strategies get their own figures rather than one shared set: they report an
-    optimum per scenario independently, so overlaying them would draw every scenario twice
-    and hide exactly the disagreement between the two searches that is worth reading.
+    Paper §3.11 leaves one search, so in practice the loop runs once, over
+    ``evolutionary``.  It is kept as a loop because each mode reports an optimum per
+    scenario independently: overlaying two would draw every scenario twice.
     `channels` passes `x_group` / `y_group` / `size_group` / `marker_group` /
     `color_group` through to all four; `share` reaches only
     :func:`plot_optima_matrix`, the one with a share on an axis.
 
-    Note that each figure is handed one strategy's slice, which is what makes the percentile
-    axis of :func:`plot_agent_human_ratio_matrix` a within-strategy ranking.
+    Note that each figure is handed one mode's slice, which is what makes the percentile
+    axis of :func:`plot_agent_human_ratio_matrix` a within-mode ranking.
     """
     if "strategy" not in optima.columns:
         raise KeyError("'strategy' is not a column of the optima table")
 
     # The human-only baseline is split out *before* the loop: it is a reference level
-    # overlaid on each strategy's figures, not a strategy with a figure set of its own.
+    # overlaid on the search's figures, not a mode with a figure set of its own.
     is_baseline = optima["strategy"] == "human_only"
     baseline = optima[is_baseline]
     searches = optima[~is_baseline]

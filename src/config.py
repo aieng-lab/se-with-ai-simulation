@@ -103,20 +103,21 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 #   "none" — no per-candidate files; aggregates live in search_summary.json
 SAMPLE_POLICIES: tuple[str, ...] = ("all", "best", "none")
 
-# The two search strategies of paper §3.11: evolutionary search over an elite ranked by
-# the preference relation, and greedy descent over an enumerated neighbourhood.  Uniform
-# random sampling is not a strategy — it is the shared initialiser both of them seed from
-# (§3.11.2).
-SEARCH_STRATEGIES: tuple[str, ...] = ("evolutionary", "descent")
+# Paper §3.11 describes exactly one search: the evolutionary search over an elite ranked
+# by the preference relation.  Uniform random sampling is not a strategy of its own — it
+# is the initialiser the evolutionary search seeds from (§3.11.2) — and there is no longer
+# a second strategy to compare against, so the search is not configurable.
+EVOLUTIONARY_MODE: str = "evolutionary"
 
-# Everything a result directory can be produced by.  The human-only baseline of §4.1 is
-# *not* a search strategy — its configuration space is 99 points and is enumerated
-# exhaustively, so there is nothing to search and no budget to spend.  It is kept out of
-# SEARCH_STRATEGIES because the paper compares two search strategies at unequal effort and
-# `scripts/generate_search_configs.py` builds its description text from that tuple; it is
-# added here because `optimize --strategy`, `campaign.search_dirs` and the result tree all
-# range over modes rather than over strategies.
-RESULT_MODES: tuple[str, ...] = SEARCH_STRATEGIES + ("human_only",)
+# The human-only baseline of §4.1 is *not* a search: its configuration space is 99 points
+# and is enumerated exhaustively, so there is nothing to search and no budget to spend.
+# It is selected by `SearchConfiguration.human_only` rather than by a strategy name.
+HUMAN_ONLY_MODE: str = "human_only"
+
+# Everything a result directory can be produced by.  `campaign.search_dirs`, the result
+# tree, the `strategy` column of the campaign CSVs and the per-mode figure names all range
+# over these two.
+RESULT_MODES: tuple[str, ...] = (EVOLUTIONARY_MODE, HUMAN_ONLY_MODE)
 
 AGENT_ROLE_NAMES: tuple[str, ...] = (
     "Feature Implementation Agent",           # k=1
@@ -136,15 +137,16 @@ AGENT_ROLE_ABBREV: tuple[str, ...] = (
     "Feature", "Design", "BugFix", "Refactor", "Review", "Security", "Test", "Docs",
 )
 
-# Roles are split into two tiers with respect to human oversight (paper §3.3).
-# Supervised roles consume monitoring capacity, and how many of them a staffing
-# level can carry follows from the human-capacity condition of §3.6,
-# Eq. (feas_monitoring) — there is no separate span-of-control budget.  The two
-# background detection services (Code Review, Security Audit) are triggered
-# automatically by the CI infrastructure and report their findings asynchronously,
-# so they need no human supervision and are charged no monitoring overhead.
-SUPERVISED_ROLE_INDICES: tuple[int, ...] = (0, 1, 2, 3, 6, 7)   # k = 1,2,3,4,7,8
-BACKGROUND_ROLE_INDICES: tuple[int, ...] = (4, 5)               # k = 5,6
+# Roles are split into two tiers with respect to human oversight (paper §3.3):
+# K_sup = {1,2,3,7,8} and K_aut = {4,5,6}.  Supervised roles consume monitoring capacity,
+# and how many of them a staffing level can carry follows from the human-capacity
+# condition of §3.6, Eq. (feas_monitoring) — there is no separate span-of-control budget.
+# The three autonomous roles consume none: the two detection services (Code Review,
+# Security Audit) are triggered automatically by the CI infrastructure and report their
+# findings asynchronously, and the Refactoring Agent does low-stakes internal improvements
+# that the developers do not review (§3.1).  None of them is charged monitoring overhead.
+SUPERVISED_ROLE_INDICES: tuple[int, ...] = (0, 1, 2, 6, 7)      # k = 1,2,3,7,8
+AUTONOMOUS_ROLE_INDICES: tuple[int, ...] = (3, 4, 5)            # k = 4,5,6
 
 
 def supervised_agent_count(A: tuple[int, ...]) -> int:
@@ -180,9 +182,10 @@ class TeamConfiguration:
     a staffing level can carry is not a structural property of the configuration:
     it follows from the human-capacity condition of §3.6, Eq. (feas_monitoring),
     which needs the scenario parameters and is therefore checked by
-    `src.feasibility`, not here.  The two background detection services (a_5, a_6)
-    are unbounded, since their only brake is their token cost weighed against
-    concave detection returns.
+    `src.feasibility`, not here.  The two detection services (a_5, a_6) are unbounded,
+    since their only brake is their token cost weighed against concave detection
+    returns; the Refactoring Agent (a_4) is unsupervised in the same way, and the only
+    cap on it is the sampling bound of §3.11.2 (`search_configurations.refactoring_bound`).
     F_freeze — number of sprints at the end of each release cycle in which the
             team uses A_qa instead of A_dev.  Sprints satisfying
             (t % R) >= (R - F_freeze) are "frozen".  Range: [0, R-1].
@@ -296,18 +299,19 @@ class SearchConfiguration:
 
     scenario_paths: dict[str, str]          # one path per entry of SCENARIO_GROUPS
     horizon_path: str
-    strategy: str                           # one of RESULT_MODES
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
     R_values: tuple[int, ...]
     F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
     sigma: float = 2.0                      # throughput-saturation headroom factor (§3.11.1)
     epsilon: float = 0.02                   # throughput-constraint tolerance (§3.9)
-    budget: int = 500                       # E: candidate evaluations, evolutionary only
-    n_samples_initial: int = 100            # evolutionary: initial population
-    n_generations: int = 15                 # evolutionary: generation count
-    n_offspring: int = 20                   # evolutionary: offspring per generation
-    n_elite: int = 20                       # evolutionary: elite that parents are drawn from
-    n_starts: int = 3                       # descent: restarts, each run to convergence
+    budget: int = 500                       # E: candidate evaluations (§4.2)
+    n_samples_initial: int = 100            # initial population
+    n_generations: int = 15                 # generation count
+    n_offspring: int = 20                   # offspring per generation
+    n_elite: int = 20                       # elite that parents are drawn from
+    # The human-only baseline of §4.1 is enumerated exhaustively rather than searched, so
+    # every field above is ignored when this is set.
+    human_only: bool = False
     samples: str = "best"                   # per-candidate result.json retention policy
     seed: int = 0                           # RNG seed for search
     scenario_id: str = ""                   # label of the tier combination, e.g. "h-l_p-m_d-h_a-l_b-m"
@@ -319,10 +323,6 @@ class SearchConfiguration:
             raise ValueError(
                 f"scenario_paths must have exactly one entry per scenario group "
                 f"{list(SCENARIO_GROUPS)}; missing={missing}, unknown={unknown}"
-            )
-        if self.strategy not in RESULT_MODES:
-            raise ValueError(
-                f"strategy must be one of {list(RESULT_MODES)}, got {self.strategy!r}"
             )
         if not self.N_values:
             raise ValueError("N_values must be non-empty")
@@ -353,11 +353,6 @@ class SearchConfiguration:
             raise ValueError(f"n_offspring must be >= 1, got {self.n_offspring}")
         if self.n_elite < 1:
             raise ValueError(f"n_elite must be >= 1, got {self.n_elite}")
-        if self.n_starts < 1:
-            # `budget` does not bound the descent: every restart runs to a local optimum
-            # and the evaluations it took are reported afterwards (§4.2), so the only
-            # requirement here is that there is at least one restart.
-            raise ValueError(f"n_starts must be >= 1, got {self.n_starts}")
         if self.samples not in SAMPLE_POLICIES:
             raise ValueError(
                 f"samples must be one of {list(SAMPLE_POLICIES)}, got {self.samples!r}"

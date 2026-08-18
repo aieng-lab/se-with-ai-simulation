@@ -1,8 +1,11 @@
 """Consolidate a §4.2 campaign into flat tables.
 
-A campaign is a tree of finished searches, one per (scenario, strategy):
+A campaign is a tree of finished searches, one per (scenario, result mode):
 
-    <results-dir>/<scenario_id>/<strategy>/{manifest,search_summary}.json
+    <results-dir>/<scenario_id>/<mode>/{manifest,search_summary}.json
+
+The mode is `evolutionary` for the 432 searches of §4.2 and `human_only` for the 36
+baselines of §4.1.  The tables call the column `strategy` for historical reasons.
 
 `build_tables` reads all of them into two DataFrames that `scripts/collect_results.py`
 writes out:
@@ -32,9 +35,10 @@ import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
+    EVOLUTIONARY_MODE,
+    HUMAN_ONLY_MODE,
     RESULT_MODES,
     SCENARIO_GROUPS,
-    SEARCH_STRATEGIES,
     TIER_INITIALS,
     UNUSED_TIER,
     UNUSED_TIER_INITIAL,
@@ -103,11 +107,12 @@ def expected_modes(scenario_id: str) -> tuple[str, ...]:
     """The result modes a scenario is supposed to carry.
 
     A baseline scenario is enumerated once and has no search counterpart; every other
-    scenario is solved by both search strategies (paper §4.2).  `build_tables` reports
+    scenario is solved by the evolutionary search (paper §4.2).  `build_tables` reports
     missing results against this, so the 432 campaign scenarios are not counted as missing
-    a baseline nor the 36 baseline scenarios as missing two searches.
+    a baseline nor the 36 baseline scenarios as missing a search.
     """
-    return ("human_only",) if is_baseline_scenario(scenario_id) else SEARCH_STRATEGIES
+    return ((HUMAN_ONLY_MODE,) if is_baseline_scenario(scenario_id)
+            else (EVOLUTIONARY_MODE,))
 
 
 def search_dirs(results_dir: Path) -> list[tuple[str, str, Path]]:
@@ -268,14 +273,14 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
 
     Since the baseline is inert in `debt` and `agent`, each baseline row is the reference
     for every combination of those two — with the full campaign that is 36 baselines
-    against 432 scenarios x 2 strategies.  `best_admissible` is carried through from both
+    against 432 searched scenarios.  `best_admissible` is carried through from both
     sides, because a ratio against an infeasible team is a different statement.
     """
     if optima.empty or "strategy" not in optima:
         return pd.DataFrame()
 
-    base = optima[optima["strategy"] == "human_only"]
-    search = optima[optima["strategy"] != "human_only"]
+    base = optima[optima["strategy"] == HUMAN_ONLY_MODE]
+    search = optima[optima["strategy"] != HUMAN_ONLY_MODE]
     if base.empty or search.empty:
         return pd.DataFrame()
 

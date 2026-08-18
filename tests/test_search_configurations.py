@@ -1,11 +1,13 @@
 """Tests for src/search_configurations.py — composition sampling and mutation.
 
-The invariant under test is the throughput saturation bound u_k (paper §3.13.1),
-which caps each supervised role; the background detection services (Code Review,
-Security Audit) are subject to no bound at all and are sampled separately,
-uniformly from {0, ..., floor(r_arrival)}.  The one collective limit on the
-supervised roles, the human-capacity condition of Eq. (feas_monitoring), is applied
-by the feasibility gate after the draw, not by the sampler.
+The invariant under test is the throughput saturation bound a-bar_k (paper §3.11.1),
+which caps each *supervised* role.  The three autonomous roles of K_aut = {4,5,6} are
+outside it: the two detection services (Code Review, Security Audit) are subject to no
+bound at all and are merely sampled from {0, ..., floor(r_arrival)}, and the Refactoring
+Agent is capped by a-bar_4 = floor(r_arrival / 2) in the sampler *and* in the mutation
+operator.  The one collective limit on the supervised roles, the human-capacity condition
+of Eq. (feas_monitoring), is applied by the feasibility gate after the draw, not by the
+sampler.
 """
 
 from __future__ import annotations
@@ -17,8 +19,8 @@ import numpy as np
 import pytest
 
 from src.config import (
-    BACKGROUND_ROLE_INDICES,
     AGENT_ROLE_COUNT,
+    AUTONOMOUS_ROLE_INDICES,
     SCENARIO_GROUPS,
     SUPERVISED_ROLE_INDICES,
     SearchConfiguration,
@@ -29,25 +31,28 @@ from src.config import (
 from src.io import load_scenario_params
 from src.search_configurations import (
     _QA_SUPERVISED_INDICES,
-    _composition_neighbours,
+    _REFACTOR_INDEX,
     _mutate,
     _random_draws,
-    _run_descent,
     _run_evolutionary_search,
     _run_human_only,
     _sample_dev_composition,
     _sample_qa_composition,
-    background_count_max,
     human_only_grid,
-    neighbourhood,
+    refactoring_bound,
+    review_sample_max,
     saturation_bounds,
     write_samples,
 )
 from src.selection import indistinguishable_set, parsimony_key, throughput_floor
 
-BG_MAX = 12   # matches r_arrival of config/project_medium.json
+REVIEW_MAX = 12    # floor(r_arrival) of config/project_medium.json
+REFACTOR_MAX = 6   # floor(r_arrival / 2), i.e. a-bar_4 of the same scenario
 
-#: Generous stand-in bounds: large enough that u_k is not the binding constraint in
+#: The two review services, i.e. the autonomous roles that carry no cap at all.
+REVIEW_INDICES = tuple(i for i in AUTONOMOUS_ROLE_INDICES if i != _REFACTOR_INDEX)
+
+#: Generous stand-in bounds: large enough that a-bar_k is not the binding constraint in
 #: the tests that are about something else.
 WIDE_BOUNDS = {i: 4 for i in SUPERVISED_ROLE_INDICES}
 
@@ -59,7 +64,6 @@ def search_cfg():
             group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
         },
         horizon_path="config/horizon_default.json",
-        strategy="evolutionary",
         N_values=(1.0, 2.0, 3.0),
         R_values=(2, 4),
         F_freeze_values=(0, 1, 2),
@@ -77,15 +81,14 @@ def medium_params():
 
 class TestSaturationBounds:
     def test_matches_the_paper_formula(self, medium_params):
-        """u_k = ceil(sigma * W_k / rho_k), Eqs. (workload), (sat_rates), (sat_bound)."""
+        """a-bar_k = ceil(sigma*lambda_k/eta_k), Eqs. (workload), (sat_rates), (sat_bound)."""
         p = medium_params
         sigma = 2.0
-        W_3 = p.r_bugs * (2.0 - p.delta_min) * p.r_arrival
+        lambda_3 = p.r_bugs * (2.0 - p.delta_min) * p.r_arrival
         expected = {
             0: math.ceil(sigma * (1.0 + p.f_arch_chg) * p.r_arrival / (p.r_F * p.delta_min)),
             1: math.ceil(sigma * p.f_arch_chg * p.r_arrival / p.r_arch_chg),
-            2: math.ceil(sigma * W_3 / (p.r_fix * p.delta_min)),
-            3: math.ceil(sigma * (p.delta_impl * p.r_arrival + p.delta_fix * W_3) / p.r_refactor),
+            2: math.ceil(sigma * lambda_3 / (p.r_fix * p.delta_min)),
             6: math.ceil(sigma * p.c_test_ceil * p.r_arrival / p.r_test),
             7: math.ceil(sigma * p.r_arrival / p.r_doc),
         }
@@ -94,8 +97,12 @@ class TestSaturationBounds:
     def test_covers_exactly_the_supervised_roles(self, medium_params):
         assert set(saturation_bounds(medium_params, 2.0)) == set(SUPERVISED_ROLE_INDICES)
 
+    def test_the_refactoring_role_has_no_saturation_bound(self, medium_params):
+        """Eq. (sat_bound) ranges over K_sup, which no longer contains role 4 (§3.3)."""
+        assert _REFACTOR_INDEX not in saturation_bounds(medium_params, 2.0)
+
     def test_impl_role_is_always_reachable(self, medium_params):
-        """u_1 >= 1 for every scenario, else a_dev,1 >= 1 could not be satisfied."""
+        """a-bar_1 >= 1 for every scenario, else a_dev,1 >= 1 could not be satisfied."""
         assert min(saturation_bounds(medium_params, 1.0).values()) >= 1
 
     def test_grows_with_the_arrival_rate(self):
@@ -115,7 +122,7 @@ class TestSaturationBounds:
 
     def test_rejects_a_zero_throughput_rate(self, medium_params):
         from dataclasses import replace
-        with pytest.raises(ValueError, match="rho"):
+        with pytest.raises(ValueError, match="eta"):
             saturation_bounds(replace(medium_params, r_doc=0.0), 2.0)
 
     def test_rejects_headroom_below_one(self, medium_params):
@@ -128,7 +135,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(0)
         bounds = saturation_bounds(medium_params, 2.0)
         for _ in range(300):
-            A = _sample_dev_composition(rng, bounds, BG_MAX)
+            A = _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)
             assert len(A) == AGENT_ROLE_COUNT
             assert A[0] >= 1
             assert all(A[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
@@ -137,43 +144,68 @@ class TestCompositionSampling:
         rng = np.random.default_rng(1)
         bounds = saturation_bounds(medium_params, 2.0)
         for _ in range(300):
-            A = _sample_qa_composition(rng, bounds, BG_MAX)
+            A = _sample_qa_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)
             assert A[0] == 0 and A[1] == 0
             assert all(A[i] <= bounds[i] for i in _QA_SUPERVISED_INDICES)
 
     def test_every_role_count_up_to_its_bound_is_reachable(self):
-        """The per-role draw is uniform on {0,...,u_k}, so it must span the range."""
+        """The per-role draw is uniform on {0,...,a-bar_k}, so it must span the range."""
         rng = np.random.default_rng(9)
         bounds = {i: 3 for i in SUPERVISED_ROLE_INDICES}
         seen = {i: set() for i in SUPERVISED_ROLE_INDICES}
         for _ in range(400):
-            A = _sample_dev_composition(rng, bounds, BG_MAX)
+            A = _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)
             for i in SUPERVISED_ROLE_INDICES:
                 seen[i].add(A[i])
-        assert seen[0] == {1, 2, 3}, "the impl role is drawn from {1,...,u_1}"
+        assert seen[0] == {1, 2, 3}, "the impl role is drawn from {1,...,a-bar_1}"
         for i in SUPERVISED_ROLE_INDICES[1:]:
             assert seen[i] == {0, 1, 2, 3}
 
-    def test_background_counts_are_uniform_up_to_the_arrival_rate(self, medium_params):
+    def test_review_counts_are_uniform_up_to_the_arrival_rate(self, medium_params):
         rng = np.random.default_rng(2)
         bounds = saturation_bounds(medium_params, 2.0)
         draws = [
-            _sample_dev_composition(rng, bounds, BG_MAX)[i]
+            _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)[i]
             for _ in range(400)
-            for i in BACKGROUND_ROLE_INDICES
+            for i in REVIEW_INDICES
         ]
         assert min(draws) == 0, "the services must sometimes be switched off"
-        assert max(draws) == BG_MAX, "the whole range up to r_arrival must be reachable"
+        assert max(draws) == REVIEW_MAX, "the whole range up to r_arrival must be reachable"
         # Uniform on 13 values: every count must occur, none may dominate.
-        counts = np.bincount(draws, minlength=BG_MAX + 1)
+        counts = np.bincount(draws, minlength=REVIEW_MAX + 1)
         assert counts.min() > 0
         assert counts.max() < len(draws) / 4
 
-    def test_background_bound_is_the_floor_of_the_arrival_rate(self):
+    def test_refactoring_is_drawn_within_its_own_smaller_bound(self, medium_params):
+        """Paper §3.11.2 step 6: a_.,4 ~ U{0, ..., a-bar_4}, half the review range."""
+        rng = np.random.default_rng(22)
+        bounds = saturation_bounds(medium_params, 2.0)
+        draws = [
+            _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)[_REFACTOR_INDEX]
+            for _ in range(400)
+        ]
+        assert min(draws) == 0 and max(draws) == REFACTOR_MAX
+        assert set(draws) == set(range(REFACTOR_MAX + 1))
+
+    def test_review_bound_is_the_floor_of_the_arrival_rate(self):
         class _Params:
             r_arrival = 12.7
 
-        assert background_count_max(_Params()) == 12
+        assert review_sample_max(_Params()) == 12
+
+    def test_refactoring_bound_is_half_the_arrival_rate(self):
+        """a-bar_4 = floor(r_arrival / 2): one agent per two features arriving (§3.11.2)."""
+        class _Params:
+            r_arrival = 12.7
+
+        assert refactoring_bound(_Params()) == 6
+
+    def test_refactoring_bound_at_the_paper_project_tiers(self):
+        """3 / 12 / 75 / 1000 issues per week give a-bar_4 = 1 / 6 / 37 / 500."""
+        expected = {3.0: 1, 12.0: 6, 75.0: 37, 1000.0: 500}
+        for r, want in expected.items():
+            params = type("_P", (), {"r_arrival": r})()
+            assert refactoring_bound(params) == want
 
 
 class TestRandomDraws:
@@ -191,12 +223,21 @@ class TestRandomDraws:
             assert all(cfg.A_dev[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
             assert all(cfg.A_qa[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
 
-    def test_background_services_are_capped_by_nothing(self, search_cfg, medium_params):
-        """The services answer to neither u_k nor the supervised count."""
+    def test_review_services_are_capped_by_nothing(self, search_cfg, medium_params):
+        """The services answer to neither a-bar_k nor the supervised count."""
         rng = np.random.default_rng(4)
         draws = _random_draws(search_cfg, rng, 300, medium_params)
         assert any(sum(cfg.A_dev) > supervised_agent_count(cfg.A_dev) * 2
                    for cfg in draws)
+
+    def test_refactoring_never_exceeds_its_bound(self, search_cfg, medium_params):
+        """a-bar_4 binds in both phases, and it is the *only* thing that binds role 4."""
+        rng = np.random.default_rng(41)
+        cap = refactoring_bound(medium_params)
+        draws = _random_draws(search_cfg, rng, 400, medium_params)
+        assert all(c.A_dev[_REFACTOR_INDEX] <= cap for c in draws)
+        assert all(c.A_qa[_REFACTOR_INDEX] <= cap for c in draws)
+        assert max(c.A_dev[_REFACTOR_INDEX] for c in draws) == cap
 
     def test_no_qa_composition_is_drawn_without_a_freeze_window(self, search_cfg,
                                                                 medium_params):
@@ -233,7 +274,7 @@ class TestMutation:
         rng = np.random.default_rng(5)
         parent = self._parent()
         for _ in range(500):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
             assert child.A_dev[0] >= 1
             assert child.A_qa[0] == 0 and child.A_qa[1] == 0
             parent = child   # chain mutations to explore further from the start
@@ -243,7 +284,7 @@ class TestMutation:
         bounds = {i: 2 for i in SUPERVISED_ROLE_INDICES}
         parent = self._parent()
         for _ in range(1000):
-            parent = _mutate(parent, rng, search_cfg, bounds)
+            parent = _mutate(parent, rng, search_cfg, bounds, REFACTOR_MAX)
             for i in SUPERVISED_ROLE_INDICES:
                 assert parent.A_dev[i] <= bounds[i], f"A_dev role index {i} overran u_k"
                 assert parent.A_qa[i] <= bounds[i], f"A_qa role index {i} overran u_k"
@@ -254,33 +295,46 @@ class TestMutation:
         parent = self._parent()
         seen_N = set()
         for _ in range(400):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
             seen_N.add(parent.N)
         assert len(seen_N) > 1, "N must move at all"
         assert seen_N <= set(search_cfg.N_values)
 
-    def test_mutation_reaches_the_background_services(self, search_cfg):
-        """The +/-1 background operation must actually fire and move both roles."""
+    def test_mutation_reaches_every_autonomous_role(self, search_cfg):
+        """The +/-1 "adjust service" operation must fire and move all three of K_aut."""
         rng = np.random.default_rng(6)
         parent = self._parent()
-        seen = {i: set() for i in BACKGROUND_ROLE_INDICES}
+        seen = {i: set() for i in AUTONOMOUS_ROLE_INDICES}
         for _ in range(500):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
-            for i in BACKGROUND_ROLE_INDICES:
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            for i in AUTONOMOUS_ROLE_INDICES:
                 seen[i].add(child.A_dev[i])
             parent = child
-        for i in BACKGROUND_ROLE_INDICES:
+        for i in AUTONOMOUS_ROLE_INDICES:
             assert len(seen[i]) > 1, f"role index {i} was never mutated"
 
-    def test_background_services_can_grow_without_bound(self, search_cfg):
-        """Nothing caps the services — not u_k, not the supervised count."""
+    def test_review_services_can_grow_without_bound(self, search_cfg):
+        """Nothing caps the two review services — not a-bar_k, not the supervised count."""
         rng = np.random.default_rng(7)
         parent = self._parent()
         peak = 0
         for _ in range(2000):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
-            peak = max(peak, max(parent.A_dev[i] for i in BACKGROUND_ROLE_INDICES))
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            peak = max(peak, max(parent.A_dev[i] for i in REVIEW_INDICES))
         assert peak > 1
+
+    def test_refactoring_stays_within_its_bound_under_mutation(self, search_cfg):
+        """§3.11.4: "the refactoring service is restricted by a-bar_4"."""
+        rng = np.random.default_rng(71)
+        cap = 2
+        parent = self._parent()
+        peak = 0
+        for _ in range(2000):
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, cap)
+            assert parent.A_dev[_REFACTOR_INDEX] <= cap
+            assert parent.A_qa[_REFACTOR_INDEX] <= cap
+            peak = max(peak, parent.A_dev[_REFACTOR_INDEX])
+        assert peak == cap, "the cap must be reachable, not merely respected"
 
     def test_impl_agent_is_never_drained_to_zero(self, search_cfg):
         rng = np.random.default_rng(8)
@@ -288,7 +342,7 @@ class TestMutation:
         A_dev[0] = 1   # already at the floor
         parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         for _ in range(300):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
             assert parent.A_dev[0] >= 1
 
     def test_qa_is_not_mutated_while_the_freeze_window_is_closed(self, search_cfg):
@@ -305,7 +359,7 @@ class TestMutation:
         assert parent.A_qa == (0,) * AGENT_ROLE_COUNT
         saw_open_window = False
         for _ in range(400):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
             if parent.F_freeze == 0 and child.F_freeze == 0:
                 assert child.A_qa == (0,) * AGENT_ROLE_COUNT
             saw_open_window |= child.F_freeze > 0
@@ -325,7 +379,7 @@ class TestMutation:
             parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
                                        R=4, F_freeze=f_freeze)
             for _ in range(300):
-                child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS)
+                child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
                 if child != parent:
                     def model(c):
                         return (c.N, c.R, c.F_freeze, c.A_dev,
@@ -344,8 +398,10 @@ class TestMutation:
 # that threshold is already crossed by 4 supervised agents, which the saturation
 # bounds comfortably allow, so a fair share of the draws is rejected by the
 # human-capacity condition of Eq. (feas_monitoring) — the one rejection path, and
-# what makes the budget accounting of §4.2 observable.
-_WASTEFUL_TIERS = {group: "medium" for group in SCENARIO_GROUPS} | {"debt": "low"}
+# what makes the budget accounting of §4.2 observable.  The `debt` tier is `high` because
+# that is where Gamma_doc = 0 (paper tab:scenario:debt), i.e. documentation buys no
+# monitoring relief and the condition bites at its hardest.
+_WASTEFUL_TIERS = {group: "medium" for group in SCENARIO_GROUPS} | {"debt": "high"}
 
 
 @pytest.fixture
@@ -354,7 +410,6 @@ def wasteful_cfg():
         scenario_paths={group: f"config/{group}_{tier}.json"
                         for group, tier in _WASTEFUL_TIERS.items()},
         horizon_path="config/horizon_default.json",
-        strategy="evolutionary",
         N_values=(0.25, 1.0),
         R_values=(2, 4),
         F_freeze_values=(0, 1),
@@ -363,7 +418,6 @@ def wasteful_cfg():
         n_generations=3,
         n_offspring=10,
         n_elite=5,
-        n_starts=2,
         seed=11,
     )
 
@@ -376,88 +430,6 @@ def tiny_horizon():
 @pytest.fixture
 def wasteful_params(wasteful_cfg):
     return load_scenario_params(wasteful_cfg.scenario_paths)
-
-
-class TestNeighbourhood:
-    """The enumerated neighbourhood of §3.11.5 must match the mutation operator's reach."""
-
-    def _cfg(self, F_freeze=1):
-        return TeamConfiguration(N=2.0, A_dev=(2, 1, 1, 0, 3, 0, 1, 0), R=4,
-                                 F_freeze=F_freeze,
-                                 A_qa=(0, 0, 2, 1, 1, 0, 0, 1) if F_freeze else None)
-
-    def test_neighbours_are_distinct_and_exclude_the_parent(self, search_cfg):
-        cfg = self._cfg()
-        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
-        assert cfg not in nbs
-        assert len(nbs) == len(set(nbs))
-
-    def test_every_mutation_lands_in_the_neighbourhood(self, search_cfg):
-        """Whatever `_mutate` can reach in one step must be enumerated (§3.11.5)."""
-        cfg = self._cfg()
-        nbs = set(neighbourhood(cfg, search_cfg, WIDE_BOUNDS))
-        rng = np.random.default_rng(0)
-        reached = {_mutate(cfg, rng, search_cfg, WIDE_BOUNDS) for _ in range(600)}
-        reached.discard(cfg)      # the operator returns the parent when it gives up
-        assert reached <= nbs
-        # The sampling must have actually explored, or the containment is vacuous.
-        assert len(reached) > 10
-
-    def test_staffing_moves_are_the_adjacent_grid_values(self, search_cfg):
-        cfg = self._cfg()
-        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
-        # search_cfg.N_values == (1.0, 2.0, 3.0) and cfg.N == 2.0
-        n_moves = {nb.N for nb in nbs if nb.A_dev == cfg.A_dev and nb.A_qa == cfg.A_qa
-                   and nb.F_freeze == cfg.F_freeze}
-        assert n_moves == {1.0, 3.0}
-
-    def test_release_cadence_is_never_changed(self, search_cfg):
-        cfg = self._cfg()
-        assert all(nb.R == cfg.R for nb in neighbourhood(cfg, search_cfg, WIDE_BOUNDS))
-
-    def test_freeze_length_stays_in_range(self, search_cfg):
-        cfg = self._cfg()
-        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
-        assert all(0 <= nb.F_freeze <= cfg.R - 1 for nb in nbs)
-        assert {nb.F_freeze for nb in nbs} >= {0, 1, 2}
-
-    def test_saturation_bounds_are_respected(self, search_cfg):
-        cfg = self._cfg()
-        bounds = {i: 2 for i in SUPERVISED_ROLE_INDICES}
-        tight = TeamConfiguration(N=2.0, A_dev=(2, 2, 0, 0, 1, 0, 0, 0), R=4, F_freeze=0)
-        for nb in neighbourhood(tight, search_cfg, bounds):
-            for i in SUPERVISED_ROLE_INDICES:
-                assert nb.A_dev[i] <= bounds[i]
-
-    def test_qa_block_is_absent_without_a_freeze_window(self, search_cfg):
-        """A_qa is canonically zero at F_freeze == 0, so mutating it is a no-op."""
-        cfg = self._cfg(F_freeze=0)
-        nbs = neighbourhood(cfg, search_cfg, WIDE_BOUNDS)
-        # Every neighbour that keeps F_freeze == 0 keeps the canonical zero A_qa.
-        assert all(nb.A_qa == (0,) * AGENT_ROLE_COUNT
-                   for nb in nbs if nb.F_freeze == 0)
-        # Opening a window is available, and lands on the canonical zero A_qa.
-        opened = [nb for nb in nbs if nb.F_freeze == 1]
-        assert opened and all(nb.A_qa == (0,) * AGENT_ROLE_COUNT for nb in opened)
-
-    def test_qa_implementation_roles_stay_at_zero(self, search_cfg):
-        cfg = self._cfg()
-        for nb in neighbourhood(cfg, search_cfg, WIDE_BOUNDS):
-            if nb.F_freeze > 0:
-                assert nb.A_qa[0] == 0 and nb.A_qa[1] == 0
-
-    def test_dev_implementation_role_never_drains_to_zero(self, search_cfg):
-        cfg = self._cfg()
-        assert all(nb.A_dev[0] >= 1
-                   for nb in neighbourhood(cfg, search_cfg, WIDE_BOUNDS))
-
-    def test_composition_neighbours_change_exactly_one_step(self):
-        A = (2, 1, 1, 0, 3, 0, 1, 0)
-        for out in _composition_neighbours(A, SUPERVISED_ROLE_INDICES, WIDE_BOUNDS,
-                                           min_impl=True):
-            delta = sum(abs(a - b) for a, b in zip(A, out))
-            assert delta in (1, 2)    # 1 for add/remove/service, 2 for a transfer
-            assert sum(out) - sum(A) in (-1, 0, 1)
 
 
 class TestSearchBudget:
@@ -503,136 +475,6 @@ class TestSearchBudget:
                 for e in outcome.manifest.values()]
         assert len(keys) == len(set(keys))
 
-    def test_descent_is_not_bounded_by_the_budget(self, wasteful_cfg, tiny_horizon,
-                                                  wasteful_params):
-        """`budget` is the evolutionary strategy's; the descent runs to convergence (§4.2).
-
-        The fixture's budget of 50 is far below what two restarts of full neighbourhood
-        enumeration cost, so a descent that still honoured it would stop short here.
-        """
-        outcome = _run_descent(
-            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
-            progress_every=0,
-        )
-        assert outcome.n_evaluated > wasteful_cfg.budget
-
-    def test_descent_never_evaluates_a_duplicate(self, wasteful_cfg, tiny_horizon,
-                                                 wasteful_params):
-        """`seen` makes a revisited neighbour free, so no configuration is charged twice."""
-        outcome = _run_descent(
-            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(5),
-            progress_every=0,
-        )
-        keys = [(e["N"], e["R"], e["F_freeze"],
-                 tuple(e["A_dev"]), tuple(e["A_qa"]))
-                for e in outcome.manifest.values()]
-        assert len(keys) == len(set(keys))
-
-    def test_descent_terminates_on_a_range_that_guarantees_duplicate_seeds(
-        self, tiny_horizon
-    ):
-        """A re-drawn seed costs nothing, so the seed loop needs its own attempt cap.
-
-        The range here is one staffing level, one cadence and no freeze window, so the
-        seed draws cannot help but repeat candidates that have already been scored.  With
-        no budget left to bound the restart, `_MAX_SEED_DRAWS` is the only thing that ends
-        a seed loop whose draws are all infeasible; the test passing at all is the
-        assertion.
-        """
-        cfg = SearchConfiguration(
-            scenario_paths={group: f"config/{group}_{tier}.json"
-                            for group, tier in _WASTEFUL_TIERS.items()},
-            horizon_path="config/horizon_default.json",
-            strategy="descent",
-            N_values=(0.25,), R_values=(1,), F_freeze_values=(0,),
-            n_starts=2, seed=1,
-        )
-        params = load_scenario_params(cfg.scenario_paths)
-        outcome = _run_descent(cfg, tiny_horizon, params, np.random.default_rng(0),
-                               progress_every=0)
-        # Every rejection is still recorded, and nothing is charged twice.
-        keys = [(e["N"], e["R"], e["F_freeze"], tuple(e["A_dev"]), tuple(e["A_qa"]))
-                for e in outcome.manifest.values()]
-        assert len(keys) == len(set(keys))
-        assert any(not e["feasible"] for e in outcome.manifest.values()), \
-            "the wasteful range must reject at least one candidate"
-
-    def test_descent_records_every_restart(self, wasteful_cfg, tiny_horizon,
-                                           wasteful_params):
-        outcome = _run_descent(
-            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
-            progress_every=0,
-        )
-        restarts = {e["restart"] for e in outcome.manifest.values()}
-        assert restarts == set(range(wasteful_cfg.n_starts))
-        assert all("step" in e for e in outcome.manifest.values())
-
-    def test_descent_ends_at_a_local_optimum(self, tiny_horizon):
-        """No neighbour of the final incumbent of a completed restart is preferred."""
-        from dataclasses import replace
-        from src.selection import best_index, prefers
-        cfg = SearchConfiguration(
-            scenario_paths={group: f"config/{group}_medium.json"
-                            for group in SCENARIO_GROUPS},
-            horizon_path="config/horizon_default.json",
-            strategy="descent",
-            N_values=(1.0, 2.0), R_values=(2,), F_freeze_values=(0, 1),
-            n_starts=1, seed=4,
-        )
-        params = load_scenario_params(cfg.scenario_paths)
-        outcome = _run_descent(cfg, tiny_horizon, params, np.random.default_rng(0),
-                               progress_every=0)
-
-        floor = throughput_floor(params, cfg.epsilon)
-        aggs = [a for _, _, a in outcome.aggs]
-        by_config = {c: a for _, c, a in outcome.aggs}
-        incumbent = outcome.aggs[best_index(aggs, floor)][1]
-        bounds = saturation_bounds(params, cfg.sigma)
-        for nb in neighbourhood(incumbent, cfg, bounds):
-            agg = by_config.get(nb)
-            if agg is not None:
-                assert not prefers(agg, by_config[incumbent], floor)
-
-
-class TestSampleRetention:
-    def _outcome(self, cfg, horizon, params, samples):
-        from dataclasses import replace
-        return _run_evolutionary_search(
-            replace(cfg, samples=samples), horizon, params, np.random.default_rng(1),
-            progress_every=0,
-        )
-
-    def test_best_policy_writes_one_file_per_reported_config(
-        self, wasteful_cfg, tiny_horizon, wasteful_params, tmp_path
-    ):
-        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "best")
-        floor = throughput_floor(wasteful_params, wasteful_cfg.epsilon)
-        keep = indistinguishable_set(
-            [a for _, _, a in outcome.aggs], floor,
-            keys=[parsimony_key(c) for _, c, _ in outcome.aggs],
-        )
-        keys = [outcome.aggs[i][0] for i in keep]
-        written = write_samples(outcome, tmp_path, keys)
-        assert written == len(keys) > 0
-        assert sorted(p.stem for p in (tmp_path / "samples").glob("*.json")) == \
-            sorted(keys)
-
-    def test_none_policy_keeps_no_results_in_memory(
-        self, wasteful_cfg, tiny_horizon, wasteful_params, tmp_path
-    ):
-        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "none")
-        assert outcome.results == {}
-        assert outcome.aggs, "objectives must still be aggregated"
-        assert write_samples(outcome, tmp_path, []) == 0
-        assert not (tmp_path / "samples").exists()
-
-    def test_all_policy_buffers_every_simulated_candidate(
-        self, wasteful_cfg, tiny_horizon, wasteful_params
-    ):
-        outcome = self._outcome(wasteful_cfg, tiny_horizon, wasteful_params, "all")
-        assert set(outcome.results) == {key for key, _, _ in outcome.aggs}
-
-
 class TestHumanOnlyEnumeration:
     """The human-only baseline of paper §4.1 is enumerated, not searched."""
 
@@ -644,7 +486,7 @@ class TestHumanOnlyEnumeration:
                 group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
             },
             horizon_path="config/horizon_default.json",
-            strategy="human_only",
+            human_only=True,
             N_values=(0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0),
             R_values=(1, 2, 4, 13),
             F_freeze_values=(0, 1, 2),
@@ -674,7 +516,7 @@ class TestHumanOnlyEnumeration:
 
     def test_run_evaluates_exactly_the_grid(self, search_cfg, medium_params):
         settings = SimulationHorizon(T=3, K=2, master_seed=42)
-        cfg = dataclasses.replace(search_cfg, strategy="human_only")
+        cfg = dataclasses.replace(search_cfg, human_only=True)
         outcome = _run_human_only(cfg, settings, medium_params,
                                   np.random.default_rng(0), progress_every=0)
         grid = human_only_grid(cfg)
@@ -684,9 +526,9 @@ class TestHumanOnlyEnumeration:
         assert all(c.A_dev == (0,) * AGENT_ROLE_COUNT for _, c, _ in outcome.aggs)
 
     def test_run_ignores_the_rng(self, search_cfg, medium_params):
-        # Deterministic: `rng` is accepted only to match the two search strategies.
+        # Deterministic: `rng` is accepted only to match the search's signature.
         settings = SimulationHorizon(T=3, K=2, master_seed=42)
-        cfg = dataclasses.replace(search_cfg, strategy="human_only")
+        cfg = dataclasses.replace(search_cfg, human_only=True)
         a = _run_human_only(cfg, settings, medium_params, np.random.default_rng(0),
                             progress_every=0)
         b = _run_human_only(cfg, settings, medium_params, np.random.default_rng(999),
@@ -697,15 +539,14 @@ class TestHumanOnlyEnumeration:
 
     def test_manifest_carries_no_search_bookkeeping(self, search_cfg, medium_params):
         settings = SimulationHorizon(T=3, K=2, master_seed=42)
-        cfg = dataclasses.replace(search_cfg, strategy="human_only")
+        cfg = dataclasses.replace(search_cfg, human_only=True)
         outcome = _run_human_only(cfg, settings, medium_params,
                                   np.random.default_rng(0), progress_every=0)
         for entry in outcome.manifest.values():
             assert "generation" not in entry
-            assert "restart" not in entry and "step" not in entry
 
-    def test_the_searches_can_never_reach_a_zero_agent_team(self, search_cfg,
-                                                            medium_params):
+    def test_the_search_can_never_reach_a_zero_agent_team(self, search_cfg,
+                                                          medium_params):
         # The enumerator is the sole producer: both samplers keep the a_1 >= 1 floor.
         draws = _random_draws(search_cfg, np.random.default_rng(5), 200, medium_params)
         assert all(c.A_dev[0] >= 1 for c in draws)

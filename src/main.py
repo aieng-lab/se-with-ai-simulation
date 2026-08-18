@@ -17,12 +17,14 @@ Load and analyse persisted results:
 
 Search for the cheapest team that keeps up with the project:
     python -m src.main optimize config/search_default.json --out results/search_default
-    python -m src.main optimize config/search_default.json --out results/search_descent \
-        --strategy descent
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
         --samples none --progress-every 500 --out results/one_scenario
 
-Run all 432 scenarios of paper Section 4.2 with both strategies:
+Enumerate the human-only baseline of paper Section 4.1 instead of searching:
+    python -m src.main optimize config/search_baseline/search_h-h_p-l_d-X_a-X_b-m.json \
+        --human-only --out results/baseline_one
+
+Run all 432 scenarios of paper Section 4.2:
     ./run_experiments.sh          (see its --help; generate the configs first with
                                    scripts/generate_search_configs.py)
 
@@ -51,9 +53,10 @@ import pandas as pd
 from .analysis import final_distribution, mean_trajectory
 from .config import (
     AGENT_ROLE_NAMES,
-    BACKGROUND_ROLE_INDICES,
+    AUTONOMOUS_ROLE_INDICES,
+    EVOLUTIONARY_MODE,
+    HUMAN_ONLY_MODE,
     SAMPLE_POLICIES,
-    RESULT_MODES,
     SCENARIO_GROUPS,
     TeamConfiguration,
     supervised_agent_count,
@@ -61,7 +64,6 @@ from .config import (
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .results import load_result, load_traces, save_result, save_traces
 from .search_configurations import (
-    _run_descent,
     _run_evolutionary_search,
     _run_human_only,
     human_only_grid,
@@ -107,12 +109,12 @@ def _print_config(config: TeamConfiguration) -> None:
         ("QA phase  ", config.A_qa, config.agent_count_qa),
     ):
         n_sup = supervised_agent_count(A)   # type: ignore[arg-type]
-        n_bg = sum(A) - n_sup              # type: ignore[arg-type]
-        print(f"  {phase} ({n_sup} supervised, {n_bg} background)")
+        n_aut = sum(A) - n_sup             # type: ignore[arg-type]
+        print(f"  {phase} ({n_sup} supervised, {n_aut} autonomous)")
         for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
             count = getter(k)
             if count:
-                tier = "bg " if (k - 1) in BACKGROUND_ROLE_INDICES else "   "
+                tier = "aut" if (k - 1) in AUTONOMOUS_ROLE_INDICES else "   "
                 print(f"    role {k:>2} {tier} {name:<48}  x{count}")
 
 
@@ -230,7 +232,10 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
 def _cmd_optimize(args: argparse.Namespace) -> None:
     cfg_path = Path(args.search_config)
     search_cfg = load_search_config(cfg_path)
-    strategy = args.strategy or search_cfg.strategy
+    # The baseline is a result mode, not a search strategy: the search itself is fixed
+    # (paper §3.11 describes one) and is therefore not selectable.
+    human_only = args.human_only or search_cfg.human_only
+    mode = HUMAN_ONLY_MODE if human_only else EVOLUTIONARY_MODE
     if args.samples is not None:
         search_cfg = replace(search_cfg, samples=args.samples)
 
@@ -248,25 +253,20 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     for group, path in search_cfg.scenario_paths.items():
         print(f"  {group:<10} {path}")
     print(f"Start state: {args.start_state}")
-    print(f"Strategy:    {strategy}")
+    print(f"Mode:        {mode}")
     print(f"Horizon:     K={horizon.K} replications * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
-    if strategy == "evolutionary":
-        print(f"Budget:      {search_cfg.budget} candidate evaluations")
-        print(f"             {search_cfg.n_samples_initial} initial + "
-              f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring, "
-              f"elite {search_cfg.n_elite}")
-    elif strategy == "human_only":
+    if human_only:
         # Not a search: the human-only baseline of §4.1 fixes both composition vectors at
         # zero, so its configuration space is small enough to enumerate in full.
         n_grid = len(human_only_grid(search_cfg))
         print(f"Budget:      none; exhaustive enumeration of the {n_grid}-point "
               f"zero-agent grid")
     else:
-        # The descent is not budgeted (§4.2): each restart runs to a local optimum and the
-        # evaluations it took are reported at the end.
-        print(f"Budget:      none; {search_cfg.n_starts} restarts, "
-              f"each descending to a local optimum")
+        print(f"Budget:      {search_cfg.budget} candidate evaluations")
+        print(f"             {search_cfg.n_samples_initial} initial + "
+              f"{search_cfg.n_generations} generations * {search_cfg.n_offspring} offspring, "
+              f"elite {search_cfg.n_elite}")
     print(f"Throughput:  value >= (1 - {search_cfg.epsilon}) * {params.r_arrival:g} = "
           f"{throughput_floor(params, search_cfg.epsilon):.3f} features/sprint")
     print(f"Samples:     {search_cfg.samples}")
@@ -277,11 +277,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     rng = np.random.default_rng(search_cfg.seed)
 
     t_start = time.perf_counter()
-    runner = {
-        "evolutionary": _run_evolutionary_search,
-        "descent": _run_descent,
-        "human_only": _run_human_only,
-    }[strategy]
+    runner = _run_human_only if human_only else _run_evolutionary_search
     outcome = runner(
         search_cfg, horizon, params, rng, initial_state,
         progress_every=args.progress_every,
@@ -293,9 +289,9 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     floor = throughput_floor(params, search_cfg.epsilon)
     # c* and the set of admissible configurations it cannot be distinguished from (§3.10).
     # Parsimony keys are supplied, so of several equally good teams running the same
-    # process only the one that uses no more agents anywhere is reported — including when
-    # that removes the raw cost minimiser, which is why c* comes from report_optimum
-    # rather than from best_index.
+    # process only the one that uses no more agents anywhere is reported.  c* itself is
+    # exempt from that tie-break and is never removed; I* is empty only when no candidate
+    # reached the throughput floor, in which case c* is the least-violating one.
     best_idx, keep_idx = report_optimum(
         agg_objs, floor, keys=[parsimony_key(cfg) for _, cfg, _ in aggs]
     )
@@ -307,10 +303,12 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
                        and satisfies_throughput(agg_objs[best_idx], floor))
 
     # Sample files are written only now, so that the "best" policy can restrict them to
-    # the configurations that are actually reported.
+    # the configurations that are actually reported.  I* is empty when nothing reached the
+    # throughput floor (§3.10), so fall back to c* there — it is still reported, just
+    # marked inadmissible, and dropping its sample file would leave nothing behind.
     sample_keys = {
         "none": [],
-        "best": keep_keys,
+        "best": keep_keys or ([best_key] if best_key is not None else []),
         "all": [key for key, _, _ in aggs],
     }[search_cfg.samples]
     n_samples_written = write_samples(outcome, out_dir, sample_keys)
@@ -319,7 +317,9 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "search_config": str(cfg_path),
         "scenario_id": search_cfg.scenario_id,
         "scenario": {"paths": search_cfg.scenario_paths, "values": scenario_values},
-        "strategy": strategy,
+        # Kept under the name "strategy" because the campaign tables, the result tree and
+        # the per-mode figure names all key on it.
+        "strategy": mode,
         "horizon": {"path": search_cfg.horizon_path, "K": horizon.K, "T": horizon.T,
                     "master_seed": horizon.master_seed},
         "search": {
@@ -333,7 +333,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             "n_generations": search_cfg.n_generations,
             "n_offspring": search_cfg.n_offspring,
             "n_elite": search_cfg.n_elite,
-            "n_starts": search_cfg.n_starts,
+            "human_only": human_only,
             "samples": search_cfg.samples,
             "seed": search_cfg.seed,
         },
@@ -404,8 +404,13 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
               f"agents {obj['cost_agent_mean']:.0f}")
         print(f"  A_dev={obj['A_dev']}")
         print(f"  A_qa ={obj['A_qa']}")
-        print(f"Statistically indistinguishable from c*: {len(keep_keys)} config(s) "
-              f"(after the parsimony tie-break)")
+        if best_admissible:
+            print(f"Statistically indistinguishable from c*: {len(keep_keys)} config(s) "
+                  f"(after the parsimony tie-break)")
+        else:
+            # No admissible candidate means no c* in the sense of §3.10, so I* is empty
+            # rather than a set of one; the line above would read as a real tie.
+            print("Indistinguishable set I*: empty (the result is inadmissible)")
     print()
     print(f"Results saved to: {out_dir}")
 
@@ -491,7 +496,7 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
     if not uplift.empty:
         print(f"  {uplift_path}   {len(uplift)} optima with a human-only reference")
     # A baseline scenario is enumerated once and has no search counterpart, so the
-    # expected mode count is per scenario rather than a flat len(SEARCH_STRATEGIES).
+    # expected mode count is per scenario rather than a flat 1.
     missing = sum(len(expected_modes(sid)) for sid in scenario_ids) - len(searches)
     if missing:
         print(f"  note: {missing} (scenario, mode) pair(s) have no results yet")
@@ -562,8 +567,11 @@ def main(argv: list[str] | None = None) -> None:
                          help="Path to search config JSON (e.g. config/search_default.json)")
     p_optimize.add_argument("--out", required=True, metavar="DIR",
                          help="Output directory for optimization results")
-    p_optimize.add_argument("--strategy", choices=list(RESULT_MODES), default=None,
-                         help="Override strategy from config")
+    p_optimize.add_argument(
+        "--human-only", action="store_true",
+        help="Enumerate the 99-point zero-agent grid of the paper's Section 4.1 baseline "
+             "instead of running the evolutionary search (also settable in the config)",
+    )
     p_optimize.add_argument(
         "--samples", choices=list(SAMPLE_POLICIES), default=None,
         help="Which candidates get a samples/<key>.json file: 'all', 'best' "

@@ -20,7 +20,12 @@ from src.campaign import (
     team_config,
     tiers_from_scenario_id,
 )
-from src.config import AGENT_ROLE_COUNT, SCENARIO_GROUPS, SEARCH_STRATEGIES
+from src.config import (
+    AGENT_ROLE_COUNT,
+    EVOLUTIONARY_MODE,
+    HUMAN_ONLY_MODE,
+    SCENARIO_GROUPS,
+)
 
 
 class TestScenarioIds:
@@ -106,7 +111,7 @@ class TestSearchDirs:
         assert [(sid, strategy) for sid, strategy, _ in found] == [(_SID, "evolutionary")]
 
     def test_ignores_a_directory_without_a_summary(self, campaign):
-        (campaign / _SID / "descent").mkdir()
+        (campaign / _SID / HUMAN_ONLY_MODE).mkdir()
         assert len(search_dirs(campaign)) == 1
 
 
@@ -155,10 +160,11 @@ class TestOptimumRow:
         # The medium project tier arrives at 12 issues/week, matching the fixture.
         assert row["value_ratio"] == pytest.approx(1.0)
 
-    def test_supervised_counts_exclude_the_background_services(self, campaign):
+    def test_supervised_counts_exclude_the_autonomous_roles(self, campaign):
+        """n_sup ranges over K_sup = {1,2,3,7,8}; a_4, a_5 and a_6 do not enter it."""
         row = self._row(campaign)
-        assert row["n_sup_dev"] == 2 + 0 + 1 + 1 + 1 + 0    # a_5 = 3 excluded
-        assert row["n_sup_qa"] == 0 + 0 + 2 + 1 + 1 + 0
+        assert row["n_sup_dev"] == 2 + 0 + 1 + 1 + 0        # a_4 = 1, a_5 = 3 excluded
+        assert row["n_sup_qa"] == 0 + 0 + 2 + 1 + 0         # a_4 = 1, a_5 = 1 excluded
 
     def test_phase_sprint_counts_partition_the_horizon(self, campaign):
         row = self._row(campaign)
@@ -258,8 +264,9 @@ class TestScenarioIdSentinel:
         assert params.r_arrival > 0 and params.r_bugs > 0
 
     def test_expected_modes_differ_by_scenario_kind(self):
-        assert expected_modes(_BASELINE_SID) == ("human_only",)
-        assert expected_modes(_SID) == SEARCH_STRATEGIES
+        """A baseline is enumerated once; every other scenario gets one search (§4.2)."""
+        assert expected_modes(_BASELINE_SID) == (HUMAN_ONLY_MODE,)
+        assert expected_modes(_SID) == (EVOLUTIONARY_MODE,)
 
 
 class TestBaselineInTheTables:

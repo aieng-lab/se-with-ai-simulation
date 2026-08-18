@@ -1,5 +1,5 @@
 {
-  "description": "Human developer parameters, medium tier (mid-level developer). See paper/main.tex tab:scenario:human. H_capacity, c_comm, H_monitoring_overhead, f_fix and d_qa are skill-independent and identical across tiers. r_bugs_human is an absolute per-feature bug rate, not a scale factor on the agent rate. f_qa, h_review and d_qa drive the human quality-assurance stage of the human-only baseline (Section 4.1) and are read only by a team with no agents at all.",
+  "description": "Human developer parameters, medium tier (mid-level developer). See paper/main.tex tab:scenario:human. H_capacity, c_comm, H_monitoring_overhead, f_fix and d_qa are skill-independent and identical across tiers. r_bugs_human is an absolute per-feature bug rate, not a scale factor on the agent rate. f_qa, h_qa and d_qa drive the human quality-assurance stage of the human-only baseline (Section 4.1) and are read only by a team with no agents at all.",
   "human": {
     "H_capacity": 40.0,
     "c_comm": 1.0,
@@ -11,7 +11,7 @@
     "r_bugs_human": 0.12,
     "f_fix": 0.5,
     "f_qa": 0.13,
-    "h_review": 0.62,
+    "h_qa": 0.62,
     "d_qa": 0.8,
     "c_salary": 150000.0
   }

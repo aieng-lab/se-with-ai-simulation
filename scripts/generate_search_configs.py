@@ -8,9 +8,7 @@ is `config/search_default.json` with its five `scenario` entries repointed at on
 combination; the search range, budgets, horizon, and seed are inherited unchanged so
 that all 432 searches share the experimental setup.
 
-Each scenario is solved twice — once with evolutionary search and once with greedy
-neighbourhood descent — via the `optimize --strategy` override, so 432 files cover all
-864 searches.
+Each scenario is solved once, with the evolutionary search of paper §3.11.
 
 Usage
 -----
@@ -33,7 +31,6 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from src.config import (   # noqa: E402
     SCENARIO_GROUPS,
-    SEARCH_STRATEGIES,
     UNUSED_TIER,
     scenario_id,
     scenario_tier_combinations,
@@ -55,9 +52,9 @@ def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
     sid = scenario_id(tiers)
     tier_list = ", ".join(f"{g}={t}" for g, t in zip(SCENARIO_GROUPS, tiers))
     config = dict(template)
-    strategies = " and ".join(f"--strategy {s}" for s in SEARCH_STRATEGIES)
     config["description"] = (
-        f"Paper Section 4.2 scenario {sid} ({tier_list}); solve with {strategies}"
+        f"Paper Section 4.2 scenario {sid} ({tier_list}); "
+        f"solve with the evolutionary search of Section 3.11"
     )
     config["scenario_id"] = sid
     config["scenario"] = {
@@ -96,7 +93,7 @@ def build_baseline_config(template: dict, tiers: tuple[str, ...]) -> dict:
         f"Paper Section 4.1 human-only baseline {config['scenario_id']} ({tier_list}); "
         f"debt and agent are inert for a zero-agent team and are marked X"
     )
-    config["search"] = {**config["search"], "strategy": "human_only"}
+    config["search"] = {**config["search"], "human_only": True}
     return config
 
 
@@ -148,8 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         shape = " x ".join(str(len(scenario_tiers(g))) for g in SCENARIO_GROUPS)
         print(f"Wrote {written} search configurations to {out_dir}/ "
-              f"({shape} = {expected} scenarios, "
-              f"{len(SEARCH_STRATEGIES) * expected} searches with both strategies)")
+              f"({shape} = {expected} scenarios, one evolutionary search each)")
     print(f"Template: {args.template}")
     return 0
 

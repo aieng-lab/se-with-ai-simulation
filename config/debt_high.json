@@ -3,8 +3,8 @@
   "debt": {
     "delta_impl": 0.13,
     "delta_fix": 0.13,
-    "delta_min": 0.60,
+    "delta_min": 0.6,
     "delta_exp": 1.5,
-    "Gamma_doc": 0.40
+    "Gamma_doc": 0.0
   }
 }

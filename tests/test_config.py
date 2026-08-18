@@ -7,14 +7,17 @@ import pytest
 from src.config import (
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
+    AUTONOMOUS_ROLE_INDICES,
+    EVOLUTIONARY_MODE,
+    HUMAN_ONLY_MODE,
     RESULT_MODES,
+    SUPERVISED_ROLE_INDICES,
     TIER_INITIALS,
     UNUSED_TIER,
     UNUSED_TIER_INITIAL,
     SearchConfiguration,
     SCENARIO_GROUPS,
     SCENARIO_TIERS,
-    SEARCH_STRATEGIES,
     SimulationHorizon,
     TeamConfiguration,
     is_human_only,
@@ -69,10 +72,9 @@ class TestScenarioTierGrid:
                       for g in SCENARIO_GROUPS)
         assert scenario_id(tiers) == "h-l_p-l_d-X_a-X_b-l"
 
-    def test_result_modes_extend_the_search_strategies(self):
-        assert set(SEARCH_STRATEGIES) < set(RESULT_MODES)
-        assert "human_only" in RESULT_MODES
-        assert "human_only" not in SEARCH_STRATEGIES
+    def test_result_modes_are_the_search_and_the_baseline(self):
+        """§3.11 leaves one search; §4.1's baseline is a mode beside it, not a strategy."""
+        assert RESULT_MODES == (EVOLUTIONARY_MODE, HUMAN_ONLY_MODE)
 
     def test_unknown_group_raises(self):
         with pytest.raises(ValueError, match="unknown scenario group"):
@@ -156,7 +158,6 @@ class TestSearchConfigurationValidation:
         kwargs = dict(
             scenario_paths={g: f"config/{g}_medium.json" for g in SCENARIO_GROUPS},
             horizon_path="config/horizon_default.json",
-            strategy="evolutionary",
             N_values=(0.25, 1.0),
             R_values=(2,),
         )
@@ -176,14 +177,14 @@ class TestSearchConfigurationValidation:
         with pytest.raises(ValueError, match="sigma must be >= 1"):
             self._cfg(sigma=0.9)
 
-    @pytest.mark.parametrize("strategy", SEARCH_STRATEGIES)
-    def test_both_paper_strategies_are_accepted(self, strategy):
-        assert self._cfg(strategy=strategy).strategy == strategy
+    def test_the_search_is_not_selectable(self):
+        """§3.11 describes one search, so there is no strategy to configure."""
+        assert not hasattr(self._cfg(), "strategy")
 
-    def test_the_removed_random_strategy_is_rejected(self):
-        """Uniform random sampling is the shared initialiser, not a strategy (§3.11.2)."""
-        with pytest.raises(ValueError, match="strategy must be one of"):
-            self._cfg(strategy="random")
+    def test_the_baseline_is_off_by_default(self):
+        cfg = self._cfg()
+        assert cfg.human_only is False
+        assert self._cfg(human_only=True).human_only is True
 
     def test_epsilon_defaults_to_the_paper_value(self):
         assert self._cfg().epsilon == 0.02
@@ -197,23 +198,30 @@ class TestSearchConfigurationValidation:
         with pytest.raises(ValueError, match="n_elite must be >= 1"):
             self._cfg(n_elite=0)
 
-    def test_non_positive_restart_count_raises(self):
-        with pytest.raises(ValueError, match="n_starts must be >= 1"):
-            self._cfg(n_starts=0)
 
-    def test_restarts_are_not_bounded_by_the_budget(self):
-        """The descent runs every restart to convergence, so `budget` does not cap it."""
-        assert self._cfg(budget=4, n_starts=20).n_starts == 20
+class TestAutonomousRoleBudget:
+    """Roles 4, 5 and 6 need no supervision, so they never enter n_sup (paper §3.3)."""
 
+    def test_the_role_split_is_the_papers(self):
+        """K_sup = {1,2,3,7,8}, K_aut = {4,5,6}: the Refactoring Agent is autonomous."""
+        assert SUPERVISED_ROLE_INDICES == (0, 1, 2, 6, 7)
+        assert AUTONOMOUS_ROLE_INDICES == (3, 4, 5)
+        assert set(SUPERVISED_ROLE_INDICES) | set(AUTONOMOUS_ROLE_INDICES) == set(
+            range(AGENT_ROLE_COUNT)
+        )
+        assert not set(SUPERVISED_ROLE_INDICES) & set(AUTONOMOUS_ROLE_INDICES)
 
-class TestBackgroundServiceBudget:
-    """Roles 5 and 6 need no supervision, so they never enter n_sup."""
-
-    def test_background_agents_do_not_count_toward_n_sup(self):
+    def test_autonomous_agents_do_not_count_toward_n_sup(self):
         A = _A((1, 2), (3, 2), (4, 1), (7, 1), (5, 3), (6, 2))
         cfg = TeamConfiguration(N=2, A_dev=A, A_qa=_A((3, 1), (5, 1)), R=4)
-        assert supervised_agent_count(cfg.A_dev) == 6
+        assert supervised_agent_count(cfg.A_dev) == 5   # roles 1, 3 and 7 only
         assert sum(cfg.A_dev) == 11
+
+    def test_refactoring_agents_are_free_of_supervision(self):
+        """Adding Refactoring Agents must not move n_sup at all (§3.3, Eq. nsup)."""
+        base = _A((1, 2), (3, 1))
+        loaded = _A((1, 2), (3, 1), (4, 40))
+        assert supervised_agent_count(loaded) == supervised_agent_count(base)
 
     def test_large_background_count_accepted(self):
         A = _A((1, 1), (5, 50), (6, 25))

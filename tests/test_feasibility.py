@@ -31,16 +31,30 @@ class TestStep1MonitoringCapacity:
         assert not report.feasible
         assert report.failed_step == 1
 
-    def test_background_services_never_cause_infeasibility(self, base_params):
-        """Piling on review/audit agents must not exhaust the monitoring budget."""
+    def test_autonomous_roles_never_cause_infeasibility(self, base_params):
+        """K_aut = {4,5,6} consumes no monitoring capacity at all (paper §3.3)."""
         from dataclasses import replace
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
         # 4 supervised agents over N=2 developers = 2 * 2h = 4h < H_net ≈ 9h
         lean = _cfg({1: 2, 3: 1, 7: 1}, N=2)
         assert check_feasibility(lean, p).feasible
-        # Same supervised load, but 40 background services on top
-        loaded = _cfg({1: 2, 3: 1, 7: 1, 5: 20, 6: 20}, N=2)
+        # Same supervised load, but 60 autonomous agents on top
+        loaded = _cfg({1: 2, 3: 1, 7: 1, 4: 20, 5: 20, 6: 20}, N=2)
         assert check_feasibility(loaded, p).feasible
+
+    def test_refactoring_agents_do_not_tip_a_team_over_the_gate(self, base_params):
+        """Since commit "make refactoring unsupervised", role 4 is outside n_sup.
+
+        The team below sits just under the bound on its supervised roles; adding
+        Refactoring Agents used to push it over and must now change nothing.
+        """
+        from dataclasses import replace
+        p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
+        # 4 supervised agents over N=1: 4 * 2h = 8h < H_net = 10h, but 5 would be 10h.
+        borderline = _cfg({1: 2, 3: 1, 7: 1}, N=1)
+        assert check_feasibility(borderline, p).feasible
+        assert not check_feasibility(_cfg({1: 3, 3: 1, 7: 1}, N=1), p).feasible
+        assert check_feasibility(_cfg({1: 2, 3: 1, 7: 1, 4: 8}, N=1), p).feasible
 
 
 class TestCommunicationOverheadUsesHeadcount:

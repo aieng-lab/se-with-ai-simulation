@@ -82,7 +82,6 @@ class TestGeneratedGrid:
             assert cfg.n_generations == reference.n_generations
             assert cfg.n_offspring == reference.n_offspring
             assert cfg.n_elite == reference.n_elite
-            assert cfg.n_starts == reference.n_starts
             assert cfg.seed == reference.seed
 
     def test_tier_combinations_are_covered_exactly_once(self, generated):
@@ -143,12 +142,12 @@ class TestBaselineGrid:
 
     def test_every_config_runs_in_human_only_mode(self, baseline_dir):
         for path in baseline_dir.glob("search_*.json"):
-            assert json.loads(path.read_text())["search"]["strategy"] == "human_only"
+            assert json.loads(path.read_text())["search"]["human_only"] is True
 
     def test_configs_load_and_point_at_the_unused_placeholders(self, baseline_dir):
         for path in baseline_dir.glob("search_*.json"):
             cfg = load_search_config(str(path))
-            assert cfg.strategy == "human_only"
+            assert cfg.human_only is True
             assert cfg.scenario_paths["debt"].endswith("debt_unused.json")
             assert cfg.scenario_paths["agent"].endswith("agent_unused.json")
             for group in SCENARIO_GROUPS:

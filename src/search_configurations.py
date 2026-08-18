@@ -1,16 +1,15 @@
 """Search for the cheapest team composition that keeps up with the project (paper §3.11).
 
-Two strategies solve the constrained single-objective problem of Eq. (objective):
-`_run_evolutionary_search` maintains a population and mutates parents drawn from an elite
-ranked by the preference relation of `src.selection`, and `_run_descent` repeatedly moves to
-the best configuration in an *enumerated* neighbourhood until it reaches a local optimum.
-Uniform random sampling (`_random_draws`) is not a strategy of its own — it is the shared
-initialiser both of them seed from (§3.11.2).
+`_run_evolutionary_search` solves the constrained single-objective problem of
+Eq. (objective): it maintains a population and mutates parents drawn from an elite ranked
+by the preference relation of `src.selection`.  It is the paper's only search strategy.
+Uniform random sampling (`_random_draws`) is not a strategy of its own — it is the
+initialiser the search seeds from (§3.11.2).
 
-`_run_human_only` sits beside them but is not a third strategy: the human-only baseline of
+`_run_human_only` sits beside it but is not a second strategy: the human-only baseline of
 §4.1 fixes both composition vectors at zero, leaving 99 configurations that are enumerated
-exhaustively.  It is the only producer of zero-agent teams — the samplers, `_mutate` and
-`neighbourhood` all keep their `a_1 >= 1` floor, so neither search can reach one.
+exhaustively.  It is the only producer of zero-agent teams — the samplers and `_mutate`
+keep their `a_1 >= 1` floor, so the search can never reach one.
 
 Output layout
 -------------
@@ -23,10 +22,12 @@ Output layout
                                file is governed by SearchConfiguration.samples
                                ("all" / "best" / "none")
 
-Supervised role counts are bounded per role by the throughput saturation bound u_k
-of `saturation_bounds` (Eq. sat_bound) — beyond u_k an agent has no work to do —
+Supervised role counts are bounded per role by the throughput saturation bound a-bar_k
+of `saturation_bounds` (Eq. sat_bound) — beyond a-bar_k an agent has no work to do —
 and collectively by the human-capacity condition of Eq. (feas_monitoring), which
-`src.feasibility` checks after the draw.
+`src.feasibility` checks after the draw.  The three autonomous roles are outside both:
+the two detection services are capped by nothing at all (only sampled within a range),
+and the Refactoring Agent is capped by `refactoring_bound` alone.
 """
 
 from __future__ import annotations
@@ -34,13 +35,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 
 from .config import (
     AGENT_ROLE_COUNT,
-    BACKGROUND_ROLE_INDICES,
+    AUTONOMOUS_ROLE_INDICES,
     SUPERVISED_ROLE_INDICES,
     SearchConfiguration,
     SimulationHorizon,
@@ -51,7 +51,6 @@ from .results import save_result
 from .selection import (
     AggregatedObjectives,
     aggregate_config_result,
-    prefers,
     rank,
     throughput_floor,
 )
@@ -63,11 +62,10 @@ from .state import SystemState
 # Composition sampling
 # ---------------------------------------------------------------------------
 
-#: The two background detection services (paper §3.11) are drawn uniformly from
-#: {0, ..., floor(r_arrival)}, i.e., at most one service instance per feature that
-#: arrives in a sprint.  The model imposes no cap on these roles; this bound is a
-#: sampling choice that scales the candidate counts with the review volume the
-#: scenario generates, not a model constraint.
+#: The 0-based index of the Refactoring Agent (k=4), the one autonomous role that carries
+#: an upper bound.  Named because it is special-cased in the sampler and in the mutation
+#: operator alike, while the two detection services next to it are capped by nothing.
+_REFACTOR_INDEX: int = 3
 
 _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
     i for i in SUPERVISED_ROLE_INDICES if i >= 2
@@ -75,15 +73,19 @@ _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
 
 
 def saturation_bounds(params, sigma: float) -> dict[int, int]:
-    """Per-role upper bounds u_k of paper §3.11.1, Eq. (sat_bound), by 0-based index.
+    """Per-role upper bounds a-bar_k of paper §3.11.1, Eq. (sat_bound), by 0-based index.
 
-    Every supervised role is fed by work that ultimately derives from the feature
+    Every *supervised* role is fed by work that ultimately derives from the feature
     arrival rate, so deploying more agents than the inflow can keep busy buys
-    nothing.  `W_k` is that steady-state inflow (Eq. workload) and `rho_k` the
+    nothing.  `lambda_k` is that steady-state inflow (Eq. workload) and `eta_k` the
     throughput one agent of the role sustains (Eq. sat_rates); the debt amplifier
     enters at its floor `delta_min`, the least favourable and therefore most
     permissive case.  `sigma >= 1` is the headroom factor that still lets the search
     over-allocate against the Poisson peaks of the arrival process.
+
+    The three autonomous roles of K_aut = {4,5,6} are deliberately absent: Eq. (sat_bound)
+    ranges over K_sup only.  The Refactoring Agent's cap comes from `refactoring_bound`
+    instead, and the two detection services have none.
 
     Every workload is a positive multiple of r_arrival, so the ceiling is at least 1
     for every role and a_dev,1 >= 1 stays reachable without an explicit floor.
@@ -92,17 +94,16 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
         raise ValueError(f"sigma must be >= 1, got {sigma}")
 
     r = params.r_arrival
-    # W_3 counts only the agent-injected bug stream of Eq. (Binj-agent), matching the
+    # lambda_3 counts only the agent-injected bug stream of Eq. (Binj-agent), matching the
     # paper's Eq. (workload).  Since Eq. (Binj-human) became an absolute rate the human
     # stream is no longer proportional to r_bugs and is therefore not represented here;
-    # that under-counts the inflow, but harmlessly — rho_3 = r_fix * delta_min is in the
-    # hundreds, so u_3 = 1 either way, even at r_arrival = 1000.
-    W_3 = params.r_bugs * (2.0 - params.delta_min) * r
+    # that under-counts the inflow, but harmlessly — eta_3 = r_fix * delta_min is in the
+    # hundreds, so a-bar_3 = 1 either way, even at r_arrival = 1000.
+    lambda_3 = params.r_bugs * (2.0 - params.delta_min) * r
     workload = {
         0: (1.0 + params.f_arch_chg) * r,                       # k=1 Feature Implementation
         1: params.f_arch_chg * r,                               # k=2 Architecture & Design
-        2: W_3,                                                 # k=3 Bug Fixing
-        3: params.delta_impl * r + params.delta_fix * W_3,       # k=4 Refactoring
+        2: lambda_3,                                            # k=3 Bug Fixing
         6: params.c_test_ceil * r,                              # k=7 Test Development
         7: r,                                                   # k=8 Documentation
     }
@@ -110,7 +111,6 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
         0: params.r_F * params.delta_min,
         1: params.r_arch_chg,
         2: params.r_fix * params.delta_min,
-        3: params.r_refactor,
         6: params.r_test,
         7: params.r_doc,
     }
@@ -119,31 +119,55 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
         rate = rates[idx]
         if rate <= 0:
             raise ValueError(
-                f"saturation rate rho for role index {idx} must be > 0, got {rate}"
+                f"saturation rate eta for role index {idx} must be > 0, got {rate}"
             )
         bounds[idx] = math.ceil(sigma * workload[idx] / rate)
     return bounds
 
 
-def background_count_max(params) -> int:
-    """Upper bound of the background-service draw: features arriving per sprint."""
+def review_sample_max(params) -> int:
+    """Sampling range of the two detection services: features arriving per sprint.
+
+    Paper §3.11.2, step 5: a_.,5 and a_.,6 are drawn uniformly from {0, ..., floor(
+    r_arrival)}, i.e. at most one service instance per feature that arrives in a sprint.
+    The model imposes no cap on these roles at all — this is a sampling choice that
+    scales the candidate counts with the review volume the scenario generates, and the
+    mutation operator may take them beyond it.
+    """
     return int(params.r_arrival)
 
 
-def _sample_background_count(rng: np.random.Generator, bg_max: int) -> int:
-    """Draw one background-service count uniformly from {0, ..., bg_max}."""
-    return int(rng.integers(0, bg_max + 1))
+def refactoring_bound(params) -> int:
+    """a-bar_4 of paper §3.11.2, step 6: floor(r_arrival / 2).
+
+    Unlike `review_sample_max` this is a genuine cap, honoured by the sampler *and* by
+    the mutation operator (§3.11.4): "the refactoring service is restricted by a-bar_4".
+    It allows up to one Refactoring Agent per two features that arrive in a sprint, on the
+    grounds that the debt to remove is generated by features and by the bug fixes those
+    features cause.  It is not scaled by `sigma` — the paper defines it outside
+    Eq. (sat_bound) — and it is 0 for r_arrival < 2, which pins the role to zero there.
+    """
+    return int(params.r_arrival // 2)
+
+
+def _sample_count(rng: np.random.Generator, upper: int) -> int:
+    """Draw one autonomous-role count uniformly from {0, ..., upper}."""
+    return int(rng.integers(0, upper + 1))
 
 
 def _assemble_composition(
-    supervised: dict[int, int], rng: np.random.Generator, bg_max: int
+    supervised: dict[int, int],
+    rng: np.random.Generator,
+    review_max: int,
+    refactor_max: int,
 ) -> tuple[int, ...]:
-    """Build a full 8-role vector from supervised counts plus fresh background draws."""
+    """Build a full 8-role vector from supervised counts plus fresh autonomous draws."""
     A = [0] * AGENT_ROLE_COUNT
     for idx, count in supervised.items():
         A[idx] = count
-    for idx in BACKGROUND_ROLE_INDICES:
-        A[idx] = _sample_background_count(rng, bg_max)
+    for idx in AUTONOMOUS_ROLE_INDICES:
+        upper = refactor_max if idx == _REFACTOR_INDEX else review_max
+        A[idx] = _sample_count(rng, upper)
     return tuple(A)
 
 
@@ -155,8 +179,8 @@ def _sample_supervised(
 ) -> dict[int, int]:
     """Draw each supervised role independently and uniformly within its bound u_k.
 
-    Paper §3.11.2, steps 3-4: a_k ~ U{0, ..., u_k}, except that the dev-phase
-    Feature Implementation role (index 0) is drawn from U{1, ..., u_1} so that
+    Paper §3.11.2, steps 3-4: a_k ~ U{0, ..., a-bar_k}, except that the dev-phase
+    Feature Implementation role (index 0) is drawn from U{1, ..., a-bar_1} so that
     a_dev,1 >= 1 holds by construction.  The human-capacity condition is *not*
     enforced here — a draw that violates it is rejected by the feasibility gate.
     """
@@ -168,21 +192,23 @@ def _sample_supervised(
 
 
 def _sample_dev_composition(
-    rng: np.random.Generator, bounds: dict[int, int], bg_max: int
+    rng: np.random.Generator, bounds: dict[int, int],
+    review_max: int, refactor_max: int,
 ) -> tuple[int, ...]:
-    """Sample a dev-phase composition: every supervised role within u_k, a_1 >= 1."""
+    """Sample a dev-phase composition: every supervised role within a-bar_k, a_1 >= 1."""
     supervised = _sample_supervised(rng, bounds, SUPERVISED_ROLE_INDICES, min_impl=True)
-    return _assemble_composition(supervised, rng, bg_max)
+    return _assemble_composition(supervised, rng, review_max, refactor_max)
 
 
 def _sample_qa_composition(
-    rng: np.random.Generator, bounds: dict[int, int], bg_max: int
+    rng: np.random.Generator, bounds: dict[int, int],
+    review_max: int, refactor_max: int,
 ) -> tuple[int, ...]:
-    """Sample a QA-phase composition: a_1=a_2=0, the rest within their bound u_k."""
+    """Sample a QA-phase composition: a_1=a_2=0, the rest within their bound a-bar_k."""
     # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture
     # proposals during feature freeze).
     supervised = _sample_supervised(rng, bounds, _QA_SUPERVISED_INDICES, min_impl=False)
-    return _assemble_composition(supervised, rng, bg_max)
+    return _assemble_composition(supervised, rng, review_max, refactor_max)
 
 
 # ---------------------------------------------------------------------------
@@ -200,20 +226,28 @@ def _mutate_composition(
     bounds: dict[int, int],
     rng: np.random.Generator,
     min_impl: bool,
+    refactor_max: int,
 ) -> None:
     """Apply one elementary mutation to `A` in place.
 
     `mutable` are the supervised role indices that may be changed; each is capped by
-    its throughput saturation bound `bounds[i]` (paper §3.11.1).  The background
-    services are mutated by a separate +/-1 operation and are capped by nothing.
+    its throughput saturation bound `bounds[i]` (paper §3.11.1).  The three autonomous
+    roles of K_aut = {4,5,6} are mutated by a separate +/-1 "adjust service" operation
+    instead, because they need no supervision and are not part of the pool the other
+    three operations redistribute (§3.11.4).  The two detection services have no upper
+    bound there; the Refactoring Agent is capped by `refactor_max` = a-bar_4, and a +1
+    that would exceed it is left as a no-op for `_mutate` to retry.
     With `min_impl`, index 0 (Feature Implementation) is protected from being drained
     to zero.
     """
-    op = int(rng.integers(4))   # 0=move, 1=add, 2=remove, 3=background +/-1
+    op = int(rng.integers(4))   # 0=move, 1=add, 2=remove, 3=adjust service +/-1
     if op == 3:
-        idx = _pick(BACKGROUND_ROLE_INDICES, rng)
+        idx = _pick(AUTONOMOUS_ROLE_INDICES, rng)
         delta = int(rng.choice([-1, 1]))
-        A[idx] = max(0, A[idx] + delta)
+        target = A[idx] + delta
+        if idx == _REFACTOR_INDEX and target > refactor_max:
+            return          # a-bar_4 reached; leave the parent unchanged
+        A[idx] = max(0, target)
         return
 
     floor = 1 if min_impl else 0
@@ -241,6 +275,7 @@ def _mutate(
     rng: np.random.Generator,
     search_cfg: SearchConfiguration,
     bounds: dict[int, int],
+    refactor_max: int,
 ) -> TeamConfiguration:
     """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
     R is never mutated. Retries up to 10 times if the result is unchanged or invalid;
@@ -252,7 +287,6 @@ def _mutate(
     burning a retry every time.  Before that canonicalisation existed this was the single
     largest source of behavioural duplicates: the mutation produced a child that differed
     from its parent in name only and was then scored on a different RNG stream.
-    `neighbourhood` drops the same block, for the same reason.
     """
     n_mutation_types = 3 if config.F_freeze == 0 else 4
     for _ in range(10):
@@ -287,13 +321,13 @@ def _mutate(
             # Mutate A_dev: exactly one elementary op, maintaining a_k <= u_k and
             # A_dev[0] >= 1
             _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, bounds,
-                                rng, min_impl=True)
+                                rng, min_impl=True, refactor_max=refactor_max)
 
         else:
             # Mutate A_qa: exactly one elementary op restricted to the supervised QA
-            # roles (indices 0-1 stay at 0) plus the background services
+            # roles (indices 0-1 stay at 0) plus the autonomous services
             _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, bounds,
-                                rng, min_impl=False)
+                                rng, min_impl=False, refactor_max=refactor_max)
 
         try:
             child = TeamConfiguration(N=N, A_dev=tuple(A_dev), R=config.R,
@@ -304,110 +338,6 @@ def _mutate(
             return child
 
     return config   # all attempts were unchanged or invalid
-
-
-# ---------------------------------------------------------------------------
-# Neighbourhood enumeration (for greedy descent)
-# ---------------------------------------------------------------------------
-
-def _composition_neighbours(
-    A: tuple[int, ...],
-    mutable: tuple[int, ...],
-    bounds: dict[int, int],
-    min_impl: bool,
-) -> Iterator[tuple[int, ...]]:
-    """Every composition `_mutate_composition` can reach from `A` in one step (§3.11.5).
-
-    The same four elementary operations, enumerated instead of sampled: add one agent to a
-    supervised role still below its bound u_k, remove one from a non-empty supervised role,
-    transfer one between two supervised roles, and apply +/-1 to each background service.
-    `min_impl` protects index 0 from being drained below one, as in the mutation operator.
-    Duplicates and no-ops are the caller's problem — `neighbourhood` deduplicates.
-    """
-    floor = 1 if min_impl else 0
-    donors = [i for i in mutable if A[i] > (floor if i == 0 else 0)]
-    recipients = [i for i in mutable if A[i] < bounds[i]]
-
-    for i in recipients:                        # add
-        out = list(A)
-        out[i] += 1
-        yield tuple(out)
-    for i in donors:                            # remove
-        out = list(A)
-        out[i] -= 1
-        yield tuple(out)
-    for src in donors:                          # move
-        for dst in mutable:
-            # The donor is always below its bound after the decrement, so a transfer back
-            # into it would be a no-op; every other recipient must still have headroom.
-            if dst == src or A[dst] >= bounds[dst]:
-                continue
-            out = list(A)
-            out[src] -= 1
-            out[dst] += 1
-            yield tuple(out)
-    for i in BACKGROUND_ROLE_INDICES:           # adjust service, uncapped, floored at 0
-        for delta in (-1, 1):
-            if A[i] + delta < 0:
-                continue
-            out = list(A)
-            out[i] += delta
-            yield tuple(out)
-
-
-def neighbourhood(
-    config: TeamConfiguration,
-    search_cfg: SearchConfiguration,
-    bounds: dict[int, int],
-) -> list[TeamConfiguration]:
-    """Every configuration one mutation step away from `config` (paper §3.11.5).
-
-    The adjacent staffing levels in `N_values`, F_freeze +/- 1 within [0, R-1], and
-    `_composition_neighbours` over A_dev and over A_qa.  `R` is never changed, matching the
-    mutation operator.  The A_qa block is skipped at `F_freeze == 0`, where A_qa is
-    canonically zero and every QA move would collapse straight back to `config`.
-    Structurally invalid children and `config` itself are dropped, and the result is
-    deduplicated, so the returned list is exactly the set of distinct valid neighbours.
-    """
-    candidates: list[tuple[float, tuple[int, ...], int, tuple[int, ...]]] = []
-
-    n_vals = sorted(search_cfg.N_values)
-    if config.N in n_vals:
-        idx = n_vals.index(config.N)
-        adjacent = [n_vals[i] for i in (idx - 1, idx + 1) if 0 <= i < len(n_vals)]
-    else:
-        adjacent = list(n_vals)
-    for N in adjacent:
-        candidates.append((N, config.A_dev, config.F_freeze, config.A_qa))  # type: ignore[arg-type]
-
-    for F_freeze in (config.F_freeze - 1, config.F_freeze + 1):
-        if 0 <= F_freeze <= config.R - 1:
-            candidates.append((config.N, config.A_dev, F_freeze, config.A_qa))  # type: ignore[arg-type]
-
-    for A_dev in _composition_neighbours(
-        config.A_dev, SUPERVISED_ROLE_INDICES, bounds, min_impl=True
-    ):
-        candidates.append((config.N, A_dev, config.F_freeze, config.A_qa))  # type: ignore[arg-type]
-
-    if config.F_freeze > 0:
-        for A_qa in _composition_neighbours(
-            config.A_qa, _QA_SUPERVISED_INDICES, bounds, min_impl=False  # type: ignore[arg-type]
-        ):
-            candidates.append((config.N, config.A_dev, config.F_freeze, A_qa))
-
-    out: list[TeamConfiguration] = []
-    seen: set[TeamConfiguration] = {config}
-    for N, A_dev, F_freeze, A_qa in candidates:
-        try:
-            child = TeamConfiguration(N=N, A_dev=A_dev, R=config.R,
-                                      F_freeze=F_freeze, A_qa=A_qa)
-        except ValueError:
-            continue    # structurally invalid, e.g. a_qa,1 != 0 once a freeze opens
-        if child in seen:
-            continue
-        seen.add(child)
-        out.append(child)
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +358,8 @@ def _random_draws(
     Eq. (feas_monitoring), applied by the feasibility gate in `_evaluate`
     (paper §3.11.2, step 6).
     """
-    bg_max = background_count_max(params)
+    review_max = review_sample_max(params)
+    refactor_max = refactoring_bound(params)
     bounds = saturation_bounds(params, search_cfg.sigma)
     draws: list[TeamConfiguration] = []
     for _ in range(n_samples):
@@ -438,14 +369,15 @@ def _random_draws(
         # real parameter at all.  Restricted to the admissible values for this R; the list
         # is never empty, since SearchConfiguration requires 0 in F_freeze_values.
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
-        # Each supervised role is drawn independently within its saturation bound;
-        # the background services are drawn separately inside the samplers and are
-        # bounded by neither u_k nor anything else.
-        A_dev = _sample_dev_composition(rng, bounds, bg_max)
+        # Each supervised role is drawn independently within its saturation bound; the
+        # three autonomous roles are drawn separately inside the samplers, the detection
+        # services within a sampling range that bounds nothing and the Refactoring Agent
+        # within a-bar_4 (§3.11.2, steps 5-6).
+        A_dev = _sample_dev_composition(rng, bounds, review_max, refactor_max)
         # With no freeze window the QA composition is never applied, so drawing one would
         # only attach meaningless coordinates to the candidate (paper §3.11.2, step 4).
-        A_qa = (_sample_qa_composition(rng, bounds, bg_max) if F_freeze > 0
-                else (0,) * AGENT_ROLE_COUNT)
+        A_qa = (_sample_qa_composition(rng, bounds, review_max, refactor_max)
+                if F_freeze > 0 else (0,) * AGENT_ROLE_COUNT)
         draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
                                        F_freeze=F_freeze, A_qa=A_qa))
     return draws
@@ -494,7 +426,7 @@ def _evaluate(
 
 @dataclass(slots=True)
 class SearchOutcome:
-    """Everything a search strategy produces, independent of how it is persisted.
+    """Everything a search or enumeration produces, independent of how it is persisted.
 
     `results` holds the per-candidate ConfigResults kept for possible sample export;
     it is empty when the retention policy is "none" and holds every simulated
@@ -534,16 +466,8 @@ def write_samples(outcome: SearchOutcome, out_dir: Path, keys: list[str]) -> int
 
 
 # ---------------------------------------------------------------------------
-# Search strategies
+# Search
 # ---------------------------------------------------------------------------
-
-#: Seed draws a single descent restart may attempt before it is abandoned.  A restart is
-#: not bounded by an evaluation budget, so this is the only thing that terminates the seed
-#: loop on a search range whose candidates are (almost) all rejected by the feasibility
-#: gate — a redrawn candidate that has already been scored costs nothing and would let the
-#: loop run forever.
-_MAX_SEED_DRAWS = 100
-
 
 def _progress(i: int, total: int, outcome: SearchOutcome, every: int) -> None:
     """Print a compact heartbeat every `every` candidates (`every == 0` silences it)."""
@@ -578,6 +502,7 @@ def _run_evolutionary_search(
     budget      = search_cfg.budget
     keep_samples = search_cfg.samples != "none"
     bounds = saturation_bounds(params, search_cfg.sigma)
+    refactor_max = refactoring_bound(params)
     floor = throughput_floor(params, search_cfg.epsilon)
 
     outcome = SearchOutcome(manifest={}, aggs=[], results={})
@@ -630,7 +555,7 @@ def _run_evolutionary_search(
                     break
                 attempts += 1
                 parent = pool[int(rng.integers(len(pool)))]
-                child = _mutate(parent, rng, search_cfg, bounds)
+                child = _mutate(parent, rng, search_cfg, bounds, refactor_max)
                 if child in seen:
                     continue
                 evaluate_new(child, generation=gen)
@@ -642,98 +567,6 @@ def _run_evolutionary_search(
             best_txt = f"{best.cost_mean:.0f}" if best is not None else "n/a"
             print(f"  Gen {gen:3d}: best cost = {best_txt}, elite = {len(elite_parents)}, "
                   f"offspring evaluated = {n_new}, total evaluated = {outcome.n_evaluated}, "
-                  f"simulated = {outcome.n_simulated}", flush=True)
-
-    return outcome
-
-
-def _run_descent(
-    search_cfg: SearchConfiguration,
-    settings: SimulationHorizon,
-    params,
-    rng: np.random.Generator,
-    initial_state: SystemState | None = None,
-    progress_every: int = 100,
-) -> SearchOutcome:
-    """Greedy neighbourhood descent with random restarts (paper §3.11.5).
-
-    Each of `n_starts` restarts begins at a configuration drawn by the sampler of §3.11.2
-    and repeatedly moves to the `prefers`-best member of its enumerated neighbourhood,
-    stopping at a local optimum — no neighbour is preferred to the incumbent.
-
-    The descent is **not** budgeted: `SearchConfiguration.budget` governs the evolutionary
-    strategy alone.  Every restart runs to convergence, however many evaluations that
-    takes, and the realised count is reported afterwards as `n_evaluated` (paper §4.2).
-    Descent converges long before an evolutionary-sized budget is spent, so capping it
-    would only have truncated some restarts mid-neighbourhood without buying comparability.
-
-    Evaluation accounting still matches the evolutionary strategy: every candidate that
-    reaches the feasibility check counts as one evaluation, infeasible ones included, and
-    a candidate already evaluated in an earlier step or restart is free (`scored`).  An
-    incumbent whose whole neighbourhood has already been visited is therefore a local
-    optimum at no cost.
-    """
-    n_starts = search_cfg.n_starts
-    keep_samples = search_cfg.samples != "none"
-    bounds = saturation_bounds(params, search_cfg.sigma)
-    floor = throughput_floor(params, search_cfg.epsilon)
-
-    outcome = SearchOutcome(manifest={}, aggs=[], results={})
-    # Objective of every candidate ever evaluated, so a revisit costs no budget.  None
-    # marks an infeasible candidate, which can never become an incumbent.
-    scored: dict[TeamConfiguration, "AggregatedObjectives | None"] = {}
-
-    def evaluate(cfg: TeamConfiguration, restart: int, step: int):
-        """Evaluate `cfg` unless already seen; returns its objective or None."""
-        if cfg in scored:
-            return scored[cfg]
-        key = _config_key(cfg, outcome.n_evaluated)
-        entry, agg, cr = _evaluate(cfg, settings, params, initial_state)
-        entry["restart"] = restart
-        entry["step"] = step
-        outcome.manifest[key] = entry
-        scored[cfg] = agg
-        if agg is not None:
-            outcome.aggs.append((key, cfg, agg))
-            if keep_samples:
-                outcome.results[key] = cr    # type: ignore[assignment]
-        return agg
-
-    for restart in range(n_starts):
-        # One seed per restart, drawn independently.  An infeasible seed has no objective
-        # to descend from, so redraw until one passes the feasibility gate — each *new*
-        # draw is charged, as everywhere else.  The attempt cap is what stops a search
-        # range on which (almost) nothing is feasible from spinning forever: re-drawing an
-        # already-scored candidate costs nothing, so `n_evaluated` need never advance.
-        current: TeamConfiguration | None = None
-        current_agg: "AggregatedObjectives | None" = None
-        for _ in range(_MAX_SEED_DRAWS):
-            seed = _random_draws(search_cfg, rng, 1, params)[0]
-            agg = evaluate(seed, restart, step=0)
-            if agg is not None:
-                current, current_agg = seed, agg
-                break
-        if current is None or current_agg is None:
-            if progress_every:
-                print(f"  Restart {restart}: no feasible seed in {_MAX_SEED_DRAWS} draws",
-                      flush=True)
-            continue
-
-        step = 0
-        while True:
-            step += 1
-            best_cfg, best_agg, improved = current, current_agg, False
-            for nb in neighbourhood(current, search_cfg, bounds):
-                agg = evaluate(nb, restart, step)
-                if agg is not None and prefers(agg, best_agg, floor):
-                    best_cfg, best_agg, improved = nb, agg, True
-            if not improved:
-                break        # local optimum: no neighbour is preferred
-            current, current_agg = best_cfg, best_agg
-
-        if progress_every:
-            print(f"  Restart {restart}: {step} step(s), cost = {current_agg.cost_mean:.0f}, "
-                  f"total evaluated = {outcome.n_evaluated}, "
                   f"simulated = {outcome.n_simulated}", flush=True)
 
     return outcome
@@ -767,14 +600,14 @@ def _run_human_only(
 ) -> SearchOutcome:
     """Exhaustive enumeration of the human-only baseline grid (paper §4.1).
 
-    Not a search strategy: at 99 candidates there is nothing to search and no budget to
-    spend, so `budget`, `n_starts` and the evolutionary settings are all ignored and the
-    result is deterministic — `rng` is accepted only to match the signature of
-    `_run_evolutionary_search` / `_run_descent`, and is unused.
+    Not a search: at 99 candidates there is nothing to search and no budget to spend, so
+    `budget` and the evolutionary settings are all ignored and the result is deterministic
+    — `rng` is accepted only to match the signature of `_run_evolutionary_search`, and is
+    unused.
 
     `saturation_bounds` is likewise never called: it bounds supervised roles that the
     baseline does not staff.  Every candidate still passes through `_evaluate`, so an
-    infeasible one counts as an evaluation exactly as in the two search strategies.
+    infeasible one counts as an evaluation exactly as in the search.
     """
     keep_samples = search_cfg.samples != "none"
     outcome = SearchOutcome(manifest={}, aggs=[], results={})

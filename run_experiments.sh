@@ -3,12 +3,9 @@
 # Run the full experiment campaign of paper Section 4.2.
 #
 # 432 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
-# tier for project and a fourth "pessimistic" tier for agent) are each solved twice, once
-# with evolutionary search and once with greedy neighbourhood descent, giving 864
-# searches.  An evolutionary search spends a
-# fixed budget of 10,000 candidate evaluations; a descent search runs each of its 20
-# restarts to a local optimum and is therefore much shorter, typically a few hundred
-# evaluations.  Jobs are independent, so they run in parallel and the
+# tier for project and a fourth "pessimistic" tier for agent) are each solved once, with
+# the evolutionary search of paper Section 3.11, which spends a fixed budget of 10,000
+# candidate evaluations.  Jobs are independent, so they run in parallel and the
 # simulator itself is single-threaded — but throughput does NOT scale to the core count.
 # Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
 #
@@ -24,9 +21,12 @@
 # campaign any sooner — it only stretches each individual search (and since a search
 # writes nothing until it completes, that is lost work if the run is interrupted).
 # Hence the default of 4.  The table above is measured on a 10,000-candidate search, so
-# the 432 evolutionary jobs alone are roughly 215 core-hours; the 432 descent jobs stop
-# at their local optima after a few hundred candidates each and add an order of
-# magnitude less on top.
+# the 432 jobs are roughly 215 core-hours.
+#
+# The same driver runs the human-only baseline of Section 4.1, which is enumerated rather
+# than searched and is far cheaper (99 configurations per scenario):
+#
+#     CONFIG_DIR=config/search_baseline MODE=human_only ./run_experiments.sh
 #
 # Prerequisite:  .venv/bin/python scripts/generate_search_configs.py
 #
@@ -36,15 +36,16 @@
 #     LIMIT=2 ./run_experiments.sh          # smoke test the first two jobs
 #     JOBS=14 ./run_experiments.sh          # pin the worker count
 #     FORCE=1 ./run_experiments.sh          # re-run jobs that already have results
+#     MODE=human_only ./run_experiments.sh  # enumerate the Section 4.1 baseline instead
 #     nohup ./run_experiments.sh > campaign.log 2>&1 &     # long unattended run
 #
 # Re-running is safe: a job whose search_summary.json already exists is skipped unless
-# FORCE=1.  Per-job stdout goes to $OUT_ROOT/<scenario_id>/<strategy>/log.txt and one
+# FORCE=1.  Per-job stdout goes to $OUT_ROOT/<scenario_id>/<mode>/log.txt and one
 # TSV record per finished job is appended to $OUT_ROOT/index.tsv.
 
 set -euo pipefail
 
-usage() { sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,10 @@ cd "$(dirname "$0")"
 PYTHON=${PYTHON:-.venv/bin/python}
 CONFIG_DIR=${CONFIG_DIR:-config/search}
 OUT_ROOT=${OUT_ROOT:-results/experiments}
-STRATEGIES=${STRATEGIES:-"evolutionary descent"}
+# The search itself is not selectable (paper Section 3.11 describes one); MODE picks
+# between running it and enumerating the Section 4.1 zero-agent baseline, and names the
+# result subdirectory either way.
+MODE=${MODE:-evolutionary}
 SAMPLES=${SAMPLES:-best}
 START_STATE=${START_STATE:-config/startstate_default.json}
 PROGRESS_EVERY=${PROGRESS_EVERY:-500}
@@ -64,6 +68,11 @@ FILTER=${FILTER:-'*'}
 LIMIT=${LIMIT:-0}
 FORCE=${FORCE:-0}
 DRY_RUN=${DRY_RUN:-0}
+
+case "$MODE" in
+    evolutionary|human_only) ;;
+    *) echo "error: MODE must be 'evolutionary' or 'human_only', got '$MODE'" >&2; exit 1 ;;
+esac
 
 INDEX="$OUT_ROOT/index.tsv"
 
@@ -74,16 +83,14 @@ INDEX="$OUT_ROOT/index.tsv"
 }
 
 # ---------------------------------------------------------------------------
-# Job list: one line per (search config, strategy) pair
+# Job list: one line per search config
 # ---------------------------------------------------------------------------
 job_list() {
-    local cfg id strategy
+    local cfg id
     for cfg in "$CONFIG_DIR"/search_$FILTER.json; do
         [[ -e "$cfg" ]] || continue
         id=$(basename "$cfg" .json); id=${id#search_}
-        for strategy in $STRATEGIES; do
-            printf '%s\t%s\t%s\n' "$cfg" "$id" "$strategy"
-        done
+        printf '%s\t%s\n' "$cfg" "$id"
     done
 }
 
@@ -96,6 +103,7 @@ N_JOBS=$(printf '%s\n' "$JOBS_TSV" | wc -l)
 
 echo "Campaign: $N_JOBS job(s), $JOBS parallel worker(s)"
 echo "  configs   $CONFIG_DIR/search_$FILTER.json"
+echo "  mode      $MODE"
 echo "  output    $OUT_ROOT"
 echo "  samples   $SAMPLES"
 echo "  resume    $([[ $FORCE == 1 ]] && echo 'no (FORCE=1, re-running everything)' || echo yes)"
@@ -112,20 +120,26 @@ fi
 # One job
 # ---------------------------------------------------------------------------
 run_job() {
-    local cfg=$1 id=$2 strategy=$3
-    local out="$OUT_ROOT/$id/$strategy"
+    local cfg=$1 id=$2
+    local out="$OUT_ROOT/$id/$MODE"
     local started=$SECONDS
+    # Arrays do not survive `export`, so rebuild the mode flag from $MODE here.  MODE has
+    # already been validated above, so the only two cases are the ones below.
+    local mode_flags=()
+    if [[ "$MODE" == human_only ]]; then
+        mode_flags=(--human-only)
+    fi
 
     if [[ -s "$out/search_summary.json" && "$FORCE" != 1 ]]; then
-        printf 'SKIP  %-22s %-13s (results present)\n' "$id" "$strategy"
-        printf '%s\t%s\t%s\t%s\n' "$id" "$strategy" "skip" "0" >> "$INDEX"
+        printf 'SKIP  %-22s %-13s (results present)\n' "$id" "$MODE"
+        printf '%s\t%s\t%s\t%s\n' "$id" "$MODE" "skip" "0" >> "$INDEX"
         return 0
     fi
 
     mkdir -p "$out"
     local status=0
     "$PYTHON" -m src.main optimize "$cfg" \
-        --strategy "$strategy" \
+        ${mode_flags[@]+"${mode_flags[@]}"} \
         --samples "$SAMPLES" \
         --progress-every "$PROGRESS_EVERY" \
         --start-state "$START_STATE" \
@@ -133,29 +147,29 @@ run_job() {
 
     local elapsed=$(( SECONDS - started ))
     if (( status == 0 )); then
-        printf 'OK    %-22s %-13s %5ds\n' "$id" "$strategy" "$elapsed"
-        printf '%s\t%s\t%s\t%s\n' "$id" "$strategy" "0" "$elapsed" >> "$INDEX"
+        printf 'OK    %-22s %-13s %5ds\n' "$id" "$MODE" "$elapsed"
+        printf '%s\t%s\t%s\t%s\n' "$id" "$MODE" "0" "$elapsed" >> "$INDEX"
     else
         printf 'FAIL  %-22s %-13s %5ds  exit=%d  see %s\n' \
-            "$id" "$strategy" "$elapsed" "$status" "$out/log.txt" >&2
-        printf '%s\t%s\t%s\t%s\n' "$id" "$strategy" "$status" "$elapsed" >> "$INDEX"
+            "$id" "$MODE" "$elapsed" "$status" "$out/log.txt" >&2
+        printf '%s\t%s\t%s\t%s\n' "$id" "$MODE" "$status" "$elapsed" >> "$INDEX"
     fi
     return 0    # a single failed search must not abort the campaign
 }
 export -f run_job
-export PYTHON OUT_ROOT SAMPLES START_STATE PROGRESS_EVERY FORCE INDEX
+export PYTHON OUT_ROOT SAMPLES START_STATE PROGRESS_EVERY FORCE INDEX MODE
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 mkdir -p "$OUT_ROOT"
-[[ -f "$INDEX" ]] || printf 'scenario_id\tstrategy\texit_code\tseconds\n' > "$INDEX"
+[[ -f "$INDEX" ]] || printf 'scenario_id\tmode\texit_code\tseconds\n' > "$INDEX"
 
 campaign_start=$SECONDS
-# NUL-delimit the three fields of every job line, so xargs hands each worker exactly
-# one (config, scenario_id, strategy) triple regardless of the characters in them.
+# NUL-delimit the two fields of every job line, so xargs hands each worker exactly
+# one (config, scenario_id) pair regardless of the characters in them.
 printf '%s\n' "$JOBS_TSV" | tr '\t\n' '\0\0' \
-    | xargs -0 -P "$JOBS" -n 3 bash -c 'run_job "$@"' _
+    | xargs -0 -P "$JOBS" -n 2 bash -c 'run_job "$@"' _
 campaign_elapsed=$(( SECONDS - campaign_start ))
 
 # ---------------------------------------------------------------------------

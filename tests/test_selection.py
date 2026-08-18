@@ -175,11 +175,15 @@ class TestIndistinguishableSet:
                 _agg(value=5.0, cost=100.0, ci=(90.0, 110.0))]    # 1: same cost, short
         assert indistinguishable_set(pool, floor=10.0) == [0]
 
-    def test_best_is_reported_even_when_it_violates_the_constraint(self):
-        """With nothing admissible, I* collapses to the least-violating candidate."""
+    def test_an_inadmissible_pool_yields_an_empty_set(self):
+        """§3.10: with nothing admissible there is no c*, so I* is empty.
+
+        `report_optimum` still hands back the least-violating candidate beside it — see
+        TestReportOptimum — but the set itself has no members to speak of.
+        """
         pool = [_agg(value=9.0, cost=100.0, ci=(90.0, 110.0)),
                 _agg(value=1.0, cost=100.0, ci=(90.0, 110.0))]
-        assert indistinguishable_set(pool, floor=10.0) == [0]
+        assert indistinguishable_set(pool, floor=10.0) == []
 
     def test_touching_cis_count_as_overlapping(self):
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),
@@ -280,22 +284,43 @@ class TestIndistinguishableSetParsimony:
             keys.append(parsimony_key(_cfg(A_dev=A, A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
         assert indistinguishable_set(pool, 10.0, keys=keys)
 
-    def test_the_tie_break_can_remove_the_raw_minimiser(self):
-        """A smaller tied team running the same process displaces the cost minimiser."""
+    def test_the_tie_break_never_removes_the_raw_minimiser(self):
+        """§3.10 exempts c* from the tie-break, so a smaller tied team cannot displace it.
+
+        Both survive here: c* because it is exempt, and the smaller team because the larger
+        one does not parsimony-dominate it.
+        """
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # cheapest, but larger
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]   # dearer, but smaller
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0))),
                 parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))]
         assert best_index(pool, 10.0) == 0
-        assert indistinguishable_set(pool, 10.0, keys=keys) == [1]
+        assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
+
+    def test_a_dominated_non_optimum_is_still_removed(self):
+        """The exemption covers c* alone; every other member obeys the tie-break."""
+        pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # c*, smallest anyway
+                _agg(value=10.0, cost=101.0, ci=(91.0, 111.0)),   # tied, small
+                _agg(value=10.0, cost=102.0, ci=(92.0, 112.0))]   # tied, dominated by 1
+        keys = [parsimony_key(_cfg(N=2.0, A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
+                parsimony_key(_cfg(N=3.0, A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
+                parsimony_key(_cfg(N=3.0, A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))]
+        assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
 
     def test_parsimony_does_not_depend_on_input_order(self):
+        """The dominance filter is order-independent once c* is pinned.
+
+        Costs are made distinct so that the exempt c* is the same *configuration* in every
+        ordering; with all costs equal, `best_index` would break the tie by index and the
+        exemption would legitimately land on a different member after a shuffle.
+        """
         import numpy as np
         rng = np.random.default_rng(4)
         pool, keys = [], []
-        for _ in range(12):
+        for i in range(12):
             A = (1,) + tuple(int(x) for x in rng.integers(0, 3, size=7))
-            pool.append(_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)))
+            cost = 100.0 + i
+            pool.append(_agg(value=10.0, cost=cost, ci=(cost - 30.0, cost + 30.0)))
             keys.append(parsimony_key(_cfg(A_dev=A, A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
         survivors = {keys[i].agents for i in indistinguishable_set(pool, 10.0, keys=keys)}
         order = list(rng.permutation(len(pool)))
@@ -310,7 +335,7 @@ class TestIndistinguishableSetParsimony:
 class TestReportOptimum:
     """`report_optimum` must never report a c* that is absent from the reported I*."""
 
-    def test_best_is_always_a_member(self):
+    def test_best_is_always_a_member_of_a_non_empty_set(self):
         import numpy as np
         rng = np.random.default_rng(9)
         for _ in range(60):
@@ -324,15 +349,32 @@ class TestReportOptimum:
                                                A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
             best, members = report_optimum(pool, 10.0, keys=keys)
             assert best is not None
-            assert best in members
+            # I* is empty exactly when nothing in the pool is admissible (§3.10); whenever
+            # it is not, c* is one of its members.
+            if satisfies_throughput(pool[best], 10.0):
+                assert best in members
+            else:
+                assert members == []
 
-    def test_re_picks_the_optimum_when_the_tie_break_removes_it(self):
+    def test_the_tie_break_never_displaces_the_optimum(self):
+        """§3.10: c* is the raw minimiser even when a smaller team is tied with it."""
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # cheapest, but larger
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]   # dearer, but smaller
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0))),
                 parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))]
         best, members = report_optimum(pool, 10.0, keys=keys)
-        assert (best, members) == (1, [1])
+        assert (best, members) == (0, [0, 1])
+
+    def test_an_inadmissible_pool_reports_the_least_violating_with_an_empty_set(self):
+        """§3.10: no c* exists, so I* is empty, but the result is still reported."""
+        pool = [_agg(value=1.0, cost=10.0, ci=(9.0, 11.0)),      # cheapest, but far short
+                _agg(value=9.0, cost=100.0, ci=(90.0, 110.0))]   # least-violating
+        keys = [parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
+                parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))]
+        best, members = report_optimum(pool, 10.0, keys=keys)
+        assert best == 1
+        assert members == []
+        assert not satisfies_throughput(pool[best], 10.0)
 
     def test_matches_best_index_without_the_tie_break(self):
         pool = [_agg(value=10.0, cost=300.0, ci=(290.0, 310.0)),

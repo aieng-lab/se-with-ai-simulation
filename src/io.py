@@ -175,7 +175,6 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
     return SearchConfiguration(
         scenario_paths={str(g): str(p) for g, p in raw_scenario.items()},
         horizon_path=data["horizon"],
-        strategy=s["strategy"],
         N_values=tuple(float(x) for x in s["N_values"]),
         R_values=tuple(int(x) for x in s["R_values"]),
         F_freeze_values=tuple(int(x) for x in s.get("F_freeze_values", [0, 1])),
@@ -186,7 +185,7 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
         n_generations=int(s.get("n_generations", 15)),
         n_offspring=int(s.get("n_offspring", 20)),
         n_elite=int(s.get("n_elite", 20)),
-        n_starts=int(s.get("n_starts", 3)),
+        human_only=bool(s.get("human_only", False)),
         samples=str(s.get("samples", "best")),
         seed=int(s.get("seed", 0)),
         scenario_id=str(data.get("scenario_id", "")),
