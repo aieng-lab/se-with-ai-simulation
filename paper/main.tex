@@ -122,7 +122,7 @@ The model is based on a discrete-time stochastic dynamical system that simulates
 % - Key distinction: our feasibility pre-filter (human-capacity condition at prior
 %   means) dramatically prunes the search space before any simulation, a technique
 %   not present in prior SBSE team-composition work.
-% - Motivate evolutionary search + greedy neighbourhood descent as appropriate for
+% - Motivate evolutionary search as appropriate for
 %   discrete, high-dimensional, partially infeasible composition spaces where no
 %   gradient is available.
 
@@ -141,7 +141,7 @@ horizon is $T$. The simulation configuration is defined by the team composition 
 $\mathbf{c} = (N, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$. The parameters
 $N$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Section~\ref{sec:model:roles}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 21-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
 
-We derive the metrics that describe how well a team configuration performs from the terminal state(Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We require that a configuration keeps up with the work the project generates while minimizing costs to formualte this as search problem (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe the search strategy we use to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
+We derive the metrics that describe how well a team configuration performs from the terminal state and the per-sprint record of the work the agents completed (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We require that a configuration keeps up with the work the project generates while minimizing costs to formualte this as search problem (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe the search strategy we use to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
 
 % TODO - figure with the overall model structure: team composition parameters, scenario parameters, state vector, transition steps, and objective calculations.
 
@@ -742,25 +742,25 @@ and the Security Audit Agent detects the security bugs that survive both earlier
   \label{eq:dsa_eff}
 \end{equation}
 
-Let $T_x(t)$, $C_x(t)$ denote the counts detected by tests and code review for type
+Let $T_x(t)$, $\mathrm{CR}_x(t)$ denote the counts detected by tests and code review for type
 $x$, and $A_\mathrm{sec}(t)$ the count detected by the security audit. These are given by binomial draws with the corresponding detection probabilities:
 \begin{align}
   T_x(t)        &\sim \mathrm{Binomial}\!\bigl(B_x(t),\; p_\mathrm{test}(t)\bigr),
     & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  C_x(t)        &\sim \mathrm{Binomial}\!\bigl(B_x(t)-T_x(t),\; d_\mathrm{CR,eff}(t)\bigr),
+  \mathrm{CR}_x(t)  &\sim \mathrm{Binomial}\!\bigl(B_x(t)-T_x(t),\; d_\mathrm{CR,eff}(t)\bigr),
     & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  A_\mathrm{sec}(t) &\sim \mathrm{Binomial}\!\bigl(B_\mathrm{sec}(t)-T_\mathrm{sec}(t)-C_\mathrm{sec}(t),\; d_\mathrm{SA,eff}(t)\bigr).
+  A_\mathrm{sec}(t) &\sim \mathrm{Binomial}\!\bigl(B_\mathrm{sec}(t)-T_\mathrm{sec}(t)-\mathrm{CR}_\mathrm{sec}(t),\; d_\mathrm{SA,eff}(t)\bigr).
     \nonumber
 \end{align}
 The known and hidden queues are incremented accordingly:
 \begin{align}
-  B_\mathrm{kno,x}(t)   &= B_\mathrm{kno,x}(t-1) + T_x(t) + C_x(t),
+  B_\mathrm{kno,x}(t)   &= B_\mathrm{kno,x}(t-1) + T_x(t) + \mathrm{CR}_x(t),
     & x &\in \{\mathrm{min,maj}\}, \label{eq:bkno_update} \\
-  B_\mathrm{kno,sec}(t) &= B_\mathrm{kno,sec}(t-1) + T_\mathrm{sec}(t) + C_\mathrm{sec}(t) + A_\mathrm{sec}(t),
+  B_\mathrm{kno,sec}(t) &= B_\mathrm{kno,sec}(t-1) + T_\mathrm{sec}(t) + \mathrm{CR}_\mathrm{sec}(t) + A_\mathrm{sec}(t),
     \nonumber \\
-  B_\mathrm{hid,x}(t)   &= B_\mathrm{hid,x}(t-1) + B_x(t) - T_x(t) - C_x(t),
+  B_\mathrm{hid,x}(t)   &= B_\mathrm{hid,x}(t-1) + B_x(t) - T_x(t) - \mathrm{CR}_x(t),
     & x &\in \{\mathrm{min,maj}\}, \nonumber \\
-  B_\mathrm{hid,sec}(t) &= B_\mathrm{hid,sec}(t-1) + B_\mathrm{sec}(t) - T_\mathrm{sec}(t) - C_\mathrm{sec}(t) - A_\mathrm{sec}(t).
+  B_\mathrm{hid,sec}(t) &= B_\mathrm{hid,sec}(t-1) + B_\mathrm{sec}(t) - T_\mathrm{sec}(t) - \mathrm{CR}_\mathrm{sec}(t) - A_\mathrm{sec}(t).
     \nonumber
 \end{align}
 Note that $B_\mathrm{kno,x}(t)$ is an intermediate value at this step, which will be decreased by the bug fixing conducted in Step~7. 
@@ -850,7 +850,7 @@ were already updated by Step~5.
 
 \subsubsection*{Step 8 --- Escalation Queue}
 Agents raise human escalations per completed work item at rate $\rho_\mathrm{esc}$.
-The work the supervised agents completed this sprint is
+The work the supervised implementation agents completed this sprint is
 \begin{equation}
   W_\mathrm{agent}(t) = \mathrm{impl\_agents}(t) + \mathrm{arch\_chg\_done}(t)
     + \mathrm{fixes\_agent}(t),
@@ -859,7 +859,8 @@ The work the supervised agents completed this sprint is
 where $\mathrm{fixes\_agent}(t) = \sum_{i=1}^{6} n^A_i(t)$ is the agent share of the
 repairs of Step~7. Human work is excluded, since a developer does not escalate to
 themselves, as are the two background services, which file findings rather than
-escalating. New arrivals each sprint are then
+escalating, and the test and documentation agents, whose artefacts are reviewed
+together with the code they accompany rather than raised as separate escalations. New arrivals each sprint are then
 $\mathrm{esc\_new}(t) \sim \mathrm{Poisson}\bigl(\rho_\mathrm{esc}\,(2-\delta_D)\,W_\mathrm{agent}(t)\bigr)$,
 where the factor $(2 - \delta_D)$ increases the escalation rate as debt accumulates, as
 it does for bug injection in Eq.~\eqref{eq:r_bugs_eff}. The queue is then updated taking
@@ -919,13 +920,13 @@ and to the in-production repair queue. Afterwards, the hidden and known queues a
 The $B_\mathrm{rel,x}$ rows use the unindexed $t$ form on the right because the
 release queue was already updated by Step~7 (bug fixing) within this sprint;
 similarly $B_\mathrm{kno,x}(t)$ on the right is the post-fixing value from
-Steps~5 and~8. When $t \bmod R \neq 0$ no release fires and all updates are skipped.
+Steps~5 and~7. When $t \bmod R \neq 0$ no release fires and all updates are skipped.
 
 % ---- 3.7 ----
 \subsection{Objective Functions}
 \label{sec:model:objectives}
 
-The model evaluates a configuration through four quantities that are computed from the terminal state $S(T)$ and therefore aggregate performance across the entire development cycle: the \emph{value} delivered by implementing features, and the three cost drivers of the development process, namely the cost of the bugs that escape to production, the cost of the human developers, and the cost of the agents. 
+The model evaluates a configuration through four quantities that are computed from the terminal state $S(T)$ and from the per-sprint record of the work the agents completed, and therefore aggregate performance across the entire development cycle: the \emph{value} delivered by implementing features, and the three cost drivers of the development process, namely the cost of the bugs that escape to production, the cost of the human developers, and the cost of the agents. 
 
 \subsubsection{Value}
 
@@ -972,8 +973,9 @@ $r_7 = r_\mathrm{test}$, and $r_8 = r_\mathrm{doc}$.
 Theoretically, we could use the same approach for the other three roles, which would require them to invest a fixed amount of effort per feature implemented, bug fixed, or architecture change request resolved. However, this would restrictive and not allow the model to explore different quality, debt, and cost trade-offs. Thus, the costs of these agents are flat per-sprint and modelled based on reviewing or addressing the debt of a single feature as unit. The number of agents deployed then scales costs linearly and the benefit increases with more agents, but dimishes when this saturates with the number of features added. For these three roles we therefore set
 $r_4 = r_5 = r_6 = 1$. 
 
-Agents are therefore charged for the work they actually performed, so that an agent that
-no work reaches incurs no cost. Let $u_k(t)$ denote the work role $k$ completed in sprint
+The five demand-driven roles are therefore charged for the work they actually performed, so
+that an agent that no work reaches incurs no cost, whereas the three flat-rate roles are
+charged per sprint whether or not any work reaches them. Let $u_k(t)$ denote the work role $k$ completed in sprint
 $t$, measured in the unit of that role's rate $r_k$ and read off the sprint transition as
 summarised in Table~\ref{tab:work_units}. Implementing an approved architecture proposal is
 billed as five feature implementations, since it requires the same code-base-wide analysis
@@ -1015,7 +1017,7 @@ starts. They are fixed experiment constants that are
 specified as part of the experiment design (see Section~\ref{sec:setup}). The
 sprint transition $\mathcal{T}$ is then applied $T$ times, yielding terminal state
 $S(T)$. The outcome of each simulation run is randomized by the actions within the sprint transition, which are driven by the stochastic processes, e.g., the Poisson feature arrivals and the Binomial bug detection draws.
-The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$, $C_\mathrm{human}$, and $C_{\mathrm{agents},k}$ for each replication $k=1,\ldots,K$ are then computed from $S(T)$. We combine the cost drivers into the per-replication cost per feature
+The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$, $C_\mathrm{human}$, and $C_{\mathrm{agents},k}$ for each replication $k=1,\ldots,K$ are then computed from $S(T)$ and from the per-sprint work record. We combine the cost drivers into the per-replication cost per feature
 \begin{equation}
   C_k = \frac{C_{\mathrm{quality},k} + C_\mathrm{human} + C_{\mathrm{agents},k}}
              {F_{\mathrm{completed},k}(T)}
