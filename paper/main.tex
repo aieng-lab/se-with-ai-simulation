@@ -413,8 +413,8 @@ $r_\mathrm{fix}$       & Bugs fixed per Bug Fixing Agent per sprint            &
 \toprule
 Symbol & Description & Domain & Step \\
 \midrule
-$r_\mathrm{bugs}$               & Base Poisson rate of bugs injected per feature                                          & $\mathbb{R}_{>0}$     & 5 \\[2pt]
-$r_\mathrm{bugs,human}$         & Scale factor on the human-coded Poisson bug stream                      & $(0,1]$               & 5 \\[2pt]
+$r_\mathrm{bugs}$               & Base Poisson rate of bugs injected per feature by agents                                         & $\mathbb{R}_{>0}$     & 5 \\[2pt]
+$r_\mathrm{bugs,human}$         & Poisson rate of bugs injected per feature by humans                      & $\mathbb{R}_{>0}$               & 5 \\[2pt]
 $\theta_\mathrm{maj}$           & Binomial probability parameter for the major-bug draw in the type split                & $(0,1)$               & 5 \\[2pt]
 $\theta_\mathrm{sec}$           & Binomial probability parameter for the security-bug draw in the type split             & $(0,1)$               & 5 \\[2pt]
 \bottomrule
@@ -642,7 +642,6 @@ consumes five features' worth of agent capacity, because it requires the same
 code-base-wide analysis that makes an architecture proposal five times as expensive to
 produce (Section~\ref{sec:scenario:agentcosts}). The feature implementation is linearly reduced by $\delta_D$ to reflect the impact of debt on development speed.
 Total user-feature implementation per sprint is capped at the available backlog to
-Total user-feature implementation per sprint is capped at the available backlog to
 prevent over-counting features:
 \begin{equation}
   \mathrm{impl}(t) = \mathrm{impl\_agents}(t) + \mathrm{impl\_human}'(t)
@@ -674,28 +673,29 @@ pays off in the sprint it occurs, creating a direct incentive to allocate
 agents to the Test Development role.
 
 \subsubsection*{Step 5 --- Bug Injection and Detection}
-Each implemented feature injects defects at an effective per-feature rate
+Agents inject defects at an effective per-feature bug introduction rate
 \begin{equation}
   r_\mathrm{bugs,eff}(t) = r_\mathrm{bugs}\,(2 - \delta_D),
   \label{eq:r_bugs_eff}
 \end{equation}
-where the factor $(2 - \delta_D) \in [1,\, 2 - \delta_\mathrm{min}]$ increases the bug injection as debt accumulates.
-Bugs are drawn in two independent Poisson streams -- one for
-agent-implemented features and one for human-implemented features -- and
-then summed:
-\begin{align}
-  B_\mathrm{agents}(t) &\sim
-    \mathrm{Poisson}\!\bigl(\mathrm{impl\_agents}(t)\cdot r_\mathrm{bugs,eff}(t)\bigr),
-    \nonumber \\
-  B_\mathrm{human}(t)  &\sim
-    \mathrm{Poisson}\!\bigl(\mathrm{impl\_human}'(t)\cdot r_\mathrm{bugs,eff}(t)
-      \cdot r_\mathrm{bugs,human}\bigr),
-    \nonumber \\
-  B_\mathrm{inj}(t)    &= B_\mathrm{agents}(t) + B_\mathrm{human}(t),
-  \label{eq:Binj}
-\end{align}
-where $r_\mathrm{bugs,human}$ reflects the ratio of defect density of
-human-written code relative to agent-generated code.
+where the factor $(2 - \delta_D) \in [1,\, 2 - \delta_\mathrm{min}]$ increases the bug injection as debt accumulates. How many bugs exactly are introduced is randomised using a Poisson distribution as
+\begin{equation}
+  B_\mathrm{agents}(t) \sim
+    \mathrm{Poisson}\!\bigl(\mathrm{impl\_agents}(t)\cdot r_\mathrm{bugs,eff}(t)\bigr).
+  \label{eq:Binj-agent}
+\end{equation}
+The human-implemented features inject bugs at a fixed per-feature rate, i.e., independent of the debt as
+\begin{equation}
+  B_\mathrm{human}(t)  \sim
+    \mathrm{Poisson}\!\bigl(\mathrm{impl\_human}'(t)\cdot r_\mathrm{bugs,human}\bigr),
+  \label{eq:Binj-human}
+\end{equation}
+which gives us
+\begin{equation}
+  B_\mathrm{inj}(t) = B_\mathrm{agents}(t) + B_\mathrm{human}(t)
+  \label{eq:Binj-total}
+\end{equation}
+as the overall number of injected bugs within a sprint. 
 
 Each injected bug is assigned to exactly one of three mutually exclusive types via
 a sequential draw: security bugs are extracted first, then the remainder is split
@@ -962,17 +962,14 @@ The human personnel cost is the salary of the human developers. The parameter $c
 
 Each agent of role $k$ incurs a token cost $c_{\mathrm{token},k}$ per unit of
 work produced $r_k$, e.g., per feature added, bug fixed, or test written. Thus, the costs are
-computed with respect to throughput rates, rather than with a fixed rate per sprint.
-The rationale for this is practical: if we would charge a flat per-sprint fee for each agent, 
-this would either assume that the costs are the same, regardless of the throughput or we would
-need to model these costs as a function of the throughput. By modeling the costs, we decouple these
-two aspects and allow independent settings of throughput and costs. 
+computed with respect to the actual throughput and not the theoretical maximum rate. This accounts for under-utilisation of agents, e.g., when the feature backlog is empty or when the number of deployed agents exceeds the throughput that the human developers can supervise.
 We reuse the rates already introduced for the sprint
-transition function where feasible (Table~\ref{tab:params:pipeline}), i.e., $r_1 = r_F$,
-$r_2 = r_\mathrm{arch,chg}$, $r_3 = r_\mathrm{fix}$, $r_4 = r_\mathrm{refactor}$,
-$r_7 = r_\mathrm{test}$, and $r_8 = r_\mathrm{doc}$. The Code Review and Security Audit Agents ($k=5,6$) have no
-throughput rate in the sprint transition function, because they run as background services with no discrete unit of output: each deployed instance inspects whatever change volume the sprint produces. We therefore set
-$r_5 = r_6 = 1$, which charges the investment into these roles as a flat subscription fee per deployed instance per sprint. Note that this makes the cost of these roles linear in their headcount, while their detection benefit is concave in the headcount by Eq.~\eqref{eq:volume_factor}. This trade-off is what bounds the number of these agents in an optimal configuration, even though the model imposes no explicit cap on them.
+transition function where feasible, i.e., where the effort directly depends on the number of features implemented or bugs fixed (Table~\ref{tab:params:pipeline}), i.e., $r_1 = r_F$,
+$r_2 = r_\mathrm{arch,chg}$, $r_3 = r_\mathrm{fix}$,
+$r_7 = r_\mathrm{test}$, and $r_8 = r_\mathrm{doc}$. 
+
+Theoretically, we could use the same approach for the other three roles, which would require them to invest a fixed amount of effort per feature implemented, bug fixed, or architecture change request resolved. However, this would restrictive and not allow the model to explore different quality, debt, and cost trade-offs. Thus, the costs of these agents are flat per-sprint and modelled based on reviewing or addressing the debt of a single feature as unit. The number of agents deployed then scales costs linearly and the benefit increases with more agents, but dimishes when this saturates with the number of features added. For these three roles we therefore set
+$r_4 = r_5 = r_6 = 1$. 
 
 Agents are therefore charged for the work they actually performed, so that an agent that
 no work reaches incurs no cost. Let $u_k(t)$ denote the work role $k$ completed in sprint
@@ -997,7 +994,7 @@ $k$ & Role & $u_k(t)$ \\
 1 & Feature Impl.\ & $\mathrm{impl\_agents}(t) + 5\,\mathrm{arch\_impl}(t)$ \\[2pt]
 2 & Architecture & $\mathrm{arch\_chg\_done}(t)$ \\[2pt]
 3 & Bug Fixing & $\mathrm{fixes\_agent}(t)$ \\[2pt]
-4 & Refactoring & technical debt actually removed by Eq.~\eqref{eq:debt_update}, bounded by $r_\mathrm{refactor}\,a_{\cdot,4}$ \\[2pt]
+4 & Refactoring & $a_{\cdot,4}$ \\[2pt]
 5 & Code Review & $a_{\cdot,5}$ \\[2pt]
 6 & Security Audit & $a_{\cdot,6}$ \\[2pt]
 7 & Test Development & $N_\mathrm{test}(t) - N_\mathrm{test}(t-1)$ \\[2pt]
@@ -1221,7 +1218,7 @@ Our second strategy is a local search that repeatedly moves to the best configur
 The neighbourhood of a configuration $\mathbf{c}$ consists of all configurations that the mutation operator of Section~\ref{sec:model:search:evo} can reach from $\mathbf{c}$ in one step, enumerated rather than sampled: the two adjacent staffing levels in $\mathcal{N}$, the two adjacent feature-freeze lengths within $[0, R-1]$, and, for each of $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$, every single-agent addition to and removal from a supervised role, every transfer of one agent between two supervised roles, and a $\pm 1$ change to each background service. As in the mutation operator, $R$ is not changed, the saturation bounds of Eq.~\eqref{eq:sat_bound} are respected, and the structural constraints on $\mathbf{A}_\mathrm{qa}$ are preserved.
 
 \paragraph{Descent.}
-Starting from a configuration drawn with the sampler of Section~\ref{sec:model:search:random}, we iteratively determine the neighbour that $\prec$ ranks best. The descent terminates when no neighbour is preferred, i.e., at a local optimum. We repeat this $n_\mathrm{start}$ times with independently sampled starting points. 
+Starting from a configuration drawn with the sampler of Section~\ref{sec:model:search:random}, we iteratively determine the neighbour that $\prec$ ranks best. The descent terminates when no neighbour is preferred, i.e., at a local optimum. We repeat this $n_\mathrm{start}$ times with independently sampled starting points. The descent is not bounded by an evaluation budget: each restart runs until it converges, and how many configurations this required is a result we report rather than a quantity we fix in advance. Configurations are evaluated at most once, so a neighbour that an earlier step or restart has already visited is free, and a restart whose incumbent has a fully visited neighbourhood terminates without any further evaluations.
 
 
 % ============================================================
@@ -1230,10 +1227,42 @@ Starting from a configuration drawn with the sampler of Section~\ref{sec:model:s
 % ============================================================
 
 % ---- 4.1 ----
+\subsection{Human-only Baseline}
+\label{sec:setup:baseline}
+
+An important baseline to understand the impact of agents on software development is to compare mixed teams against a baseline with only human developers. For this, we set all agent counts to zero, i.e., $\mathbf{A}_\mathrm{dev} = \mathbf{A}_\mathrm{qa} = \mathbf{0}$, and let the human developers implement all features and fix all bugs themselves. The other model parameters are still optimized, i.e., the number of FTE equivalent developers $N$, release cadence $R$, and feature-freeze length $F_\mathrm{freeze}$ are still decision variables. The costs remain the same, except that the agent costs are always zero. 
+
+However, we need to slightly modify the simulation model to facilitate this, since we modelled the debt removal and bug detection as purely agentic tasks. We use a simplified model without debt dynamics for the human-only case, built on the assumption that some debt-removal and architecture updates are performed as part of the normal development process by the human developers. To facilitate bug detection, we reserve $f_\mathrm{qa} \in [0,1)$ of the developers' net capacity for quality assurance:
+\begin{equation}
+  H_\mathrm{after\_qa}(t) =
+  \begin{cases}
+    (1 - f_\mathrm{qa})\,H_\mathrm{net} & \text{development sprints},\\[2pt]
+    H_\mathrm{net}                      & \text{feature-freeze sprints}.
+  \end{cases}
+  \label{eq:hafter_qa}
+\end{equation}
+The time $H_\mathrm{after\_qa}(t)$ is then used in place of $H_\mathrm{after\_esc}(t)$ in the implementation and bug-fixing equations. Feature-freeze sprints are exempt from the reservation because no features are implemented in them, so there is nothing to review. From a modeling perspective, this means that the developers rather spend time on quality assurance, instead of supervising agents.
+
+The detection itself is implemented as a variant of the agent-driven detection which replaces the bug detection in Step~5. We match the reserved capacity $f_\mathrm{qa}\,N\,H_\mathrm{net}$ against the review effort the sprint demands, i.e., $h_\mathrm{review}$ hours for each of the $\mathrm{impl}(t)$ features implemented in it (Eq.~\eqref{eq:impl}). This gives us the review coverage
+\begin{equation}
+  \mathrm{cov\_qa}(t) = \min\!\Bigl(1,\;
+    \frac{f_\mathrm{qa}\,N\,H_\mathrm{net}}
+         {h_\mathrm{review}\,\max(1,\,\mathrm{impl}(t))}\Bigr),
+  \label{eq:cov_qa}
+\end{equation}
+i.e., the fraction of the implemented features that can be reviewed in full, which is similar to the volume factor $\Phi$ we use for agentic review in Eq.~\eqref{eq:volume_factor}. With a human bug detection capability factor $d_\mathrm{qa}$, the rate of bug detection is then
+\begin{equation}
+  \mathrm{QA}_x(t) \sim \mathrm{Binomial}\!\bigl(B_x(t),\; \mathrm{cov\_qa}(t)\,d_\mathrm{qa}\bigr),
+    x \in \{\mathrm{min,maj,sec}\}.
+  \label{eq:qa_human}
+\end{equation}
+The detected bugs are then removed from the hidden queues and moved to the known queues, analogous to the agentic detection. 
+
+% ---- 4.2 ----
 \subsection{Scenarios}
 \label{sec:setup:scenarios}
 
-There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting, and additionally a very high level for the project dynamics that stresses the simulation beyond the observed data. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level developers, or seniors resulting in different capabilities and salaries. 
+There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting, and additionally two levels that stress the simulation beyond the observed data: a very high level for the project dynamics and a pessimistic level for the agent costs and throughput. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level developers, or seniors resulting in different capabilities and salaries. 
 Since the groups are orthogonal, we can freely combine all five groups into a diverse set of scenarios. 
 
 \subsubsection{Human developer parameters}
@@ -1247,7 +1276,11 @@ We use the review of architectural decision records (ADRs) to ground the archite
 
 To have a comparable baseline for human effort, we assume the time required to solve SWE-bench Verified coding tasks, which are designed to be representative of real-world coding tasks by basing them on issues reported in open-source repositories~\citep{openai2026swebenchverified,jimenez2024swe}. We use METR's estimate for the human baseline of the time required to solve substantial issues within the 1--4 hour time bucket of the benchmark, which estimates the time at 2 hours~\citep{kwa2026measuringaiabilitycomplete}. Since this seems reasonable, we use this for the medium tier. We use the pattern that less capable developers require twice as long as the medium tier and highly capable developers are twice as fast, resulting in 4 hours for the low tier, and 1 hour for the high tier. Since METR found that the $<15$ minute time bucket underestimates the time required to solve tasks, we instead use the 15 to 60 minute time bucket to estimate the time required to fix bugs in a similar manner, i.e., 30 minutes for the medium tier, 60 minutes for the low tier, and 15 minutes for the high tier.
 
-As per our modeling assumptions, the rate that humans introduce bugs is based on the agentic bug introduction rate using a multiplicative factor, such that a value of 1 means equal behavior and values less than one mean that humans introduce fewer bugs than agents. \cite{coderabbit2025aicode} reports that AI introduces issues at 1.7 times the rate of humans. Since this number is one year old at the time of writing, we use it as the baseline for the high tier, i.e., the most capable humans, assuming progress by later models that improved performance in SWE-bench Verified and other benchmarks. Since junior developers are frequently compared to AI agents~\cite{kumar2025ai}, we use a factor of 1 for the low tier. We use the mid-point, i.e., 1.35 for the medium tier. This results in a bug introduction rate factors of $\frac{1}{1.7}=0.58$ for the high tier, $\frac{1}{1.35}=0.74$ for the medium tier, and 1 for the low tier.
+To have comparable bug introduction rates between humans and the agents we later define, we ground the bug introduction rate of humans in research by \cite{coderabbit2025aicode}, who report that AI introduces issues at 1.7 times the rate of humans. Since this number is one year old at the time of writing, we assume that this reflects the capability of the low agentic tier, which translates into a bug introduction rate of 0.12 for humans. Since junior developers are often compared to AI, we use the same bug introduction rate as the AI, i.e., 0.20 for the low tier. For the more capable high tier developers, we use a rate of 0.08, using the same ratio of performance differences as before. 
+
+Finally, we need to estimate the human quality assurance capability for the human-only baseline. We use a range of values based on a large study on code-review effectiveness by \cite{cohen2006best}: they found that the review of 200-400 lines requires 60 to 90 minutes and leads to a discovery of 70-90\% of defects. Since we assume that a feature has 107 lines (Section~\ref{sec:scenario:agentcosts}), the review time for a feature is between 32 and 48 minutes. For the time per review $h_\mathrm{review}$, we use the fastest time 32 minutes to ground the values for the high developer tier, the slowest time of 48 minutes for the low tier and 37 minutes for the medium tier. We set $f_\mathrm{qa}$ such that the developers have sufficient time to review all features. Thus, if a developer at the high tier implements one feature per hour and they implement features for half of their available development time, one unit of coding capacity generates $k = \frac{32}{60}\cdot 0.5 = 0.27$ units of review demand; the medium tier gives $k = \frac{37}{120}\cdot 0.5 = 0.15$ and the low tier $k = \frac{48}{240}\cdot 0.5 = 0.10$. Since the reserved time is taken from the same capacity that produces the features to be reviewed, the balance is $f_\mathrm{qa} = \frac{k}{1+k}$ rather than $f_\mathrm{qa} = k$, i.e., 0.21 for the high tier, 0.13 for the medium tier, and 0.09 for the low tier. For the detection rates $d_\mathrm{qa}$, we use the midpoint from \cite{cohen2006best} for all tiers, i.e., 0.8, since we already encode the difference between tiers in the time required. 
+
+
 
 \begin{table}[t]
 \caption{Human developer parameters. Low represents a junior developer, medium a mid-level developer, and high a senior developer.}
@@ -1264,8 +1297,11 @@ $H_\mathrm{esc\_time}$        & 4.0  & 2.0  & 1.0  & Assumed to be similar to fe
 $H_\mathrm{review\_time}$     & 8.0  & 4.0  & 2.0  & Extrapolated from \cite{amazonArchitecturalDecision}. \\[2pt]
 $h_\mathrm{feature}$          & 4.0  & 2.0  & 1.0  & Based on SWE-bench Verified, 1--4h bucket \citep{openai2026swebenchverified,kwa2026measuringaiabilitycomplete}. \\[2pt]
 $h_\mathrm{fix}$              & 1.0 & 0.5 & 0.25 & Based on SWE-bench Verified, 0.25--1h bucket \citep{openai2026swebenchverified,kwa2026measuringaiabilitycomplete}. \\[2pt]
-$r_\mathrm{bugs,human}$   & 1.0 & 0.74 & 0.58 & \cite{coderabbit2025aicode}. \\
+$r_\mathrm{bugs,human}$   & 0.20 & 0.12 & 0.08 & \cite{coderabbit2025aicode}. \\
 $f_\mathrm{fix}$              & 0.5 & 0.5 & 0.5 & Assumed to be without prioritization. \\
+$h_\mathrm{review}$ & 0.80 & 0.62 & 0.53 & Based on \cite{cohen2006best}. \\
+$f_\mathrm{qa}$ & 0.09 & 0.13 & 0.21 & Derived from $h_\mathrm{review}$, $h_\mathrm{feature}$, and $f_\mathrm{fix}$. \\
+$d_\mathrm{qa}$               & 0.8 & 0.8 & 0.8 & \cite{cohen2006best}. \\
 $c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salaries}. \\
 \bottomrule
 \end{tabularx}
@@ -1327,7 +1363,7 @@ The agent cost parameters are summarized in Table~\ref{tab:scenario:agents}. Whi
 \begin{itemize}
   \item Code review is assumed to be comparable to bug fixing, since similar analysis needs to be performed to understand the code and its implications. Security audits are more thorough and assumed to be ten times more expensive than normal code review.
   \item Architecture and design changes possibly require an analysis of the whole code base to understand the implications. Therefore, we assume that these carry high costs, comparable to the cost of implementing five features.
-  \item Refactoring is assumed to be comparable to implementing a feature, since it requires a similar amount of analysis and code changes.
+  \item Refactoring is assumed to be comparable to implementing a feature, since it requires a similar amount of analysis and code changes. Since we assume that refactorings are required to account for the debt introduced by feature additions and bug fixes, we scale the parameters with respect this and assume that each refactoring agent can fully reduce the debt introduced for a single feature or bug fix. Consequently, we set the rates based on $\delta_\mathrm{impl}$ and $\delta_\mathrm{fix}$. We assume that the agents tier capabilities are comparable to the low debt dynamics, giving us a debt reduction of 0.02 for the low tier, 0.06 for the medium tier, and 0.13 for the high tier. We then set the cost of refactoring to be the same as the cost of implementing a feature, since it requires code analysis and code changes that might affect multiple files. 
   \item Writing tests and documentation are assumed to be comparable to bug fixing, since it requires a similar analysis of a local context.
 \end{itemize}
 We further ground the pricing based on the API pricing of Claude Sonnet~5, Opus~5, and Fable~5 for low, medium, and high, respectively.
@@ -1342,6 +1378,8 @@ We use SWE-Review~\citep{wang2026swe} to estimate how good language models are a
 
 Finally, we estimate the escalation rate based on telemetry data from \cite{baumann2026swechat}: in their study, the agents escalated between 1\% and 3\% of the time, which we use as the high and low tier respectively, since less capable agents are expected to escalate more often. We use the mid-point 0.02 for the medium tier.
 
+Every estimate above is optimistic on both halves of what an agent is worth. On the capability side, the benchmark scores likely overstate what agents achieve on real code bases, as we already noted for the bug introduction rate. On the cost side, the prices are those of the current API tariffs applied to a fixed assumption about how many tokens a work item consumes, so they capture neither a price increase nor an agent that needs several attempts to arrive at the same result. We therefore add a fourth, pessimistic tier for this group, which plays the same role for the agents that the very high tier plays for the project dynamics: it is not an observed operating point, but a stress case that tests whether a conclusion about agent-heavy teams survives if the assumptions are wrong in the direction they are most likely to be wrong in. The pessimistic tier combines the capability of the low tier with ten times the cost of the high tier. Since the low tier is the least capable and the high tier the most expensive setting we consider, all its non-cost parameters are identical to those of the low tier and only $c_\mathrm{token}$ is changed.
+
 
 \begin{table}[t]
 \caption{Agent cost, capability, and effort parameters across scenarios, grouped by role. $c_\mathrm{token}$ is USD per unit of the role's throughput rate $r_k$.}
@@ -1349,45 +1387,45 @@ Finally, we estimate the escalation rate based on telemetry data from \cite{baum
 \footnotesize
 \begin{tabularx}{\linewidth}{p{2.4cm}p{1.7cm}rrrX}
 \toprule
-Role & Parameter & Low & Medium & High & Source \\
+Role & Parameter & Low & Medium & High & Pess. & Source \\
 \midrule
-\multirow{3}{2.4cm}{1 -- Feature Impl.}
-  & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & \cite{morph2026aicodingcosts} \\
-  & $r_F$                  & 178  & 178  & 178  & Based on 12.6\,min per 100 lines of code \cite{baumann2026swechat,scaleSWEBenchPublic} \\
-  & $r_\mathrm{bugs}$      & 0.20 & 0.03 & 0.05 & \cite{valsai2026swebench} \\
+\multirow{3}{2.2cm}{1 -- Feature Impl.}
+  & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & 76.00 & \cite{morph2026aicodingcosts} \\
+  & $r_F$                  & 178  & 178  & 178  & 178   & Based on 12.6\,min per 100 lines of code \cite{baumann2026swechat,scaleSWEBenchPublic} \\
+  & $r_\mathrm{bugs}$      & 0.20 & 0.03 & 0.05 & 0.20  & \cite{valsai2026swebench} \\
 \midrule
-\multirow{2}{2.4cm}{2 -- Architecture \& Design}
-  & $c_\mathrm{token}$     & 11.40 & 19.00 & 38.00 & 5 times the cost of feature implementation \\
-  & $r_\mathrm{arch,chg}$  & 35    & 35    & 35    & Five times slower than feature implementation \\
+\multirow{2}{2.2cm}{2 -- Architecture \& Design}
+  & $c_\mathrm{token}$     & 11.40 & 19.00 & 38.00 & 380.00 & 5 times the cost of feature implementation \\
+  & $r_\mathrm{arch,chg}$  & 35    & 35    & 35    & 35     & Five times slower than feature implementation \\
 \midrule
-\multirow{2}{2.4cm}{3 -- Bug Fixing}
-  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & \cite{morph2026aicodingcosts} \\
-  & $r_\mathrm{fix}$       & 747  & 747  & 747  & 4.2 times faster than feature implementation, based on cost estimate \\
+\multirow{2}{2.2cm}{3 -- Bug Fixing}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & 18.00 & \cite{morph2026aicodingcosts} \\
+  & $r_\mathrm{fix}$       & 747  & 747  & 747  & 747   & 4.2 times faster than feature implementation, based on cost estimate \\
 \midrule
-\multirow{2}{2.4cm}{4 -- Refactoring}
-  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $r_\mathrm{refactor}$  & 747  & 747  & 747  & Same as bug fixing \\
+\multirow{2}{2.2cm}{4 -- Refactoring}
+  & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & 76.00 & One feature implementation per sprint \\
+  & $r_\mathrm{refactor}$  & 0.02 & 0.06 & 0.13 & 0.02  & Can remove debt of one feature/bug fix \\
 \midrule
-\multirow{3}{2.4cm}{5 -- Code Review}
-  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $d_\mathrm{CR}$        & 0.75 & 0.82 & 0.89 & \cite{wang2026swe} \\
-  & $\alpha_\mathrm{size}$ & 0.10 & 0.10 & 0.10 & Assumed; the reference volume is one feature per detection agent \\
+\multirow{3}{2.2cm}{5 -- Code Review}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & 18.00 & Same as bug fixing \\
+  & $d_\mathrm{CR}$        & 0.75 & 0.82 & 0.89 & 0.75  & \cite{wang2026swe} \\
+  & $\alpha_\mathrm{size}$ & 0.10 & 0.10 & 0.10 & 0.10  & Assumed; the reference volume is one feature per detection agent \\
 \midrule
-\multirow{2}{2.4cm}{6 -- Security Audit}
-  & $c_\mathrm{token}$     & 5.40 & 9.00 & 18.00 & 10 times the cost of code review \\
-  & $d_\mathrm{SA}$        & 0.78 & 0.83 & 0.88 & \cite{liu2024cyberbench}, scores from \cite{valsai2026swebench} \\
+\multirow{2}{2.2cm}{6 -- Security Audit}
+  & $c_\mathrm{token}$     & 5.40 & 9.00 & 18.00 & 180.00 & 10 times the cost of code review \\
+  & $d_\mathrm{SA}$        & 0.78 & 0.83 & 0.88  & 0.78   & \cite{liu2024cyberbench}, scores from \cite{valsai2026swebench} \\
 \midrule
-\multirow{4}{2.4cm}{7 -- Test Development}
-  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $r_\mathrm{test}$      & 747  & 747  & 747  & Same as bug fixing \\
-  & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
-  & $c_\mathrm{test,ceil}$ & 0.48  & 0.54  & 0.60  & \cite{SCHWARTZ2018106} \\
+\multirow{4}{2.2cm}{7 -- Test Development}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & 18.00 & Same as bug fixing \\
+  & $r_\mathrm{test}$      & 747  & 747  & 747  & 747   & Same as bug fixing \\
+  & $d_\mathrm{test}$      & 0.60 & 0.77 & 0.75 & 0.60  & Based on \cite{huang2025benchmarking} and \cite{valsai2026swebench} \\
+  & $c_\mathrm{test,ceil}$ & 0.48 & 0.54 & 0.60 & 0.48  & \cite{SCHWARTZ2018106} \\
 \midrule
-\multirow{2}{2.4cm}{8 -- Dev.\ Documentation}
-  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & Same as bug fixing \\
-  & $r_\mathrm{doc}$       & 747  & 747  & 747  & Same as bug fixing \\
+\multirow{2}{2.2cm}{8 -- Dev.\ Documentation}
+  & $c_\mathrm{token}$     & 0.54 & 0.90 & 1.80 & 18.00 & Same as bug fixing \\
+  & $r_\mathrm{doc}$       & 747  & 747  & 747  & 747   & Same as bug fixing \\
 \midrule
-All roles & $\rho_\mathrm{esc}$ & 0.03 & 0.02 & 0.01 & \cite{baumann2026swechat} \\
+All roles & $\rho_\mathrm{esc}$ & 0.03 & 0.02 & 0.01 & 0.03 & \cite{baumann2026swechat} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1423,12 +1461,12 @@ $\omega_\mathrm{sec}$ & 48{,}000 & 1{,}000{,}000 & 120{,}000{,}000 & Breach/inci
 \end{table}
 
 
-% ---- 4.2 ----
+% ---- 4.3 ----
 \subsection{Experiment Configurations}
 \label{sec:setup:sweep}
 
 \paragraph{Scenario grid.}
-Since we have five orthogonal aspects, four of them with three levels and the project dynamics with four, we have a total of $3^4 \cdot 4 = 324$ scenarios. We solve each of these problems twice, once with evolutionary search and once with greedy neighbourhood descent (Section~\ref{sec:model:search}), which yields 648 searches in total.
+Since we have five orthogonal aspects, three of them with three levels and both the project dynamics and the agent costs with four, we have a total of $3^3 \cdot 4 \cdot 4 = 432$ scenarios. We solve each of these problems twice, once with evolutionary search and once with greedy neighbourhood descent (Section~\ref{sec:model:search}), which yields 864 searches in total.
 All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two results is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
 
 The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range from a quarter-FTE up to ten FTE, i.e., a ``two-pizza team''. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what such a team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 38 supervised agents at that tier, which three FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved.
@@ -1437,10 +1475,10 @@ The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many sup
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. We set the tolerance of the throughput constraint of Eq.~\eqref{eq:throughput_constraint} to $\epsilon = 0.02$, i.e., require delivery of at least 98\% of the arriving features. 
 
-Both search strategies receive the same budget of $E = 10\,000$ candidate evaluations per scenario, so that the comparison between them measures search efficiency and not effort. For evolutionary search we spend 10\% of the budget on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. For the greedy neighbourhood descent we use $n_\mathrm{start} = 5$ restarts, i.e., 2\,000 evaluations per restart. Since a neighbourhood comprises on the order of $10^2$ configurations, this permits roughly two dozen descent steps per restart. The exact number depends on the scenario: at the very high project tier the saturation bounds of Eq.~\eqref{eq:sat_bound} are large, so neighbourhoods are wide and fewer steps fit into the budget, whereas the smaller project tiers cap most roles at one agent, which makes neighbourhoods narrow and allows more steps.
+The evolutionary search receives a budget of $E = 10\,000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. The greedy neighbourhood descent receives no budget. Preliminary runs showed that a descent converges quickly and that a whole search typically requires only a few hundred evaluations, so a budget of comparable size would simply have been left unspent. We instead use $n_\mathrm{start} = 20$ independently sampled starting points and let every restart run until it reaches a local optimum, and report the number of configurations that were evaluated together with the results in Section~\ref{sec:results}. The two strategies are therefore not compared at equal effort; instead, the effort the descent requires becomes an observed quantity, which we can then relate to the fixed effort the evolutionary search spends and to the quality of the optima both of them report. How many evaluations a descent needs depends on the scenario, because the width of a neighbourhood follows the saturation bounds of Eq.~\eqref{eq:sat_bound}: the smaller project tiers cap most roles at one agent and give narrow neighbourhoods, whereas the very high project tier admits many agents per role and makes each descent step considerably more expensive.
 
 \begin{table}[t]
-\caption{Experiment constants and search range, identical for all 324 scenarios.}
+\caption{Experiment constants and search range.}
 \label{tab:setup:experiment}
 \footnotesize
 \begin{tabularx}{\linewidth}{p{2.2cm}rX}
@@ -1455,21 +1493,23 @@ $B$                             & 1{,}000             & Bootstrap resamples for 
 $s_0$                           & 42            & Master seed \\[2pt]
 \midrule
 \multicolumn{3}{l}{\emph{Search range}} \\[2pt]
-$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00\}$     & Quarter-FTE steps, from a one-day-per-week part-time developer to a two-pizza team \\[2pt]
+$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00\}$     & Quarter-FTE to a two-pizza team \\[2pt]
 $\mathcal{R}$                   & $\{1,2,4,13\}$      & Continuous, biweekly, monthly, quarterly releases \\[2pt]
 $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two-week freeze; capped at $R-1$ \\[2pt]
 $\sigma$                        & 2                   & Allows up to twice the agents required for their steady-state workload \\[2pt]
 $\epsilon$                      & 0.02                & At least 98\% of the arriving features must be delivered \\[2pt]
 \midrule
-\multicolumn{3}{l}{\emph{Search budget per scenario and strategy}} \\[2pt]
-$E$                             & 10{,}000             & Identical budget for both strategies \\[2pt]
+\multicolumn{3}{l}{\emph{Search effort per scenario and strategy}} \\[2pt]
+$E$                             & 10{,}000             & Evolutionary search: candidate evaluations \\[2pt]
 $n_\mathrm{init}$               & 1{,}000             & Evolutionary search: 10\% of $E$ on the initial pool \\[2pt]
 $G$ / $n_\mathrm{off}$          & 90 / 100            & Evolutionary search: 90\% of $E$ on the generation loop \\[2pt]
 $n_\mathrm{elite}$              & 100                 & Evolutionary search: size of the elite that parents are drawn from \\[2pt]
-$n_\mathrm{start}$              & 5                   & Descent: independent restarts, 2{,}000 evaluations each \\
+$n_\mathrm{start}$              & 20                  & Descent: independent restarts, each run to a local optimum; the resulting number of evaluations is reported, not fixed \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+For the simulation of the human baseline, only need to consider $(N, R, F_\mathrm{freeze})$. With the ranges of Table~\ref{tab:setup:experiment} and the constraint $F_\mathrm{freeze} \leq R-1$, these are 99 configurations in total. This is small enough to enumerate exhaustively and we evaluate all 99 configurations to determine the optimal teams. We run these configurations for all combinations of the human developer parameters, project dynamics, and bug costs, since agent performance and debt dynamics have no influence on this baseline. Where no configuration satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} (e.g., for the very-high scenario), we report the least-violating one (i.e., highest throughput), mark it as inadmissible, and report how much throughput was actually achieved to put the result into perspective. 
 
 
 % ============================================================
