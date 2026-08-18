@@ -975,7 +975,7 @@ $r_4 = r_5 = r_6 = 1$.
 
 The five demand-driven roles are therefore charged for the work they actually performed, so
 that an agent that no work reaches incurs no cost, whereas the three flat-rate roles are
-charged per sprint whether or not any work reaches them. Let $u_k(t)$ denote the work role $k$ completed in sprint
+charged per sprint, though their positive impact vanishes at some point. Let $u_k(t)$ denote the work role $k$ completed in sprint
 $t$, measured in the unit of that role's rate $r_k$ and read off the sprint transition as
 summarised in Table~\ref{tab:work_units}. Implementing an approved architecture proposal is
 billed as five feature implementations, since it requires the same code-base-wide analysis
@@ -1077,25 +1077,25 @@ release cadence $R \in \mathcal{R}$, and the feature-freeze length $F_\mathrm{fr
 The sets $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{freeze}$ are
 explicit finite sets. This allows both the definition of ranges and of non-contiguous values, e.g., $\mathcal{N} = \{0.5, 1, 2\}$.
 
-Once $N \in \mathcal{N}$ is fixed, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricted by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations~\eqref{eq:impl_agents} and \eqref{eq:impl}, the architecture work, bug fixing, refactoring, test development, and documentation are also bounded by the inflow of work that reaches them (see Eqs.~\eqref{eq:arch_chg_done}, \eqref{eq:r_bugs_eff}, \eqref{eq:debt_update}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). This gives us the following fixed-point upper bounds on the work that can reach each supervised role in one development sprint, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
+Once $N \in \mathcal{N}$ is fixed, the development composition $\mathbf{A}_\mathrm{dev}$ and the QA composition $\mathbf{A}_\mathrm{qa}$ must satisfy the structural constraints of Section~\ref{sec:model:team} and the human-capacity monitoring feasibility condition of Eq.~\eqref{eq:feas_monitoring}. However, there is a further constraint that the model implicitly imposes: The effort that every supervised role can contribute is restricted by the amount of work that reaches it, which is all derived from the feature arrival rate $r_\mathrm{arrival}$. While this is trivially the case for the implementation agent through Equations~\eqref{eq:impl_agents} and \eqref{eq:impl}, the architecture work, bug fixing, refactoring, test development, and documentation are also bounded by the inflow of work that reaches them (see Eqs.~\eqref{eq:arch_chg_done}, \eqref{eq:r_bugs_eff}, \eqref{eq:debt_update}, \eqref{eq:coverage}, and \eqref{eq:doc_cov}). Writing $\lambda_k$ for the work that reaches role $k$ in one development sprint, this gives us the following fixed-point upper bounds, expressed relative to the feature arrival rate $r_\mathrm{arrival}$:
 \begin{align}
-  W_1 &= (1 + f_\mathrm{arch,chg})\,r_\mathrm{arrival}, &
-  W_2 &= f_\mathrm{arch,chg}\,r_\mathrm{arrival}, \nonumber\\
-  W_3 &= r_\mathrm{bugs}\,(2-\delta_\mathrm{min})\,r_\mathrm{arrival}, &
-  W_4 &= \delta_\mathrm{impl}\,r_\mathrm{arrival} + \delta_\mathrm{fix}\,W_3, \nonumber\\
-  W_7 &= c_\mathrm{test,ceil}\,r_\mathrm{arrival}, &
-  W_8 &= r_\mathrm{arrival}.
+  \lambda_1 &= (1 + f_\mathrm{arch,chg})\,r_\mathrm{arrival}, &
+  \lambda_2 &= f_\mathrm{arch,chg}\,r_\mathrm{arrival}, \nonumber\\
+  \lambda_3 &= r_\mathrm{bugs}\,(2-\delta_\mathrm{min})\,r_\mathrm{arrival}, &
+  \lambda_4 &= \delta_\mathrm{impl}\,r_\mathrm{arrival} + \delta_\mathrm{fix}\,\lambda_3, \nonumber\\
+  \lambda_7 &= c_\mathrm{test,ceil}\,r_\mathrm{arrival}, &
+  \lambda_8 &= r_\mathrm{arrival}.
   \label{eq:workload}
 \end{align}
-The workload is matched against the throughput that an agent can have, accounting for the debt amplifier, we use its floor $\delta_\mathrm{min}$, i.e., the least favourable and therefore most permissive case:
+The workload is matched against the throughput $\eta_k$ an agent of role $k$ can have, accounting for the debt amplifier.We use its floor $\delta_\mathrm{min}$, i.e., the least favourable and therefore most permissive case:
 \begin{equation}
   \begin{aligned}
-    \rho_1 &= r_F\,\delta_\mathrm{min}, &
-    \rho_2 &= r_\mathrm{arch,chg}, &
-    \rho_3 &= r_\mathrm{fix}\,\delta_\mathrm{min}, \\
-    \rho_4 &= r_\mathrm{refactor}, &
-    \rho_7 &= r_\mathrm{test}, &
-    \rho_8 &= r_\mathrm{doc}.
+    \eta_1 &= r_F\,\delta_\mathrm{min}, &
+    \eta_2 &= r_\mathrm{arch,chg}, &
+    \eta_3 &= r_\mathrm{fix}\,\delta_\mathrm{min}, \\
+    \eta_4 &= r_\mathrm{refactor}, &
+    \eta_7 &= r_\mathrm{test}, &
+    \eta_8 &= r_\mathrm{doc}.
   \end{aligned}
   \label{eq:sat_rates}
 \end{equation}
@@ -1104,16 +1104,16 @@ The two background detection services are not constrained at all, so instead of 
 
 This gives us constraints
 \begin{equation}
-  a_{\mathrm{dev},k},\, a_{\mathrm{qa},k} \;\leq\; u_k
-    = \Bigl\lceil \sigma\,\frac{W_k}{\rho_k} \Bigr\rceil,
+  a_{\mathrm{dev},k},\, a_{\mathrm{qa},k} \;\leq\; \bar{a}_k
+    = \Bigl\lceil \sigma\,\frac{\lambda_k}{\eta_k} \Bigr\rceil,
   \qquad k \in \mathcal{K}_\mathrm{sup}.
   \label{eq:sat_bound}
 \end{equation}
 where $\sigma \geq 1$ is a headroom factor that allows the search to explore configurations that exceed the steady-state workload, which means that the agent capacity can be overallocated to a certain degree to deal with load peaks that can occur due to the Poisson feature arrivals. We do not distinguish between the development and QA compositions here. Taken together with the feasible set of Section~\ref{sec:model:sosp}, this defines the region that the search explores:
 \begin{equation}
   \mathcal{S} = \bigl\{\mathbf{c} \in \mathcal{X} \;:\;
-    a_{\mathrm{dev},k} \leq u_k \;\wedge\;
-    a_{\mathrm{qa},k} \leq u_k
+    a_{\mathrm{dev},k} \leq \bar{a}_k \;\wedge\;
+    a_{\mathrm{qa},k} \leq \bar{a}_k
     \;\;\forall k \in \mathcal{K}_\mathrm{sup} \bigr\} \subseteq \mathcal{X}.
   \label{eq:searched_region}
 \end{equation}
@@ -1129,11 +1129,11 @@ The search needs a way to produce valid initial configurations. We sample these 
         $\{f \in \mathcal{F}_\mathrm{freeze} : 0 \leq f \leq R-1\}$.
   \item Draw the supervised part of $\mathbf{A}_\mathrm{dev}$ role by role, independently and
         uniformly within the throughput saturation bound of Eq.~\eqref{eq:sat_bound}, i.e.,
-        $a_{\mathrm{dev},1}$ from $\{1, \ldots, u_1\}$ so that
+        $a_{\mathrm{dev},1}$ from $\{1, \ldots, \bar{a}_1\}$ so that
         $a_{\mathrm{dev},1} \geq 1$, and $a_{\mathrm{dev},k}$ from
-        $\{0, \ldots, u_k\}$ for the remaining $k \in \mathcal{K}_\mathrm{sup}$.
+        $\{0, \ldots, \bar{a}_k\}$ for the remaining $k \in \mathcal{K}_\mathrm{sup}$.
   \item Draw the supervised part of $\mathbf{A}_\mathrm{qa}$ in the same way, i.e.,
-        $a_{\mathrm{qa},k}$ uniformly from $\{0, \ldots, u_k\}$ for
+        $a_{\mathrm{qa},k}$ uniformly from $\{0, \ldots, \bar{a}_k\}$ for
         $k \in \{3,4,7,8\}$, and $a_{\mathrm{qa},1} = a_{\mathrm{qa},2} = 0$. If
         $F_\mathrm{freeze} = 0$ was drawn in step~2, then $\mathbf{A}_\mathrm{qa} = \mathbf{0}$
         by Section~\ref{sec:model:team} and this step is skipped, as is the QA half of
@@ -1157,7 +1157,7 @@ Note that the sampling does not require that the throughput constraint for the v
 
 The advantage of not discarding solutions that violate the throughput constraint is that we can approach the admissible region from the outside, possibly finding better configurations. Still, this means we must be able to compare two configurations of which one, or both, violate Eq.~\eqref{eq:throughput_constraint}. We adopt a feasibilty rule from \cite{deb2000efficient} to resolve this:
 \begin{itemize}
-  \item If both configurations violate the throughput constraint, the one with the smaller the higher value is preferred.
+  \item If both configurations violate the throughput constraint, the one with the smaller constraint violation, i.e.\ the higher value, is preferred.
   \item A configuration that satisfies the throughput constraint is always preferred to one that does not.
   \item Two configurations that both satisfy the throughput constraint are compared by their cost, with the lower cost preferred.
 \end{itemize}
@@ -1185,14 +1185,15 @@ first three when $F_\mathrm{freeze} = 0$:
   \item \emph{Mutate $\mathbf{A}_\mathrm{dev}$:} apply one elementary operation drawn uniformly from:
         \begin{itemize}
           \item \emph{Add}: increment one randomly chosen supervised role by~1, provided it
-                stays at or below its saturation bound $u_k$.
+                stays at or below its saturation bound $\bar{a}_k$.
           \item \emph{Remove}: decrement one randomly chosen non-empty supervised role by~1.
           \item \emph{Move}: select a random non-empty supervised donor role and transfer one agent to a randomly chosen
-                supervised recipient role that is still below its saturation bound $u_k$.
-          \item \emph{Adjust service}: apply $\pm 1$ to one of the two background detection
-                services, floored at zero. This operation is separate from the three above because
-                these roles require no supervision and are not part of the pool that the three
-                operations above redistribute, and it has no upper bound.
+                supervised recipient role that is still below its saturation bound $\bar{a}_k$.
+          \item \emph{Adjust service}: apply $\pm 1$ to one of the three autonomous roles
+                $\mathcal{K}_\mathrm{aut} = \{4,5,6\}$, floored at zero. This operation is separate
+                from the three above because these roles require no supervision and are not part of
+                the pool that the three operations above redistribute; for the two background
+                detection services it has no upper bound.
         \end{itemize}
   \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero. This choice is only available when $F_\mathrm{freeze} \geq 1$, i.e., the QA composition can only be modified, if it is active.
 \end{itemize}
