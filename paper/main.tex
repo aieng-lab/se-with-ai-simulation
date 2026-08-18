@@ -1200,8 +1200,8 @@ first three when $F_\mathrm{freeze} = 0$:
         \end{itemize}
   \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero. This choice is only available when $F_\mathrm{freeze} \geq 1$, i.e., the QA composition can only be modified, if it is active.
 \end{itemize}
-If a mutation attempt produces an invalid configuration or leaves the parent unchanged
-(e.g.\ because the chosen role is already at its
+If a mutation attempt violates the structural constraints of Section~\ref{sec:model:team} or
+leaves the parent unchanged (e.g.\ because the chosen role is already at its
 saturation bound, or because a randomly chosen operation
 is a structural no-op), the attempt is discarded and a new mutation type is drawn.
 Up to ten attempts are made; if none yields a distinct valid child, the parent is
@@ -1218,7 +1218,7 @@ returned unchanged.
 The mixture of drawing most mutations from the elite and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
 
 \paragraph{Final selection.}
-At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations$\mathcal{P}_G$.
+At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations $\mathcal{P}_G$.
 
 
 % ============================================================
