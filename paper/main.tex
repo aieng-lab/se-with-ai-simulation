@@ -1011,14 +1011,14 @@ $k$ & Role & $u_k(t)$ \\
 \subsection{Monte Carlo Protocol}
 \label{sec:model:mc}
 
-A feasible configuration $\mathbf{c}$ (cf.\ Section~\ref{sec:model:sosp}) is evaluated by running $K$
+A feasible configuration $\mathbf{c}$ (cf.\ Section~\ref{sec:model:sosp}) is evaluated by running $K'$
 independent Monte Carlo replications. At $t = 0$ all components of $S(0)$ must be initialised. We use fixed values to define the initial state of the system, e.g., zero features in the backlog and zero bugs in all queues.
 These values define the state of the project when the first agentic development sprint
 starts. They are fixed experiment constants that are
 specified as part of the experiment design (see Section~\ref{sec:setup}). The
 sprint transition $\mathcal{T}$ is then applied $T$ times, yielding terminal state
 $S(T)$. The outcome of each simulation run is randomized by the actions within the sprint transition, which are driven by the stochastic processes, e.g., the Poisson feature arrivals and the Binomial bug detection draws.
-The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$, $C_\mathrm{human}$, and $C_{\mathrm{agents},k}$ for each replication $k=1,\ldots,K$ are then computed from $S(T)$ and from the per-sprint work record. We combine the cost drivers into the per-replication cost per feature
+The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$, $C_\mathrm{human}$, and $C_{\mathrm{agents},k}$ for each replication $k=1,\ldots,K'$ are then computed from $S(T)$ and from the per-sprint work record. We combine the cost drivers into the per-replication cost per feature
 \begin{equation}
   C_k = \frac{C_{\mathrm{quality},k} + C_\mathrm{human} + C_{\mathrm{agents},k}}
              {F_{\mathrm{completed},k}(T)}
@@ -1053,14 +1053,16 @@ Using the feasible configurations that satisfy the throughput constraint, we def
 \subsection{Selection under Monte Carlo noise}
 \label{sec:model:selection}
 
-Every configuration is scored by a mean over $K$ Monte Carlo replications. The objective above only considers the mean, but not yet the confidence of the estimates. We therefore do not report the minimiser alone. Let $\mathbf{c}^\star$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraint and whose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is not statistically significantly different at the 95\% confidence level. If no evaluated configuration satisfies the throughput constraint, no such $\mathbf{c}^\star$ exists and $\mathcal{I}^\star$ is empty. In that case we report the configuration with the highest value and mark the result as inadmissible. Otherwise, we define the \emph{indistinguishable set} as
+Every configuration the search evaluates is scored by a mean over $K'$ Monte Carlo replications. The objective above only considers the mean, but not yet the confidence of the estimates. We therefore do not report the minimiser alone. Let $\mathbf{c}^\star$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraint and whose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is not statistically significantly different at the 95\% confidence level. If no evaluated configuration satisfies the throughput constraint, no such $\mathbf{c}^\star$ exists and $\mathcal{I}^\star$ is empty. In that case we report the configuration with the highest value and mark the result as inadmissible. Otherwise, we define the \emph{indistinguishable set} as
 \begin{equation}
   \mathcal{I}^\star = \bigl\{\mathbf{c} \;:\; \bar{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
     \;\wedge\; [C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}] \cap [C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}] \neq \emptyset \bigr\},
   \label{eq:topset}
 \end{equation}
 
-Two configurations in $\mathcal{I}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{I}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported. It is possible that $\mathbf{c}^\star$ itself is parsimony-dominated, namely when a smaller team that runs the same process is statistically tied with it. To avoid under-reporting the best performance, we do not apply the tie-breaking rule to $\mathbf{c}^\star$ so this can never be removed.
+Both $\mathbf{c}^\star$ and $\mathcal{I}^\star$ are preliminary at this point, because the width of the confidence intervals that Eq.~\eqref{eq:topset} compares is governed by the number of replications the search $K'$. We re-simulate every configuration in the preliminary $\mathcal{I}^\star$ with $K > K'$ replications to get better estimates of $\mathbf{c}^\star$ and reduce the confidence intervals. We then apply the dominance a second time and expect that $\mathbf{I}^\star$ shrinks, since there should be less overlapping confidence intervals. While unlikely that there are changes to the throughput, the constraint is checked as well and violating configurations are discarded. 
+
+Two configurations in $\mathcal{I}^\star$ are equally good by assumption, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within the final $\mathcal{I}^\star$, i.e., after the re-simulation described above: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze})$, and $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported. It is possible that $\mathbf{c}^\star$ itself is parsimony-dominated, namely when a smaller team that runs the same process is statistically tied with it. To avoid under-reporting the best performance, we do not apply the tie-breaking rule to $\mathbf{c}^\star$ so this can never be removed.
 
 % ---- 3.11 ----
 \subsection{Search Strategy}
@@ -1169,7 +1171,7 @@ Thus, the search first looks for admissible configurations, and then among those
 As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the optimum. In our case, we use a simple mutation-based algorithm that creates new solutions by modifying existing ones.
 
 \paragraph{Initialisation.}
-The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathrm{init}$ configurations, drawn with the random sampling procedure of Section~\ref{sec:model:search:random}, so that the initial pool is diverse and covers a broad area of the search space. Each configuration in the initial pool is evaluated with $K$ Monte Carlo replications.
+The evolutionary search starts with an initial pool $\mathcal{P}_0$ of $n_\mathrm{init}$ configurations, drawn with the random sampling procedure of Section~\ref{sec:model:search:random}, so that the initial pool is diverse and covers a broad area of the search space. Each configuration in the initial pool is evaluated with $K'$ Monte Carlo replications.
 
 \paragraph{Mutation operator.}
 The mutation operator receives a parent configuration
@@ -1189,13 +1191,17 @@ first three when $F_\mathrm{freeze} = 0$:
           \item \emph{Remove}: decrement one randomly chosen non-empty supervised role by~1.
           \item \emph{Move}: select a random non-empty supervised donor role and transfer one agent to a randomly chosen
                 supervised recipient role that is still below its saturation bound $\bar{a}_k$.
-          \item \emph{Adjust service}: apply $\pm 1$ to one of the three autonomous roles
-                $\mathcal{K}_\mathrm{aut} = \{4,5,6\}$, floored at zero. This operation is separate
-                from the three above because these roles require no supervision and are not part of
-                the pool that the three operations above redistribute. The two code review services have no upper bound, the refactoring service is restricted by $\bar{a}_4$.
+          \item \emph{Adjust service}: change one of the three autonomous roles
+                $\mathcal{K}_\mathrm{aut} = \{4,5,6\}$ by $\pm m$, where the sign is drawn uniformly
+                and the step size is $m = 2^j$ with $j$ drawn uniformly from
+                $\{0, 1, \ldots, \lfloor \log_2 s_k \rfloor\}$ and $s_k$ the sampling range of the
+                role in steps~5 and~6 of Section~\ref{sec:model:search:random}. The result is clipped
+                to that range, i.e., floored at zero and, for $k=4$, capped at $\bar{a}_4$. 
         \end{itemize}
   \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero. This choice is only available when $F_\mathrm{freeze} \geq 1$, i.e., the QA composition can only be modified, if it is active.
 \end{itemize}
+The adjustment of the three autonomous roles uses the expontential set of step size option to be able to navigate the large range of possible counts efficiently. 
+
 If a mutation attempt violates the structural constraints of Section~\ref{sec:model:team} or
 leaves the parent unchanged (e.g.\ because the chosen role is already at its
 saturation bound, or because a randomly chosen operation
@@ -1214,7 +1220,7 @@ returned unchanged.
 The mixture of drawing most mutations from the elite and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
 
 \paragraph{Final selection.}
-At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations $\mathcal{P}_G$.
+At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations $\mathcal{P}_G$, including the re-simulation of the preliminary $\mathcal{I}^\star$ with $K$ replications.
 
 
 % ============================================================
@@ -1464,7 +1470,7 @@ $\omega_\mathrm{sec}$ & 48{,}000 & 1{,}000{,}000 & 120{,}000{,}000 & Breach/inci
 
 \paragraph{Scenario grid.}
 Since we have five orthogonal aspects, three of them with three levels and both the project dynamics and the agent costs with four, we have a total of $3^3 \cdot 4 \cdot 4 = 432$ scenarios. We solve each of these problems with the evolutionary search of Section~\ref{sec:model:search}, which yields 432 searches in total.
-All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two results is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K = 100$ replications per configuration. 
+All scenarios share the same initial state, simulation horizon, and Monte Carlo protocol, so that any difference between two results is attributable to the scenario parameters and not to the experimental setup. The constants are summarised in the upper part of Table~\ref{tab:setup:experiment}. We simulate a green-field project, i.e., every component of the initial state $S(0)$ is empty, meaning no feature backlog, no bugs in any of the twelve bug queues, no technical debt, empty human capacity queues, no tests, and no developer documentation. We use short 1-week sprints and two-year projects. The length of the time horizon is chosen to give debt time to accumulate to be able to observe negative effects. We use $K' = 100$ replications per configuration during the search and $K = 1{,}000$ replications for the re-simulation of the indistinguishable set. 
 
 The lower part of Table~\ref{tab:setup:experiment} gives the search range in the sense of Section~\ref{sec:model:search}. The staffing levels range from a quarter-FTE up to ten FTE, i.e., a ``two-pizza team''. The range extends below one FTE because the opposite problem arises at the other end of the project spectrum: at the low project tier, features arrive at $r_\mathrm{arrival} = 3$ per sprint, which a single full-time developer supported by agents exceeds by a wide margin, so that the interesting configurations for such projects are part-time ones. The range also suffices for the very high project tier, even though the arrival speed there is far beyond what such a team could implement itself: the throughput saturation bounds of Eq.~\eqref{eq:sat_bound} cap a composition at 37 supervised agents at that tier, which three FTE can already monitor under Eq.~\eqref{eq:feas_monitoring}, so the desired throughput can still be achieved.
 
@@ -1472,7 +1478,7 @@ The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many sup
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. We set the tolerance of the throughput constraint of Eq.~\eqref{eq:throughput_constraint} to $\epsilon = 0.02$, i.e., require delivery of at least 98\% of the arriving features. 
 
-The evolutionary search receives a budget of $E = 10\,000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations.
+The evolutionary search receives a budget of $E = 10\,000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 1\,000$, $G = 90$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. The re-simulation of the indistinguishable set with $K$ replications is not part of this budget and happens afterwards.
 
 \begin{table}[t]
 \caption{Experiment constants and search range.}
@@ -1485,7 +1491,8 @@ Symbol & Value & Rationale \\
 \multicolumn{3}{l}{\emph{Monte Carlo protocol and horizon}} \\[2pt]
 $S(0)$                          & $\mathbf{0}$        & Green-field project; no legacy state to justify \\[2pt]
 $T$                             & 104                  & Two calendar years at weekly sprints \\[2pt]
-$K$                             & 100                 & Relative CI half-width $<1\%$ for $\mathit{value}$ \\[2pt]
+$K'$                            & 100                 & Replications during the search \\[2pt]
+$K$                             & 1{,}000             & Replications for the re-simulation of $\mathcal{I}^\star$ \\[2pt]
 $B$                             & 1{,}000             & Bootstrap resamples for the 95\% CIs (Section~\ref{sec:model:mc}) \\[2pt]
 $s_0$                           & 42            & Master seed \\[2pt]
 \midrule
@@ -1505,7 +1512,7 @@ $n_\mathrm{elite}$              & 100                 & Size of the elite that p
 \end{tabularx}
 \end{table}
 
-For the simulation of the human baseline, we only need to consider $(N, R, F_\mathrm{freeze})$. With the ranges of Table~\ref{tab:setup:experiment} and the constraint $F_\mathrm{freeze} \leq R-1$, these are 99 configurations in total. This is small enough to enumerate exhaustively and we evaluate all 99 configurations to determine the optimal teams. We run these configurations for all combinations of the human developer parameters, project dynamics, and bug costs, since agent performance and debt dynamics have no influence on this baseline. Where no configuration satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} (e.g., for the very-high scenario), we report the least-violating one (i.e., highest throughput), mark it as inadmissible, and report how much throughput was actually achieved to put the result into perspective. 
+For the simulation of the human baseline, we only need to consider $(N, R, F_\mathrm{freeze})$. With the ranges of Table~\ref{tab:setup:experiment} and the constraint $F_\mathrm{freeze} \leq R-1$, these are 99 configurations in total. This is small enough to enumerate exhaustively and we evaluate all 99 configurations with $K'$ replications, followed by the same two-stage selection of Section~\ref{sec:model:selection}, to determine the optimal teams. We run these configurations for all combinations of the human developer parameters, project dynamics, and bug costs, since agent performance and debt dynamics have no influence on this baseline. Where no configuration satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} (e.g., for the very-high scenario), we report the least-violating one (i.e., highest throughput), mark it as inadmissible, and report how much throughput was actually achieved to put the result into perspective. 
 
 
 % ============================================================
