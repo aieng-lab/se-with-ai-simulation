@@ -116,9 +116,9 @@ def campaign(tmp_path) -> Path:
         "incumbent_changed": [True, False, False],
         "incumbent_turnover": 1 / 3,
         "best_cost": [1400.0, 1300.0, 1200.0],
-        "i_star": {"n_prelim": 5, "n_resimulated": 5, "n_discarded_throughput": 1,
-                   "n_after_resim": 3, "n_final": 2, "parsimony_removed": 1,
-                   "best_changed_by_resim": True, "best_parsimony_dominated": False,
+        "i_star": {"n_prelim": 5, "parsimony_removed_prelim": 1, "n_resimulated": 4,
+                   "n_discarded_throughput": 1, "n_after_resim": 3, "n_final": 2,
+                   "parsimony_removed": 1, "best_changed_by_resim": True,
                    "rho_mean": 0.04, "rho_best": 0.03},
         "throughput_floor": 11.76, "best_admissible": True, "value_ratio": 0.99,
         "wall_clock_s": 12.5, "resimulation_s": 3.0,
@@ -229,8 +229,10 @@ class TestBuildTables:
         _, _, convergence, turnover = build_tables(campaign)
         assert len(convergence) == 1
         row = convergence.iloc[0]
-        assert row["n_prelim"] == 5 and row["n_after_resim"] == 3 and row["n_final"] == 2
-        assert row["parsimony_removed"] == 1 and row["n_discarded_throughput"] == 1
+        assert row["n_prelim"] == 5 and row["n_resimulated"] == 4
+        assert row["n_after_resim"] == 3 and row["n_final"] == 2
+        assert row["parsimony_removed_prelim"] == 1 and row["parsimony_removed"] == 1
+        assert row["n_discarded_throughput"] == 1
         assert bool(row["best_changed_by_resim"]) is True
         assert row["tau_first"] == 0.5 and row["tau_last"] == 0.1
         assert row["n_generations_run"] == 3
@@ -246,11 +248,18 @@ class TestBuildTables:
         assert convergence.empty and turnover.empty
 
     def test_convergence_summary_reports_every_stage(self, campaign):
+        """§5.1 asks for all four sizes of I*, and for both parsimony applications."""
         _, _, convergence, _ = build_tables(campaign)
         text = convergence_summary(convergence)
+        assert "Size of I* at the four stages" in text
         assert "preliminary, at K'" in text
-        assert "after the re-simulation at K" in text
         assert "after the parsimony tie-break" in text
+        assert "after the re-simulation at K" in text
+        assert "after the second tie-break" in text
+        assert "parsimony removed at K'" in text
+        assert "parsimony removed at K " in text
+        # The exemption the tie-break no longer needs is gone from the report.
+        assert "parsimony-dominated" not in text
         assert "Inadmissible searches: 0/1" in text
 
     def test_missing_directory_raises(self, tmp_path):

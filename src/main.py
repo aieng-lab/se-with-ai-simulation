@@ -314,12 +314,13 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     aggs = outcome.aggs
     floor = throughput_floor(params, search_cfg.epsilon)
     # c* and the set of admissible configurations it cannot be distinguished from (§3.10),
-    # in two stages: the search's K'-replication estimates give a preliminary I*, which is
-    # then re-simulated with K > K' replications and reduced by the parsimony tie-break —
-    # of several equally good teams running the same process only the one that uses no more
-    # agents anywhere is reported.  c* itself is exempt from that tie-break and is never
-    # removed; I* is empty only when no candidate reached the throughput floor, in which
-    # case c* is the least-violating one.
+    # in two stages: the search's K'-replication estimates give a preliminary I*, the
+    # parsimony tie-break thins it — of several equally good teams running the same process
+    # only the one that uses no more agents anywhere and measured cheaper is kept — what is
+    # left is re-simulated with K > K' replications, and the tie-break runs once more on the
+    # narrower intervals.  c* is never removed by it, since domination requires a strictly
+    # lower mean cost.  I* is empty only when no candidate reached the throughput floor, in
+    # which case c* is the least-violating one.
     t_select = time.perf_counter()
     report = two_stage_selection(
         outcome, search_cfg, horizon, params, initial_state,
@@ -472,9 +473,10 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             st = report.stats
             print(f"Statistically indistinguishable from c*: {len(keep_keys)} config(s)")
             print(f"  I*: {st['n_prelim']} at K'={horizon.K_search} → "
+                  f"{st['n_resimulated']} after the parsimony tie-break → "
                   f"{st['n_after_resim']} after the re-simulation at K={horizon.K_final} "
                   f"({st['n_discarded_throughput']} discarded on throughput) → "
-                  f"{st['n_final']} after the parsimony tie-break")
+                  f"{st['n_final']} after the second tie-break")
             if st["best_changed_by_resim"]:
                 print("  the re-simulation moved c* to a different configuration")
         else:

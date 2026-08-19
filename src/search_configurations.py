@@ -12,8 +12,9 @@ exhaustively.  It is the only producer of zero-agent teams — the samplers and 
 keep their `a_1 >= 1` floor, so the search can never reach one.
 
 `two_stage_selection` is the "Final selection" of §3.11.4: the search ranks candidates by
-their K'-replication estimates, and the preliminary I* those give is re-simulated with
-K > K' replications before c*, I* and the parsimony tie-break are settled (§3.10).
+their K'-replication estimates, the parsimony tie-break thins the preliminary I* those give,
+and what is left is re-simulated with K > K' replications before c*, I* and a second
+application of the tie-break settle the report (§3.10).
 
 Output layout
 -------------
@@ -59,7 +60,6 @@ from .results import save_result
 from .selection import (
     AggregatedObjectives,
     aggregate_config_result,
-    parsimony_dominates,
     parsimony_key,
     rank,
     report_optimum,
@@ -758,17 +758,21 @@ def two_stage_selection(
     """The two-stage selection rule of paper §3.10.
 
     Stage 1 determines a *preliminary* `c*` and `I*` from the K'-replication estimates the
-    search produced, deliberately **without** the parsimony tie-break: §3.10 applies that
-    only to the final set.
+    search produced, **including** the parsimony tie-break: §3.10 applies that wherever `I*`
+    is formed.  A member it removes is both structurally larger and dearer in expectation
+    than the member that removes it, so it can be dropped before it is re-simulated — which
+    is the point, since every member it removes here is one fewer K-replication run.
 
-    Stage 2 re-simulates every member of the preliminary `I*` with `K > K'` replications and
-    repeats the rule on the narrower confidence intervals, which is what makes `I*` shrink.
+    Stage 2 re-simulates the reduced preliminary `I*` with `K > K'` replications and repeats
+    the rule on the narrower confidence intervals, which is what makes `I*` shrink further.
     Three things happen there, in this order:
 
     * a member that no longer satisfies the throughput constraint at K is discarded, which
       `indistinguishable_set` does on its own by filtering on `satisfies_throughput`;
     * `c*` is re-determined, and may differ from the preliminary one;
-    * the parsimony tie-break runs, with `c*` exempt as always.
+    * the parsimony tie-break runs a second time, because the better estimates can reorder
+      the members by cost.  It cannot move `c*`: domination requires a strictly lower mean
+      cost, and `c*` is the minimiser.
 
     When the search was inadmissible — nothing reached the throughput floor, so §3.10 says
     there is no `c*` and `I*` is empty — there is no set to narrow, but the least-violating
@@ -785,17 +789,22 @@ def two_stage_selection(
     """
     floor = throughput_floor(params, search_cfg.epsilon)
     agg_objs = [a for _, _, a in outcome.aggs]
-    prelim_best, prelim_set = report_optimum(agg_objs, floor)
+    prelim_keys = [parsimony_key(cfg) for _, cfg, _ in outcome.aggs]
+    # Both calls return the same `c*`; the un-keyed one is only there for the size §5.1
+    # reports before the tie-break.  The second scan is O(n) and the O(n^2) parsimony pass
+    # runs over the CI-overlap members alone, not over the whole evaluated pool.
+    prelim_best, prelim_raw = report_optimum(agg_objs, floor)
+    _, prelim_set = report_optimum(agg_objs, floor, keys=prelim_keys)
 
     stats: dict[str, object] = {
-        "n_prelim": len(prelim_set),
+        "n_prelim": len(prelim_raw),
+        "parsimony_removed_prelim": len(prelim_raw) - len(prelim_set),
         "n_resimulated": 0,
         "n_discarded_throughput": 0,
         "n_after_resim": 0,
         "n_final": 0,
         "parsimony_removed": 0,
         "best_changed_by_resim": False,
-        "best_parsimony_dominated": False,
         "rho_mean": None,
         "rho_best": None,
         "K_search": settings.K_search,
@@ -831,7 +840,7 @@ def two_stage_selection(
     keys = [parsimony_key(cfg) for cfg in resim_cfgs]
     best, members = report_optimum(resim_aggs, floor)          # before the tie-break
     final_best, keep = report_optimum(resim_aggs, floor, keys=keys)
-    assert final_best == best, "the parsimony tie-break must not move c*"
+    assert final_best == best, "the parsimony tie-break cannot move c*"
 
     best_key = resim_keys[best]
     best_admissible = satisfies_throughput(resim_aggs[best], floor)
@@ -848,11 +857,6 @@ def two_stage_selection(
     stats["n_final"] = len(keep)
     stats["parsimony_removed"] = len(members) - len(keep)
     stats["best_changed_by_resim"] = best_key != prelim_best_key
-    # §3.10 exempts c* from the tie-break so that the best measured performance is not
-    # under-reported; §5.1 asks how often that exemption is what kept it in the set.
-    stats["best_parsimony_dominated"] = any(
-        parsimony_dominates(keys[j], keys[best]) for j in members if j != best
-    )
     if keep:
         rhos = [_relative_half_width(resim_aggs[i]) for i in keep]
         stats["rho_mean"] = sum(rhos) / len(rhos)

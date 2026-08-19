@@ -5,7 +5,8 @@ with 95 % percentile CIs on the objective and the constrained quantity.  The pre
 relation of §3.11.3 (Deb's feasibility rule): a total preorder over (constraint violation,
 cost), which is what makes `rank` a sort and `c*` its first element.  And the reporting
 rule of §3.10: `c*` plus the set of admissible configurations whose cost CI overlaps its
-own, reduced by the parsimony tie-break.
+own, reduced by the parsimony tie-break — which removes a team only when another one at the
+same process is no larger anywhere *and* measured cheaper.
 """
 
 from __future__ import annotations
@@ -228,33 +229,51 @@ class TestParsimonyRelation:
         key = parsimony_key(_cfg(R=4, F_freeze=0, A_qa=(0, 0, 3, 0, 0, 0, 0, 0)))
         assert key.agents[8:] == (0,) * 8
 
-    def test_smaller_team_dominates(self):
+    def test_smaller_and_cheaper_team_dominates(self):
         small = parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))
         large = parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))
-        assert parsimony_dominates(small, large)
-        assert not parsimony_dominates(large, small)
+        assert parsimony_dominates(small, large, 100.0, 101.0)
+        assert not parsimony_dominates(large, small, 101.0, 100.0)
+
+    def test_a_smaller_but_dearer_team_does_not_dominate(self):
+        """§3.10: the rule only removes the larger team in favour of a cheaper one.
+
+        This is what makes the tie-break unable to touch c*: no member of I* has a strictly
+        lower mean cost than the minimiser.
+        """
+        small = parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))
+        large = parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))
+        assert not parsimony_dominates(small, large, 101.0, 100.0)
+        assert not parsimony_dominates(large, small, 100.0, 101.0)
+
+    def test_equal_costs_do_not_dominate(self):
+        """The cost condition is strict, so an exact tie leaves both teams standing."""
+        small = parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))
+        large = parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))
+        assert not parsimony_dominates(small, large, 100.0, 100.0)
+        assert not parsimony_dominates(large, small, 100.0, 100.0)
 
     def test_identical_teams_do_not_dominate(self):
         key = parsimony_key(_cfg())
-        assert not parsimony_dominates(key, key)
+        assert not parsimony_dominates(key, key, 100.0, 101.0)
 
     def test_incomparable_counts_do_not_dominate(self):
         """Componentwise <= is a partial order: it cannot separate a swap."""
         a = parsimony_key(_cfg(A_dev=(1, 0, 3, 2, 1, 0, 0, 0)))
         b = parsimony_key(_cfg(A_dev=(1, 0, 2, 3, 1, 0, 0, 0)))
-        assert not parsimony_dominates(a, b)
-        assert not parsimony_dominates(b, a)
+        assert not parsimony_dominates(a, b, 100.0, 101.0)
+        assert not parsimony_dominates(b, a, 100.0, 101.0)
 
     def test_a_different_process_blocks_it(self):
         """Otherwise the rule could prefer fewer agents but more (dearer) humans."""
         small_team_more_people = parsimony_key(_cfg(N=5.0, A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))
         large_team = parsimony_key(_cfg(N=2.0, A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))
-        assert not parsimony_dominates(small_team_more_people, large_team)
+        assert not parsimony_dominates(small_team_more_people, large_team, 100.0, 101.0)
 
     def test_qa_counts_participate(self):
         small = parsimony_key(_cfg(A_qa=(0, 0, 1, 0, 0, 0, 0, 0)))
         large = parsimony_key(_cfg(A_qa=(0, 0, 1, 1, 0, 0, 0, 0)))
-        assert parsimony_dominates(small, large)
+        assert parsimony_dominates(small, large, 100.0, 101.0)
 
 
 class TestIndistinguishableSetParsimony:
@@ -274,21 +293,24 @@ class TestIndistinguishableSetParsimony:
         assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
 
     def test_the_set_is_never_emptied(self):
-        """`parsimony_dominates` is antisymmetric, so a minimal member always survives."""
+        """`parsimony_dominates` is a strict partial order, so a minimal member survives."""
         import numpy as np
         rng = np.random.default_rng(3)
         pool, keys = [], []
-        for _ in range(25):
+        for i in range(25):
             A = (1,) + tuple(int(x) for x in rng.integers(0, 3, size=7))
-            pool.append(_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)))
+            # Distinct costs, so that the cost condition of the rule can actually bite.
+            cost = 100.0 + i
+            pool.append(_agg(value=10.0, cost=cost, ci=(cost - 30.0, cost + 30.0)))
             keys.append(parsimony_key(_cfg(A_dev=A, A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
         assert indistinguishable_set(pool, 10.0, keys=keys)
 
     def test_the_tie_break_never_removes_the_raw_minimiser(self):
-        """§3.10 exempts c* from the tie-break, so a smaller tied team cannot displace it.
+        """§3.10: a smaller tied team cannot displace c*, because it is not cheaper.
 
-        Both survive here: c* because it is exempt, and the smaller team because the larger
-        one does not parsimony-dominate it.
+        Both survive here, and neither needs an exemption: the smaller team does not
+        dominate c* because its mean cost is higher, and c* does not dominate the smaller
+        team because it is the larger one.
         """
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # cheapest, but larger
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]   # dearer, but smaller
@@ -298,7 +320,7 @@ class TestIndistinguishableSetParsimony:
         assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
 
     def test_a_dominated_non_optimum_is_still_removed(self):
-        """The exemption covers c* alone; every other member obeys the tie-break."""
+        """c* is only safe because nothing undercuts it; other members are fair game."""
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # c*, smallest anyway
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0)),   # tied, small
                 _agg(value=10.0, cost=102.0, ci=(92.0, 112.0))]   # tied, dominated by 1
@@ -308,11 +330,10 @@ class TestIndistinguishableSetParsimony:
         assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
 
     def test_parsimony_does_not_depend_on_input_order(self):
-        """The dominance filter is order-independent once c* is pinned.
+        """The dominance filter is order-independent: it is a strict partial order.
 
-        Costs are made distinct so that the exempt c* is the same *configuration* in every
-        ordering; with all costs equal, `best_index` would break the tie by index and the
-        exemption would legitimately land on a different member after a shuffle.
+        Costs are distinct so that the cost half of the rule discriminates; with all costs
+        equal, no member would dominate any other and the test would be vacuous.
         """
         import numpy as np
         rng = np.random.default_rng(4)
@@ -357,7 +378,7 @@ class TestReportOptimum:
                 assert members == []
 
     def test_the_tie_break_never_displaces_the_optimum(self):
-        """§3.10: c* is the raw minimiser even when a smaller team is tied with it."""
+        """§3.10: c* is the raw minimiser; a smaller tied team is dearer, so it cannot remove it."""
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # cheapest, but larger
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]   # dearer, but smaller
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0))),

@@ -625,7 +625,7 @@ class TestServiceStep:
 # ---------------------------------------------------------------------------
 
 class TestTwoStageSelection:
-    """The preliminary I* at K' is re-simulated at K, then reduced by parsimony."""
+    """The preliminary I* at K' is thinned by parsimony, re-simulated at K, thinned again."""
 
     @staticmethod
     def _horizon():
@@ -652,26 +652,27 @@ class TestTwoStageSelection:
         for key, cr in report.final_results.items():
             assert len(cr.replications) == horizon.K_final, key
 
-    def test_the_set_only_ever_shrinks_across_the_three_stages(self, search_cfg,
-                                                               medium_params):
+    def test_the_set_only_ever_shrinks_across_the_four_stages(self, search_cfg,
+                                                              medium_params):
         _, _, _, report = self._search(search_cfg, medium_params)
         st = report.stats
-        assert st["n_prelim"] >= st["n_after_resim"] >= st["n_final"]
+        assert (st["n_prelim"] >= st["n_resimulated"]
+                >= st["n_after_resim"] >= st["n_final"])
+        assert st["parsimony_removed_prelim"] == st["n_prelim"] - st["n_resimulated"]
         assert st["parsimony_removed"] == st["n_after_resim"] - st["n_final"]
-        assert st["n_resimulated"] == max(st["n_prelim"], 1)
 
     def test_c_star_is_a_member_of_a_non_empty_final_set(self, search_cfg, medium_params):
-        """§3.10 exempts c* from the tie-break, so it can never be filtered out."""
+        """Nothing in I* undercuts c*, so the tie-break can never filter it out."""
         _, _, _, report = self._search(search_cfg, medium_params)
         if report.keep_keys:
             assert report.best_key in report.keep_keys
 
-    def test_the_parsimony_tie_break_only_applies_at_the_final_stage(self, search_cfg,
-                                                                    medium_params):
-        """Stage 1 must hand over the raw CI-overlap set, not a parsimony-reduced one.
+    def test_the_parsimony_tie_break_thins_the_preliminary_set(self, search_cfg,
+                                                               medium_params):
+        """Stage 1 reports the raw CI-overlap size but re-simulates the reduced set.
 
-        If parsimony ran at K' the re-simulation would already start from a filtered set
-        and could not re-rank the members it removed.
+        That is where the effort saving comes from: every member the tie-break removes at
+        K' is one configuration fewer to run at K.
         """
         cfg, horizon, outcome, report = self._search(search_cfg, medium_params)
         floor = throughput_floor(medium_params, cfg.epsilon)
@@ -680,8 +681,45 @@ class TestTwoStageSelection:
         reduced = indistinguishable_set(
             aggs, floor, keys=[parsimony_key(c) for _, c, _ in outcome.aggs])
         assert report.stats["n_prelim"] == len(raw)
-        # The fixture must actually exercise the difference, or the test is vacuous.
-        assert len(reduced) <= len(raw)
+        assert report.stats["n_resimulated"] == len(reduced) <= len(raw)
+        assert set(report.final_aggs) == {outcome.aggs[i][0] for i in reduced}
+
+    def test_a_dominated_member_is_never_re_simulated(self, search_cfg, medium_params):
+        """A larger *and* dearer team at the same process drops out before stage 2.
+
+        The stage-1 aggregates are built by hand so that the pair is genuinely tied and
+        genuinely dominated; the configurations themselves are real, since the survivor is
+        re-simulated at K.
+        """
+        from src.search_configurations import SearchOutcome, _config_key
+        from src.selection import AggregatedObjectives
+        horizon = self._horizon()
+        floor = throughput_floor(medium_params, search_cfg.epsilon)
+        A_small = [0] * AGENT_ROLE_COUNT
+        A_small[0] = 1
+        A_large = list(A_small)
+        A_large[4] = 1                      # one extra Code Review Agent, k=5
+        outcome = SearchOutcome(manifest={}, aggs=[], results={})
+        keys = []
+        for i, (A, cost) in enumerate(((A_small, 100.0), (A_large, 101.0))):
+            team = TeamConfiguration(N=2.0, A_dev=tuple(A), R=2, F_freeze=0)
+            agg = AggregatedObjectives(
+                value_mean=floor + 1.0, value_ci=(floor + 1.0, floor + 1.0),
+                cost_mean=cost, cost_ci=(cost - 10.0, cost + 10.0),
+            )
+            key = _config_key(team, i)
+            keys.append(key)
+            outcome.aggs.append((key, team, agg))
+
+        aggs = [a for _, _, a in outcome.aggs]
+        assert indistinguishable_set(aggs, floor) == [0, 1], "the pair must be tied at K'"
+
+        report = two_stage_selection(outcome, search_cfg, horizon, medium_params,
+                                     progress_every=0)
+        assert report.stats["n_prelim"] == 2
+        assert report.stats["parsimony_removed_prelim"] == 1
+        assert report.stats["n_resimulated"] == 1
+        assert keys[1] not in report.final_aggs
 
     def test_rho_is_the_relative_half_width_of_the_reported_intervals(self, search_cfg,
                                                                       medium_params):
@@ -727,6 +765,7 @@ class TestTwoStageSelection:
         assert report.keep_keys == []          # §3.10: no c*, so I* is empty
         assert report.best_key is not None     # the least-violating one is still reported
         assert report.stats["n_prelim"] == 0
+        assert report.stats["parsimony_removed_prelim"] == 0
         assert report.stats["n_resimulated"] == 1
         assert report.stats["n_discarded_throughput"] == 0
         assert len(report.final_results[report.best_key].replications) == horizon.K_final
@@ -738,6 +777,7 @@ class TestTwoStageSelection:
                                      progress_every=0)
         assert report.best_key is None and report.keep_keys == []
         assert report.stats["n_resimulated"] == 0
+        assert report.stats["parsimony_removed_prelim"] == 0
 
 
 class TestConvergenceRecording:

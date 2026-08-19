@@ -10,9 +10,10 @@ of Deb's feasibility rule rather than into a penalty.
 That preorder ranks by the *mean* cost, which is a Monte Carlo estimate.  We therefore
 report the minimiser `c*` together with the *indistinguishable set* `I*` of admissible
 configurations whose 95% bootstrap CI overlaps `c*`'s (Eq. topset), reduced by the
-parsimony tie-break: of two equally good teams running the same process, only the one that
-uses no more agents anywhere is reported.  `c*` is exempt from that tie-break and stays in
-`I*` unconditionally, so the best measured performance is never under-reported.
+parsimony tie-break: of two equally good teams running the same process, the one that uses
+no more agents anywhere *and* measured cheaper removes the other.  The cost half of that
+condition is what keeps `c*` in `I*` unconditionally — nothing in the set costs strictly
+less than the minimiser — so the best measured performance is never under-reported.
 
 Nothing here is a Pareto frontier.  With a single objective the preference relation is a
 total preorder, so ranking is a sort, `c*` is its first element, and none of the
@@ -203,18 +204,33 @@ def parsimony_key(config: "TeamConfiguration") -> ParsimonyKey:
     )
 
 
-def parsimony_dominates(key_a: ParsimonyKey, key_b: ParsimonyKey) -> bool:
-    """True when `a` runs the same process as `b`, is no larger anywhere, and smaller somewhere.
+def parsimony_dominates(
+    key_a: ParsimonyKey,
+    key_b: ParsimonyKey,
+    cost_a: float,
+    cost_b: float,
+) -> bool:
+    """True when `a` runs `b`'s process, is no larger anywhere, smaller somewhere, and cheaper.
 
-    The statistical half of the §3.10 rule is the caller's precondition: this relation is
-    only applied *within* `I*`, whose members are equally good by construction, so the
-    additional agents of the larger team buy nothing measurable.  Antisymmetric — the
-    componentwise condition cannot hold in both directions — so two candidates can never
-    eliminate each other and a componentwise-minimal member of any family always survives.
+    The statistical half of the §3.10 rule stays the caller's precondition: this relation is
+    only applied *within* `I*`, whose members are statistically indistinguishable by
+    construction, so the additional agents of the larger team buy nothing measurable.  What
+    *is* checked here is the cost condition `cost_a < cost_b` — the larger team is only
+    removed in favour of a smaller one that also measured better, so the best measured
+    performance is never under-reported.  Two consequences the rest of the module relies on:
+
+    * `c*` can never be dominated, since no member of `I*` has a strictly lower mean cost
+      than the minimiser.  No exemption is needed anywhere, and the strictness is what makes
+      that hold for two members whose means are exactly equal.
+    * The relation is a strict partial order — irreflexive, antisymmetric and transitive,
+      both halves being so — hence a single filtering pass suffices, its result does not
+      depend on ordering, and a minimal member of any family always survives.
     """
     if key_a.process != key_b.process:
         return False
     if key_a.agents == key_b.agents:
+        return False
+    if not cost_a < cost_b:
         return False
     return all(x <= y for x, y in zip(key_a.agents, key_b.agents))
 
@@ -231,13 +247,12 @@ def indistinguishable_set(
 
     With `keys` given, the parsimony tie-break of §3.10 is applied afterwards: a member
     that another member parsimony-dominates is dropped.  A single pass suffices and the
-    result does not depend on ordering, because `parsimony_dominates` is antisymmetric and
-    every remover is itself a member.
+    result does not depend on ordering, because `parsimony_dominates` is a strict partial
+    order and every remover is itself a member.
 
-    `c*` itself is *exempt* from the tie-break and can never be dropped, even when a
-    smaller team running the same process is statistically tied with it: §3.10 keeps it in
-    so that the best measured performance is not under-reported.  `c*` is therefore always
-    a member of a non-empty result, and `report_optimum` returns the raw minimiser.
+    `c*` needs no exemption from that tie-break: domination requires a strictly lower mean
+    cost and `c*` is the minimiser, so nothing can remove it.  It is therefore always a
+    member of a non-empty result, and `report_optimum` returns the raw minimiser.
 
     Empty in exactly two cases: an empty pool, and a pool in which *no* candidate satisfies
     the throughput constraint.  In the latter §3.10 says no `c*` exists and `I*` is empty —
@@ -265,8 +280,10 @@ def indistinguishable_set(
         return members
     return [
         i for i in members
-        if i == best
-        or not any(parsimony_dominates(keys[j], keys[i]) for j in members if j != i)
+        if not any(
+            parsimony_dominates(keys[j], keys[i], aggs[j].cost_mean, aggs[i].cost_mean)
+            for j in members if j != i
+        )
     ]
 
 
@@ -278,8 +295,8 @@ def report_optimum(
     """The `(c*, I*)` pair to report (§3.10).
 
     `c*` is the `prefers`-minimal candidate of the whole pool and `I*` is
-    `indistinguishable_set`.  The parsimony tie-break never removes `c*` — §3.10 exempts it
-    so that the best measured performance is not under-reported — so `c*` is a member of
+    `indistinguishable_set`.  The parsimony tie-break cannot remove `c*` — domination
+    requires a strictly lower mean cost and `c*` is the minimiser — so `c*` is a member of
     every non-empty `I*`.
 
     The one case where it is not is the inadmissible one: when no candidate satisfies the

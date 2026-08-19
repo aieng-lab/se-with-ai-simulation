@@ -166,8 +166,8 @@ def optimum_row(
     Every figure comes from ``final_objectives`` — the K-replication estimates the
     two-stage selection of §3.10 reports from — and falls back to the search's own
     K'-replication ``objectives`` only for a result written before the re-simulation
-    existed.  `n_indistinguishable` is the *final* size of `I*`, i.e. after both the
-    re-simulation and the parsimony tie-break; ``convergence.csv`` has the other two.
+    existed.  `n_indistinguishable` is the *final* size of `I*`, i.e. after the tie-break at
+    K', the re-simulation and the second tie-break; ``convergence.csv`` has the other three.
     """
     best = summary.get("best")
     if best is None:
@@ -254,16 +254,17 @@ def scenario_row(
 
 
 #: The `i_star` counters of `SelectionReport.stats` that become `convergence.csv` columns,
-#: in the order the three stages of §3.10 produce them.
+#: in the order the four stages of §3.10 produce them.  The four sizes §5.1 reports are
+#: `n_prelim` -> `n_resimulated` -> `n_after_resim` -> `n_final`.
 _I_STAR_COLUMNS: tuple[str, ...] = (
     "n_prelim",
+    "parsimony_removed_prelim",
     "n_resimulated",
     "n_discarded_throughput",
     "n_after_resim",
     "n_final",
     "parsimony_removed",
     "best_changed_by_resim",
-    "best_parsimony_dominated",
     "rho_mean",
     "rho_best",
 )
@@ -447,10 +448,11 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
         lines.append(f"  incumbent turnover               {_median_iqr_max(searched['incumbent_turnover'])}")
 
     lines.append("")
-    lines.append("Size of I* at the three stages of §3.10")
+    lines.append("Size of I* at the four stages of §3.10")
     lines.append(f"  preliminary, at K'              {_median_iqr_max(convergence['n_prelim'])}")
+    lines.append(f"  after the parsimony tie-break   {_median_iqr_max(convergence['n_resimulated'])}")
     lines.append(f"  after the re-simulation at K    {_median_iqr_max(convergence['n_after_resim'])}")
-    lines.append(f"  after the parsimony tie-break   {_median_iqr_max(convergence['n_final'])}")
+    lines.append(f"  after the second tie-break      {_median_iqr_max(convergence['n_final'])}")
 
     n = len(convergence)
     changed = int(convergence["best_changed_by_resim"].fillna(False).astype(bool).sum())
@@ -458,23 +460,30 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
         convergence["n_discarded_throughput"], errors="coerce").fillna(0).sum())
     discarded_searches = int((pd.to_numeric(
         convergence["n_discarded_throughput"], errors="coerce").fillna(0) > 0).sum())
+    removed_prelim = pd.to_numeric(
+        convergence["parsimony_removed_prelim"], errors="coerce").fillna(0).sum()
+    prelim = pd.to_numeric(convergence["n_prelim"], errors="coerce").fillna(0).sum()
     removed = pd.to_numeric(convergence["parsimony_removed"], errors="coerce").fillna(0).sum()
     after = pd.to_numeric(convergence["n_after_resim"], errors="coerce").fillna(0).sum()
-    dominated = int(convergence["best_parsimony_dominated"].fillna(False).astype(bool).sum())
     lines.append("")
-    lines.append("What the two reduction steps did")
+    lines.append("What the three reduction steps did")
+    # The first tie-break is the one that saves effort: every member it removes is a
+    # configuration the re-simulation does not have to run at K replications.
+    if prelim:
+        lines.append(f"  parsimony removed at K'         {removed_prelim:.0f}/{prelim:.0f} members "
+                     f"({removed_prelim / prelim:.1%} of the preliminary set)")
+    else:
+        # Every search was inadmissible, so there was no preliminary set to reduce.
+        lines.append("  parsimony removed at K'         n/a (no admissible set)")
     lines.append(f"  re-simulation moved c*          {changed}/{n} searches "
                  f"({changed / n:.1%})")
     lines.append(f"  members discarded on throughput {discarded_total} configuration(s) "
                  f"in {discarded_searches}/{n} searches")
     if after:
-        lines.append(f"  parsimony removed               {removed:.0f}/{after:.0f} members "
+        lines.append(f"  parsimony removed at K          {removed:.0f}/{after:.0f} members "
                      f"({removed / after:.1%} of the set at K)")
     else:
-        # Every search was inadmissible, so there was no set for parsimony to reduce.
-        lines.append("  parsimony removed               n/a (no admissible set)")
-    lines.append(f"  c* itself parsimony-dominated   {dominated}/{n} searches "
-                 f"(kept by its §3.10 exemption)")
+        lines.append("  parsimony removed at K          n/a (no admissible set)")
 
     inadmissible = convergence[~convergence["best_admissible"].fillna(False).astype(bool)]
     lines.append("")
