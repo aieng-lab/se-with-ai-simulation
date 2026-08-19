@@ -1520,7 +1520,29 @@ For the simulation of the human baseline, we only need to consider $(N, R, F_\ma
 \label{sec:results}
 % ============================================================
 
+% ---- 5.1 ----
 
+\subsection{Search convergence}
+\label{sec:results:convergence}
+
+General idea:
+\begin{itemize}
+  \item For each search, monitor the change of the elite set over generations. We measure this as the \emph{elite turnover}
+        \begin{equation}
+          \tau_g \;=\; \frac{\bigl|\mathcal{E}_g \setminus \mathcal{E}_{g-1}\bigr|}{n_\mathrm{elite}},
+          \qquad g = 1, \ldots, G,
+          \label{eq:elite_turnover}
+        \end{equation}
+        i.e., the share of the elite of generation $g$ that was not already in the elite of the preceding generation. Since the population is an archive, $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$, and the elite consists of the $n_\mathrm{elite}$ best configurations under the preference relation $\prec$, the elite can never get worse; $\tau_g$ therefore decreases as improvements become rarer and is a direct measure of convergence. We visualize the median of $\tau_g$ over the 432 searches together with the 5\%--95\% band, since one curve per search would not be readable. We additionally report the turnover of the incumbent alone, i.e., the share of generations in which the best configuration of $\mathcal{P}_g$ changed. This is required because $\tau_g$ has a noise floor: configurations whose costs are statistically indistinguishable at $K'$ replications swap ranks within the elite without any actual improvement taking place.
+  \item Report the size of $\mathcal{I}^\star$ at the three stages it passes through in Section~\ref{sec:model:selection}: the preliminary set determined with $K'$ replications, the set after the re-simulation with $K$ replications, and the final set after the parsimony tie-break. We report median, interquartile range, and maximum over the 432 searches instead of the mean, since we expect these sizes to be strongly skewed. For the re-simulation, we additionally report how often it changed $\mathbf{c}^\star$, i.e., how often the cost minimiser at $K$ replications differs from the one at $K'$ replications, and how often a member of the preliminary set was discarded because it violated the throughput constraint of Eq.~\eqref{eq:throughput_constraint} at $K$ replications. For the parsimony tie-break, we report the share of configurations that it removes and how often $\mathbf{c}^\star$ itself was parsimony-dominated and retained only through its exemption from the rule.
+  \item Report how many of the 432 searches ended inadmissible, i.e., found no configuration at all that satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} and therefore have an empty $\mathcal{I}^\star$ (Section~\ref{sec:model:selection}). For these searches, we report which scenarios they belong to and the value that the least-violating configuration achieved, expressed as a share of the required $(1-\epsilon)\,r_\mathrm{arrival}$, so that the distance to the admissible region is visible. We further discuss whether inadmissibility is a property of the model or a failure of the search, i.e., whether the searched region $\mathcal{S}$ of Eq.~\eqref{eq:searched_region} contains an admissible configuration at all: the saturation bounds of Eq.~\eqref{eq:sat_bound} together with the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} bound the throughput any configuration in $\mathcal{S}$ can reach. This mirrors the reporting we already announced for the human-only baseline in Section~\ref{sec:setup:sweep}.
+  \item Report the width of the confidence intervals after the re-simulation, relative to the total costs, as the relative half-width
+        \begin{equation}
+          \rho_\mathbf{c} \;=\; \frac{C^+_\mathbf{c} - C^-_\mathbf{c}}{2\,C_\mathbf{c}},
+          \label{eq:rel_halfwidth}
+        \end{equation}
+        averaged over all configurations $\mathbf{c}$ of the final $\mathcal{I}^\star$ of a search. We report the distribution of this per-search average over the 432 searches.
+\end{itemize}
 
 % ============================================================
 \section{Discussion}
