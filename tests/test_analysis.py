@@ -10,7 +10,7 @@ from src.simulation import run_configuration
 
 @pytest.fixture
 def trace_df(base_config, base_params):
-    s = SimulationHorizon(T=8, K=5, master_seed=0)
+    s = SimulationHorizon(T=8, K_search=5, K_final=5, master_seed=0)
     trace = run_configuration(base_config, s, base_params, capture_traces=True)
     return to_dataframe(trace)
 
@@ -65,7 +65,7 @@ class TestFinalDistribution:
 class TestConvergenceCheck:
     def test_single_config_stable(self, base_config, base_params):
         """With one candidate there is nothing for halving K to change."""
-        s = SimulationHorizon(T=8, K=20, master_seed=0)
+        s = SimulationHorizon(T=8, K_search=20, K_final=20, master_seed=0)
         result = run_configuration(base_config, s, base_params)
         check = convergence_check([result], master_seed=0)
         assert check["stable"]
@@ -81,7 +81,7 @@ class TestConvergenceCheck:
     def test_picks_the_cheaper_of_two_configs(self, base_config, base_params):
         """The check is about c*, so a clearly cheaper candidate must win at both K."""
         import dataclasses
-        s = SimulationHorizon(T=8, K=20, master_seed=0)
+        s = SimulationHorizon(T=8, K_search=20, K_final=20, master_seed=0)
         cheap = run_configuration(base_config, s, base_params)
         # A second candidate that is otherwise identical but pays ten developers.
         pricey_cfg = dataclasses.replace(base_config, N=10.0)

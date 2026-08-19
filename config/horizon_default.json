@@ -1,5 +1,6 @@
 {
   "T": 104,
-  "K": 100,
+  "K_search": 100,
+  "K_final": 1000,
   "master_seed": 42
 }

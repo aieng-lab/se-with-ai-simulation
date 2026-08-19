@@ -9,13 +9,13 @@ from src.simulation import run_configuration
 
 @pytest.fixture
 def small_trace(base_config, base_params):
-    s = SimulationHorizon(T=4, K=2, master_seed=0)
+    s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
     return run_configuration(base_config, s, base_params, capture_traces=True)
 
 
 @pytest.fixture
 def small_result(base_config, base_params):
-    s = SimulationHorizon(T=4, K=2, master_seed=0)
+    s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
     return run_configuration(base_config, s, base_params)
 
 

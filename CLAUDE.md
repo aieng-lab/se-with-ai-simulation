@@ -27,21 +27,24 @@ src/                    Python simulation package
                         / load_search_config / load_initial_state
     feasibility.py      check_feasibility — human-capacity feasibility condition (§3.6)
     sprint.py           step_sprint — full 10-step sprint transition; returns SprintActions
-    simulation.py       run_configuration (K replications); escaped_bug_cost,
-                        cost_components; SprintSnapshot / ConfigTrace
+    simulation.py       run_configuration (K replications, `K=` overridable);
+                        escaped_bug_cost, cost_components; SprintSnapshot / ConfigTrace
     selection.py        aggregate_config_result (bootstrap CI), the throughput constraint,
                         the `prefers` preference relation, report_optimum (c* and I*)
     results.py          to_dataframe, save_result/load_result, save_traces/load_traces
     analysis.py         mean_trajectory, quantile_band, final_distribution, convergence_check
-    campaign.py         minimal campaign consolidation: optima.csv + scenarios.csv schemas
+    campaign.py         minimal campaign consolidation: optima.csv + scenarios.csv +
+                        convergence.csv + elite_turnover.csv schemas, convergence_summary
     search_configurations.py evolutionary search (the only one) +
-                        _run_human_only / human_only_grid (the §4.1 baseline)
+                        _run_human_only / human_only_grid (the §4.1 baseline) +
+                        two_stage_selection (the K'/K selection of §3.10)
     visualization.py    matplotlib plot functions + visualize_single/visualize_multi/
                         visualize_campaign helpers
     main.py             CLI: `python -m src.main run|analyze|optimize|visualize|campaign`
 
 config/
-    horizon_default.json      Monte Carlo protocol of §4.2: T=104, K=100, master_seed=42
+    horizon_default.json      Monte Carlo protocol of §4.2: T=104, K_search=100 (the
+                              paper's K'), K_final=1000 (K), master_seed=42
     team_default.json         default team configuration (N, R, F_freeze, A_dev, A_qa)
     human_{low,medium,high}.json      scenario group: human developers (§4.2.1);
                                       carries f_qa / h_qa / d_qa, read only by a
@@ -64,11 +67,11 @@ config/
 scripts/
     generate_search_configs.py  write the 432 config/search/*.json from search_default.json;
                                 --baseline writes the 36 config/search_baseline/*.json
-    collect_results.py          consolidate a campaign into optima.csv + scenarios.csv
+    collect_results.py          consolidate a campaign into the four CSVs (no figures)
 run_experiments.sh      campaign driver: 432 searches in parallel, resumable (§4.2);
                         MODE=human_only runs the 36 §4.1 baselines instead
 
-tests/                  pytest suite (452 tests, ~90 s — the campaign figures dominate)
+tests/                  pytest suite (481 tests, ~90 s — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
     experiments/        STALE.  Holds the pre-2026-08-18 campaign (432 scenario dirs ×
                         `evolutionary` + `descent`), which predates the refactoring-role
@@ -109,7 +112,9 @@ python -m src.main run --human config/human_low.json --agent config/agent_high.j
 python -m src.main analyze results/my_run/result.json
 ```
 
-**Run a configuration search** (evolutionary, the §4.2 budget of E = 10,000 evaluations):
+**Run a configuration search** (evolutionary, the §4.2 budget of E = 10,000 evaluations at
+`K_search = 100` replications, followed by the re-simulation of the preliminary `I*` at
+`K_final = 1000`, which is outside that budget):
 ```bash
 python -m src.main optimize config/search_default.json --out results/search_default
 ```
@@ -118,7 +123,10 @@ The search itself is **not selectable** — §3.11 describes one — so `optimiz
 `--strategy` flag.  Useful `optimize` flags: `--samples {all,best,none}` controls which candidates get a
 `samples/<key>.json` (default `best` — `c*` and the indistinguishable set `I*`; `all` is
 ~12 KB × 10,000 per search), and `--progress-every N` throttles the progress lines
-(`0` silences them).
+(`0` silences them; it also throttles the re-simulation heartbeat).
+Each search writes four files: `manifest.json`, `search_summary.json` (the `K_search`
+estimates of every candidate in `objectives`, the `K_final` ones of the re-simulated set in
+`final_objectives`), `convergence.json` (the §5.1 record) and `samples/`.
 
 **Run the human-only baseline** (§4.1 — a team with no agents at all; 99 configurations,
 enumerated exhaustively rather than searched, ~20 s per scenario):
@@ -133,9 +141,11 @@ The generated baseline configs already carry `"human_only": true`, so `--human-o
 Results land in `results/experiments/<scenario_id>/human_only/`, beside `evolutionary/`,
 and `python -m src.main campaign` picks them up automatically.
 
-**Run the full §4.2 campaign** (432 scenarios, one evolutionary search each; ~215
-core-hours). The tree on disk predates the 2026-08-18 model corrections and every job in it
-is stale, so the campaign has to be re-run with `FORCE=1` (or after clearing
+**Run the full §4.2 campaign** (432 scenarios, one evolutionary search each; ~215 core-hours
+for the search itself, plus the §3.10 re-simulation on top — `|I*_prelim|` × 1,000
+replications per scenario, which the tiny runs put at roughly the same order as the search).
+The tree on disk predates the 2026-08-18 model corrections *and* the two-stage selection, so
+every job in it is stale and the campaign has to be re-run with `FORCE=1` (or after clearing
 `results/experiments`) rather than resumed:
 ```bash
 python scripts/generate_search_configs.py --force   # writes the 432 config/search/*.json
@@ -144,7 +154,7 @@ DRY_RUN=1 ./run_experiments.sh                # list the 432 jobs
 FILTER='*_a-p_*' ./run_experiments.sh         # just the pessimistic agent tier
 LIMIT=2 ./run_experiments.sh                  # smoke test
 JOBS=14 ./run_experiments.sh                  # full run; re-invoke to resume
-python -m src.main campaign                   # → optima.csv, scenarios.csv, the figures
+python -m src.main campaign                   # → the four CSVs and the figures
 ```
 Results land in `results/experiments/<scenario_id>/<mode>/`; `index.tsv` records one
 line per finished job. Other env knobs: `FILTER` (config glob), `MODE`, `SAMPLES`,
@@ -157,8 +167,9 @@ python -m src.main campaign [results/experiments] [--out results/analysis]
 python -m src.main campaign --share human --x debt --color agent   # re-assign channels
 python -m src.main campaign --figures-only     # redraw from an existing optima.csv
 ```
-`--figures-only` skips `build_tables` entirely and reads `<--out>/optima.csv` instead, so it
-redraws every figure without re-walking the 432 result directories or rewriting either CSV.
+`--figures-only` skips `build_tables` entirely and reads `<--out>/optima.csv` (plus
+`elite_turnover.csv` where it exists) instead, so it redraws every figure without re-walking
+the 432 result directories or rewriting any CSV.
 That is the path to use on the finished campaign whenever only the plotting code changed.
 `baseline_uplift.csv` appears whenever the tree holds §4.1 baselines: one row per
 campaign scenario that has a baseline at the same `human`/`project`/
@@ -169,11 +180,29 @@ baseline row is the reference for all 12 of their combinations.
 holds `evolutionary` or `human_only` and keeps that name for continuity: the five control
 variables, both composition vectors, cost with CI, the three drivers in dollars *and* as
 shares of the total (`cost_{quality,human,agent}_share`), value with CI, `value_ratio`,
-`|I*|`, the per-role work counts and the contribution split. `scenarios.csv` is the search
-effort per (scenario, mode).
+`|I*|`, the per-role work counts and the contribution split. Every number in it is a
+**K_final** estimate: `optimum_row` reads `search_summary.json`'s `final_objectives`, the
+re-simulated block of §3.10, and falls back to the K'-replication `objectives` only for a
+result written before the two-stage selection existed. `n_indistinguishable` is likewise the
+*final* `|I*|`, after both the re-simulation and the parsimony tie-break.
+`scenarios.csv` is the search effort per (scenario, mode), including both replication counts.
 
-Four §5 figures per result mode, all drawn by `visualization._draw_matrix` — the five-channel
-tier grid — so they read identically and differ only in the pair of columns on the axes.
+`convergence.csv` and `elite_turnover.csv` are the §5.1 reporting, both read from the
+per-search `convergence.json` (a small file beside `manifest.json`, deliberately separate so
+the campaign does not have to parse the manifest's 10,000-entry `configs` block for four
+scalars). `convergence.csv` is one row per (scenario, mode): `tau_first` / `tau_last` /
+`tau_mean_last_10` and `incumbent_turnover`, the size of `I*` at all three stages
+(`n_prelim` → `n_after_resim` → `n_final`) with `n_discarded_throughput`,
+`parsimony_removed`, `best_changed_by_resim` and `best_parsimony_dominated`, and the relative
+half-widths `rho_mean` / `rho_best` of Eq. (rel_halfwidth). `elite_turnover.csv` is long
+format — one row per (scenario, mode, generation) — because a search that exhausts its budget
+early runs fewer than `G` generations, so a wide table would need padding.
+`campaign.convergence_summary` renders the same frame as the text block that
+`campaign` prints and writes to `convergence_summary.txt`: order statistics rather than
+means, since §5.1 expects those distributions to be strongly skewed.
+
+Four of the five §5 figures per result mode are drawn by `visualization._draw_matrix` — the
+five-channel tier grid — so they read identically and differ only in the pair of columns on the axes.
 One point per scenario's `c*`; two scenario groups facet the grid (`agent` columns ×
 `human` rows → 4 columns × 3 rows) and the other three become marker colour (`debt`), shape (`project`)
 and size (`bugimpact`). Two groups have four tiers, and where each sits is deliberate:
@@ -187,6 +216,16 @@ shape would not survive the smallest size tier, so do not add one. `_check_matri
 enforces one group per channel, and each mode gets its own figures — overlaying them
 would draw every scenario twice.  With one search left the loop runs once, over
 `evolutionary`, and the baseline is an overlay rather than a set of its own.
+
+The fifth, `elite_turnover_<mode>.png` (`plot_elite_turnover`), is the §5.1 convergence
+figure and deliberately stands outside all of that: convergence is a property of the search,
+not of the scenario grid, so it carries **no tier channels and no baseline** — an enumeration
+has no generations to turn over, which is also why the `human_only` mode never gets one
+(`_turnover_for` returns None for a mode with no rows). It takes the long-format
+`elite_turnover.csv`, draws the median `tau_g` with the 5–95 % band over searches, and
+overlays the share of searches whose incumbent changed in that generation, because `tau_g`
+has a noise floor: candidates that are indistinguishable at `K'` swap ranks inside the elite
+without any improvement happening.
 
 **Every measured number in the four bullets below came from the superseded campaign** and
 is kept only as a description of what each figure is for and how to read it; re-derive the
@@ -258,7 +297,7 @@ A configuration is scored by **one** number, the expected cost per feature of Eq
 |---|---|---|
 | `cost` | `(C_quality + C_human + C_agents) / max(1, F_completed(T))` | minimise |
 
-formed **within** each replication and then averaged over K, so every replication is charged
+formed **within** each replication and then averaged over the replications, so every replication is charged
 for the bugs it let through and the agent work it consumed and credited with the features it
 actually delivered. The three drivers are recorded separately (`cost_quality`, `cost_human`,
 `cost_agent`) and sum to `cost` exactly:
@@ -299,10 +338,12 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 - **The baseline is provably independent of the `debt` and `agent` groups**, which is why its grid is human(3) × project(4) × bugimpact(3) = **36 scenarios** and not 432. Every `delta_D` consumer multiplies an agent count or `W_agent`; every agent-group parameter multiplies an agent count, or dies in `Φ(·,0) = 0`, or acts on a test suite that never grows. §4.1's "simplified model without debt dynamics" therefore needs **no bypass code** — it is already true, and `tests/test_sprint.py::TestHumanOnlyDebtIsInert` pins it rather than the transition enforcing it. The two inert groups take the `UNUSED_TIER` sentinel, rendered `X`, so a baseline id reads `h-m_p-v_d-X_a-X_b-l`; `config/{debt,agent}_unused.json` supply the placeholder values so the `<group>_<tier>.json` convention holds and `campaign.scenario_params_for_id` needs no special case. `UNUSED_TIER` is deliberately **outside** `TIER_INITIALS` and `ALL_SCENARIO_TIERS` — it must never enter `scenario_tier_combinations()` nor the figure tier channels.
 - **`r_bugs_human` is an absolute per-feature rate, not a scale factor** (paper Eq. Binj-human): `B_human(t) ~ Poisson(impl_human'(t) · r_bugs,human)`, with **no** `(2 − δ_D)` amplifier. Human-written code injects at a fixed rate; only the agent stream of Eq. (Binj-agent) is debt-amplified. Values are 0.20 / 0.12 / 0.08 by human tier. This is a change to the **shared** model — it moves mixed-team results too (roughly ×4 on the escaped-bug cost at the medium agent tier) — so **the campaign on disk predates it and must be re-run before any §5 number is quoted**. `saturation_bounds`' `λ_3` deliberately still counts only the agent stream, matching the paper's Eq. (workload); it under-counts, but `ā_3 = 1` regardless because `η_3 = r_fix·δ_min` is in the hundreds.
 - **The baseline is drawn as an overlay, never as its own figure set.** `visualize_campaign` splits the `human_only` rows out *before* the per-mode loop and passes them to `_draw_matrix` as a `baseline` frame: one fixed black `*`, outside `_TIER_COLORS`/`_TIER_MARKERS`/`_TIER_SIZES` entirely. Do **not** promote it to a fifth tier shape — the existing note that a fifth shape would not survive the smallest size tier still holds. `_baseline_cell` matches a baseline row on the *facet* groups only and treats `UNUSED_TIER` as matching every tier, which is what repeats the same reference points down all four `agent` columns; say so in the caption, it is a reference level rather than an `a-X` observation. The ratio figure takes no baseline at all — a team with no agents has no agent/developer ratio. Axis floors and shared ranges are computed over `_with_baseline(df, baseline)`, or the baseline's exactly-zero agent cost would drop silently off a log axis.
-- **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`.
-- **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `best` — the `ConfigResult`s are buffered in memory and only `c*` and `I*` are written, *after* `report_optimum` has run. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`.
+- **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`. Because the spawn key holds the replication index and nothing about the count, a replication is addressable by index, which is what lets `run_configuration`'s `k_offset` hand the re-simulation of §3.10 a **disjoint** block `[K_search, K_search + K_final)` deterministically.
+- **The convergence record of §5.1 is collected in the generation loop, not reconstructed afterwards.** `SearchOutcome` carries `elite_turnover`, `incumbent_changed` and `best_cost`, one entry per generation actually run. The loop keeps the ranking across its body — `rank` is called once before the first generation, for `E_0` over the initial pool, and again at the end of each generation — so the same sort supplies both the parents of the next generation (`P_{g-1}`, as §3.11.4 requires) and `E_g` for `τ_g = |E_g \ E_{g-1}| / n_elite`. The denominator is `n_elite` as Eq. (elite_turnover) writes it, not `|E_g|`. `_run_human_only` leaves all three lists empty; an enumeration has no generations, and `incumbent_turnover` is None there rather than 0.
+- **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `best` — the `ConfigResult`s are buffered in memory and only `c*` and `I*` are written, *after* `two_stage_selection` has run. The files written for those keys are the **re-simulated** results (`K_final` replications), because `_cmd_optimize` merges `SelectionReport.final_results` into `outcome.results` and passes `final_aggs` as `write_samples`' `aggs_override` — a sample file must agree with the row `optima.csv` reports. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`, at `K_search`.
 - **The selection rule of §3.10 replaces the CI-aware Pareto frontier, and it is a *total preorder*.** `selection.prefers` is Deb's feasibility rule as the lexicographic key `(violation, cost_mean)`: two violators are separated by whose shortfall is smaller, an admissible configuration precedes every violator, and two admissible ones are separated by cost alone. So `rank` is a plain stable sort, `best_index` is a `min`, and **none of the non-transitivity machinery the old CI-aware multi-objective rule needed applies** — there is no O(n²) unpruned dominance loop and no ordering hazard. Do not reintroduce a dominance relation: with one objective there is nothing for it to do.
-- **`report_optimum`, not `best_index`, is what a reported `(c*, I*)` pair must come from.** `I*` (Eq. topset) is the admissible candidates whose cost CI overlaps `c*`'s, reduced by the parsimony tie-break. **`c*` is exempt from that tie-break** and is never removed even when a smaller team running the same process is statistically tied with it — §3.10 keeps it so the best measured performance is not under-reported — so `c*` stays the raw cost minimiser and is a member of every non-empty `I*`. The other reason to go through `report_optimum` is the inadmissible case: when *no* candidate reaches the throughput floor there is no `c*` in the sense of §3.10, so **`I*` is empty** while the least-violating candidate is still returned and reported (`manifest["best_admissible"] = false`, `n_indistinguishable = 0`). `main._cmd_optimize` uses it, and falls back to `c*` for the `--samples best` file list so an inadmissible search still writes one sample; `search_configurations` deliberately does **not** use it — parsimony must not steer the search, only the report.
+- **Selection is two-stage, and `two_stage_selection` owns both stages (§3.10).** The search scores every candidate with `K_search = K'` replications; stage 1 is `report_optimum(aggs, floor)` **without** parsimony keys, which gives the *preliminary* `c*` and `I*`. Stage 2 re-simulates every member of that set with `K_final = K > K'` replications and repeats the rule on the narrower intervals: a member that no longer satisfies the throughput constraint drops out (`indistinguishable_set` filters on `satisfies_throughput`, so this needs no extra code), `c*` is re-determined and may move, and only then does the parsimony tie-break run. The re-simulation is **outside** the `E` budget (§4.2) and runs a **disjoint** block of replication indices (`run_configuration(..., K=K_final, k_offset=K_search)`), *not* an extension of the block the search used. That is deliberate and must not be "simplified" away: a candidate is in the preliminary set because its `K'` estimate came out at or near the minimum of thousands of noisy estimates, so that estimate is biased low by the selection itself — reusing those replications would carry a `K'/K` share of the winner's curse into the reported cost, and a fresh block removes it at identical simulation cost. **Do not apply parsimony at stage 1** — it would filter members the re-simulation still has to be able to re-rank. Inadmissible searches are the one case with nothing to narrow: the preliminary `I*` is empty, so the single least-violating candidate is re-simulated alone, which is what keeps `optima.csv`'s `value_ratio` a `K` number for every row.
+- **`report_optimum`, not `best_index`, is what a reported `(c*, I*)` pair must come from.** `I*` (Eq. topset) is the admissible candidates whose cost CI overlaps `c*`'s, reduced by the parsimony tie-break. **`c*` is exempt from that tie-break** and is never removed even when a smaller team running the same process is statistically tied with it — §3.10 keeps it so the best measured performance is not under-reported — so `c*` stays the raw cost minimiser and is a member of every non-empty `I*`. The other reason to go through `report_optimum` is the inadmissible case: when *no* candidate reaches the throughput floor there is no `c*` in the sense of §3.10, so **`I*` is empty** while the least-violating candidate is still returned and reported (`manifest["best_admissible"] = false`, `n_indistinguishable = 0`). `two_stage_selection` calls it twice (see the bullet above), and `main._cmd_optimize` falls back to `c*` for the `--samples best` file list so an inadmissible search still writes one sample; the *search loop* deliberately does not use it — parsimony must not steer the search, only the report.
 - **The parsimony tie-break (§3.10) applies only inside `I*`**: among configurations that share `(N, R, F_freeze)`, use no more agents of every role in both phases with strictly fewer of at least one, only the smallest is reported. `selection.parsimony_dominates` takes just the two `ParsimonyKey`s — the statistical half of the rule is the caller's precondition, since every member of `I*` is tied with `c*` by construction. Antisymmetric, so `I*` is never emptied and the dominance filter is order-independent (`c*`'s exemption is not: with several candidates at the same cost, which one is exempt follows from `best_index`'s index tie-break). It cannot substitute for the `A_qa` canonicalisation below: componentwise `≤` is a partial order and only collapses chains, so two teams like `(…,3,2,…)` and `(…,2,3,…)` both survive.
 - **`A_qa` is canonically zero where `F_freeze == 0`**: with no freeze window `T_qa` is zero and `A_qa` is never applied, so `TeamConfiguration.__post_init__` normalises it to the zero vector (after the shape checks, so a malformed vector still raises). This is what keeps a redundant coordinate from multiplying the search space: `rng._config_hash` folds `A_qa` in, so without it two configurations that are the *same model* draw different RNG streams and land at different objective values while being indistinguishable as teams. The sampler and the mutation operator cooperate — `_random_draws` draws `F_freeze` before the compositions and skips the QA draw, and `_mutate` drops the `A_qa` option from its four-way choice at `F_freeze == 0` (every QA move would canonicalise straight back to the parent). Measured on a smoke evolutionary search before the fix: 23.9 % of evaluated candidates were behavioural duplicates.
 - **Agents are billed for the work they performed, not for being deployed — except for three roles that have no countable output**: `step_sprint` returns a `SprintActions` with the work each role completed that sprint, measured in that role's own throughput unit (features for k=1, where an implemented architecture proposal counts as `ARCH_IMPL_COST_UNITS = 5` features; change requests for k=2, bugs for k=3, tests for k=7, documents for k=8). **k=4, 5, 6 are flat-rate** (`r_k = 1`, `u_k = a_k`): the two review services have no discrete unit of output, and the Refactoring Agent produces a reduction of the normalised `D_tech` rather than an artefact. `run_configuration` accumulates the vector over the horizon and `simulation.cost_components(config, params, T, actions)` returns `C_agents = Σ_k actions_k · c_token,k`. A demand-driven agent that no work reaches costs nothing; a flat-rate one bills whether or not it has anything to do. Consequence to keep in mind: **cost does not discipline over-provisioning of roles 1–3** — the saturation bound `ā_k` and the human-capacity gate are what bound them.
@@ -332,10 +373,20 @@ range over.  `main._cmd_optimize` derives the mode from the boolean and still wr
 
 `_mutate` perturbs exactly one of `{N, F_freeze, A_dev, A_qa}` (`R` is never mutated), and
 `_mutate_composition` applies one of four elementary operations: add / remove / transfer over
-the **supervised** roles, or `±1` on one of the three **autonomous** roles.  The last is a
-separate operation precisely because `K_aut` is not part of the pool the other three
+the **supervised** roles, or *adjust service* on one of the three **autonomous** roles.  The
+last is a separate operation precisely because `K_aut` is not part of the pool the other three
 redistribute; within it the two review services are uncapped and the Refactoring Agent is
-capped at `ā_4`.  A `+1` that would breach a cap is left as a no-op, which `_mutate`'s
+capped at `ā_4`.
+
+**The service step is `±2^j`, not `±1`** (§3.11.4): `_service_step` draws the sign uniformly
+and the exponent `j` uniformly from `{0, …, ⌊log₂ s_k⌋}`, where `s_k` is the role's *sampling*
+range of §3.11.2 — `review_sample_max = ⌊r_arrival⌋` for k=5,6 and `refactoring_bound = ā_4`
+for k=4 — and clips: floored at 0 for all three, capped at `ā_4` for k=4 only.  The exponential
+ladder is what lets the search traverse the service counts at the high project tiers, where
+`⌊r_arrival⌋` reaches 1000 and a `±1` walk could not.  Two things to keep straight: `s_k` is a
+*step-size* range, so a mutation may still take k=5,6 past `review_max` (nothing caps them);
+and `⌊log₂ 0⌋` must never be evaluated — `ā_4` is 0 at `r_arrival < 2`, where the guard leaves
+only `j = 0`.  A step that clips back onto the parent value is a no-op, which `_mutate`'s
 ten-attempt retry loop then redraws.
 
 The greedy neighbourhood descent and its `neighbourhood` / `_composition_neighbours`

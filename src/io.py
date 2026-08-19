@@ -84,7 +84,8 @@ def load_simulation_horizon(path: str | Path) -> SimulationHorizon:
         data = json.load(fh)
     return SimulationHorizon(
         T=int(data["T"]),
-        K=int(data["K"]),
+        K_search=int(data["K_search"]),
+        K_final=int(data["K_final"]),
         master_seed=int(data["master_seed"]),
     )
 

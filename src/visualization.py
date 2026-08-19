@@ -9,6 +9,7 @@ Public API — plot functions
     plot_cost_split(objectives, keys, title)                            -> Figure
     plot_trajectories(traces_per_config, highlight_keys, fields, title) -> Figure
     plot_comparison_optima(scenarios, title)                            -> Figure
+    plot_elite_turnover(turnover, title)                                -> Figure
 
 Public API — campaign-level plots (paper §5)
 ---------------------------------------------
@@ -29,7 +30,7 @@ Public API — result-directory helpers
 --------------------------------------
     visualize_single(result_dir, out_dir, fmt)                    -> None
     visualize_multi(result_dirs, out_dir, fmt)                    -> None
-    visualize_campaign(optima, out_dir, fmt, share, **channels)   -> None
+    visualize_campaign(optima, out_dir, fmt, share, turnover, **channels) -> None
     save_figure(fig, out_dir, name, fmt)                          -> None
 """
 
@@ -46,7 +47,13 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter, PercentFormatter
+from matplotlib.ticker import (
+    FuncFormatter,
+    LogLocator,
+    MaxNLocator,
+    NullFormatter,
+    PercentFormatter,
+)
 
 from .config import ALL_SCENARIO_TIERS, SCENARIO_GROUPS, UNUSED_TIER
 
@@ -291,6 +298,74 @@ def plot_comparison_optima(
         ax.set_xscale("log")
         ax.set_xlabel("cost of $c^\\star$   (\\$ / feature)", fontsize=9)
         ax.legend(fontsize=8, loc="best")
+        fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 4b. Search convergence (paper §5.1)
+# ---------------------------------------------------------------------------
+
+def plot_elite_turnover(
+    turnover: "pd.DataFrame",
+    title: str = "",
+) -> "Figure":
+    """The elite turnover of Eq. (elite_turnover) against the generation index (§5.1).
+
+    Takes the long-format ``elite_turnover.csv`` of :mod:`src.campaign` — one row per
+    (scenario, strategy, generation) — and draws the median over searches with the
+    5 %–95 % band, because one curve per search would not be readable at 432 of them.
+    The incumbent turnover is overlaid as the share of searches whose best configuration
+    changed in that generation: `tau_g` has a noise floor from indistinguishable
+    candidates swapping ranks inside the elite, and the incumbent curve is what separates
+    that floor from actual improvement.
+
+    Deliberately *not* a `_draw_matrix` figure: convergence is a property of the search,
+    not of the scenario grid, so it carries no tier channels.
+    """
+    needed = {"generation", "tau"}
+    missing = needed - set(turnover.columns)
+    if missing:
+        raise KeyError(f"turnover table is missing column(s) {sorted(missing)}")
+    if turnover.empty:
+        raise ValueError("plot_elite_turnover needs at least one generation")
+
+    grouped = turnover.groupby("generation")["tau"]
+    generations = np.array(sorted(turnover["generation"].unique()), dtype=float)
+    median = grouped.median().reindex(generations).to_numpy(dtype=float)
+    lo = grouped.quantile(0.05).reindex(generations).to_numpy(dtype=float)
+    hi = grouped.quantile(0.95).reindex(generations).to_numpy(dtype=float)
+    n_searches = (turnover.groupby(["scenario_id", "strategy"]).ngroups
+                  if {"scenario_id", "strategy"} <= set(turnover.columns) else 1)
+
+    with plt.style.context(_STYLE):
+        fig, ax = plt.subplots(figsize=(7.5, 4.2))
+        if title:
+            ax.set_title(title, fontsize=11)
+
+        ax.fill_between(generations, lo, hi, color=_KEEP_COLOR, alpha=0.20,
+                        linewidth=0, label="5 %–95 % over searches")
+        ax.plot(generations, median, color=_KEEP_COLOR, linewidth=1.8,
+                label=r"median $\tau_g$")
+
+        if "incumbent_changed" in turnover.columns:
+            share = (turnover.assign(
+                        changed=turnover["incumbent_changed"].fillna(False).astype(bool))
+                     .groupby("generation")["changed"].mean()
+                     .reindex(generations).to_numpy(dtype=float))
+            ax.plot(generations, share, color=_BEST_COLOR, linewidth=1.2, linestyle="--",
+                    label="share of searches whose $c^\\star$ changed")
+
+        # The generation index is an integer; a shared locator would offer halves.
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.set_xlabel("generation $g$", fontsize=9)
+        ax.set_ylabel(r"elite turnover $\tau_g$", fontsize=9)
+        ax.set_ylim(bottom=0.0)
+        ax.set_xlim(generations.min(), generations.max())
+        ax.legend(fontsize=8, loc="best")
+        ax.annotate(f"{n_searches} search(es)", xy=(0.99, 0.02),
+                    xycoords="axes fraction", ha="right", va="bottom", fontsize=7,
+                    color="#666666")
         fig.tight_layout()
     return fig
 
@@ -1042,7 +1117,12 @@ def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
     manifest = _load_manifest(result_dir)
     label    = _scenario_label(result_dir, manifest)
 
-    objectives = summary["objectives"]
+    # `objectives` is the whole evaluated pool at K' replications — the landscape the
+    # search saw.  The reported candidates are overwritten with their K-replication
+    # estimates from the re-simulation of §3.10, so c*'s CI is drawn at the width it is
+    # actually reported with, and the cost split shows the reported numbers.
+    objectives = dict(summary["objectives"])
+    objectives.update(summary.get("final_objectives") or {})
     best_key   = summary["best"]
     keep_keys  = summary["indistinguishable"]
     floor      = summary["throughput_floor"]
@@ -1087,7 +1167,9 @@ def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:
         best_key = summary["best"]
         if best_key is None:
             continue
-        scenarios[_scenario_label(rd, manifest)] = summary["objectives"][best_key]
+        obj = (summary.get("final_objectives", {}).get(best_key)
+               or summary["objectives"][best_key])
+        scenarios[_scenario_label(rd, manifest)] = obj
 
     if not scenarios:
         warnings.warn("None of the result directories reported an optimum.", stacklevel=2)
@@ -1098,11 +1180,21 @@ def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:
     save_figure(fig, out_dir, "comparison_optima", fmt)
 
 
+def _turnover_for(turnover: "pd.DataFrame | None", strategy: str) -> "pd.DataFrame | None":
+    """One mode's slice of the long-format turnover table, or None when it has no rows."""
+    if turnover is None or turnover.empty:
+        return None
+    curves = (turnover[turnover["strategy"] == strategy]
+              if "strategy" in turnover.columns else turnover)
+    return None if curves.empty else curves
+
+
 def visualize_campaign(
     optima: "pd.DataFrame",
     out_dir: Path,
     fmt: str = "png",
     share: str = "agent",
+    turnover: "pd.DataFrame | None" = None,
     **channels: str,
 ) -> None:
     """All four campaign matrices, once per result mode in the campaign's ``optima.csv``.
@@ -1116,6 +1208,11 @@ def visualize_campaign(
 
     Note that each figure is handed one mode's slice, which is what makes the percentile
     axis of :func:`plot_agent_human_ratio_matrix` a within-mode ranking.
+
+    `turnover` is the long-format ``elite_turnover.csv``; when it is given, the §5.1
+    convergence figure is drawn per mode as well.  It is sliced by mode like everything
+    else, so the ``human_only`` enumeration — which has no generations and contributes no
+    rows — simply does not get one.
     """
     if "strategy" not in optima.columns:
         raise KeyError("'strategy' is not a column of the optima table")
@@ -1158,3 +1255,16 @@ def visualize_campaign(
             sub, title=f"Agent-to-developer cost ratio at $c^\\star${suffix}", **channels,
         )
         save_figure(fig, out_dir, f"agent_human_ratio_matrix_{strategy}", fmt)
+
+        # The convergence figure of §5.1: a property of the search, so it has no tier
+        # channels and no baseline, and it exists only for a mode that ran generations.
+        curves = _turnover_for(turnover, strategy)
+        if curves is not None:
+            fig = plot_elite_turnover(
+                curves,
+                # Not `suffix`: that one advertises the baseline overlay, and this figure
+                # has no baseline — an enumeration has no generations to turn over.
+                title=f"Elite turnover per generation, {strategy} search "
+                      f"({len(sub)} scenarios)",
+            )
+            save_figure(fig, out_dir, f"elite_turnover_{strategy}", fmt)

@@ -7,7 +7,7 @@ A campaign is a tree of finished searches, one per (scenario, result mode):
 The mode is `evolutionary` for the 432 searches of §4.2 and `human_only` for the 36
 baselines of §4.1.  The tables call the column `strategy` for historical reasons.
 
-`build_tables` reads all of them into two DataFrames that `scripts/collect_results.py`
+`build_tables` reads all of them into four DataFrames that `scripts/collect_results.py`
 writes out:
 
 ``optima.csv``
@@ -19,6 +19,19 @@ writes out:
 ``scenarios.csv``
     One row per (scenario, strategy) describing the search effort: budget spend,
     feasibility rejections, wall clock, and the Monte Carlo protocol it ran under.
+
+``convergence.csv``
+    One row per (scenario, strategy) with the search-convergence measures of §5.1: the
+    elite and incumbent turnover, the size of `I*` at each of the three stages of §3.10
+    with the counters that explain the shrinkage, and the relative CI half-width `rho` of
+    Eq. (rel_halfwidth).  Read from the per-search ``convergence.json``, so a result
+    directory written before that file existed simply contributes no row.
+
+``elite_turnover.csv``
+    Long format — one row per (scenario, strategy, generation) — carrying `tau_g` of
+    Eq. (elite_turnover) and whether the incumbent changed in that generation.  Long
+    rather than one column per generation because a search that exhausts its budget early
+    runs fewer than `G` generations.
 
 This is deliberately thin.  The §5 results analysis that used to live beside it was built
 on the three-objective Pareto frontier the model no longer has, and the paper does not yet
@@ -149,11 +162,17 @@ def optimum_row(
 
     The three ``cost_*_share`` columns are the drivers of Eq. (cost_rep) as fractions of
     the total; they sum to 1 exactly, since the three means do sum to `cost_mean`.
+
+    Every figure comes from ``final_objectives`` — the K-replication estimates the
+    two-stage selection of §3.10 reports from — and falls back to the search's own
+    K'-replication ``objectives`` only for a result written before the re-simulation
+    existed.  `n_indistinguishable` is the *final* size of `I*`, i.e. after both the
+    re-simulation and the parsimony tie-break; ``convergence.csv`` has the other two.
     """
     best = summary.get("best")
     if best is None:
         return None
-    obj = summary["objectives"][best]
+    obj = summary.get("final_objectives", {}).get(best) or summary["objectives"][best]
     tiers = tiers_from_scenario_id(scenario_id)
     params = scenario_params_for_id(scenario_id, config_dir)
     T = manifest["horizon"]["T"]
@@ -227,17 +246,92 @@ def scenario_row(
         "best_admissible": manifest.get("best_admissible"),
         "wall_clock_s": manifest.get("wall_clock_s"),
         "T": manifest["horizon"]["T"],
-        "K": manifest["horizon"]["K"],
+        "K_search": manifest["horizon"]["K_search"],
+        "K_final": manifest["horizon"]["K_final"],
         "master_seed": manifest["horizon"]["master_seed"],
     })
     return row
 
 
+#: The `i_star` counters of `SelectionReport.stats` that become `convergence.csv` columns,
+#: in the order the three stages of §3.10 produce them.
+_I_STAR_COLUMNS: tuple[str, ...] = (
+    "n_prelim",
+    "n_resimulated",
+    "n_discarded_throughput",
+    "n_after_resim",
+    "n_final",
+    "parsimony_removed",
+    "best_changed_by_resim",
+    "best_parsimony_dominated",
+    "rho_mean",
+    "rho_best",
+)
+
+
+def convergence_row(scenario_id: str, strategy: str, convergence: dict) -> dict:
+    """The `convergence.csv` row for one search: the §5.1 measures as scalars.
+
+    The `tau_*` columns summarise the curve that `turnover_rows` carries in full: its first
+    and last value and the mean over the last ten generations, i.e. the level the elite
+    turnover of Eq. (elite_turnover) settles at.  They are None for an enumeration, which
+    has no generations.
+    """
+    tiers = tiers_from_scenario_id(scenario_id)
+    tau = list(convergence.get("elite_turnover") or [])
+    row: dict = {"scenario_id": scenario_id}
+    row.update({f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS})
+    row.update({
+        "strategy": strategy,
+        "n_generations_run": convergence.get("n_generations_run", len(tau)),
+        "n_elite": convergence.get("n_elite"),
+        "incumbent_turnover": convergence.get("incumbent_turnover"),
+        "tau_first": tau[0] if tau else None,
+        "tau_last": tau[-1] if tau else None,
+        "tau_mean_last_10": (sum(tau[-10:]) / len(tau[-10:])) if tau else None,
+    })
+    i_star = convergence.get("i_star") or {}
+    row.update({col: i_star.get(col) for col in _I_STAR_COLUMNS})
+    row.update({
+        "best_admissible": convergence.get("best_admissible"),
+        "value_ratio": convergence.get("value_ratio"),
+        "K_search": convergence.get("K_search"),
+        "K_final": convergence.get("K_final"),
+        "wall_clock_s": convergence.get("wall_clock_s"),
+        "resimulation_s": convergence.get("resimulation_s"),
+    })
+    return row
+
+
+def turnover_rows(scenario_id: str, strategy: str, convergence: dict) -> list[dict]:
+    """The `elite_turnover.csv` rows for one search: `tau_g` per generation, long format."""
+    tau = convergence.get("elite_turnover") or []
+    changed = convergence.get("incumbent_changed") or []
+    best_cost = convergence.get("best_cost") or []
+    return [
+        {
+            "scenario_id": scenario_id,
+            "strategy": strategy,
+            "generation": g,
+            "tau": value,
+            "incumbent_changed": changed[g - 1] if g <= len(changed) else None,
+            "best_cost": best_cost[g - 1] if g <= len(best_cost) else None,
+        }
+        for g, value in enumerate(tau, start=1)
+    ]
+
+
 def build_tables(
     results_dir: str | Path,
     config_dir: str = "config",
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Read every finished search under `results_dir` into ``(optima, scenarios)``."""
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Read every finished search under `results_dir`.
+
+    Returns ``(optima, scenarios, convergence, turnover)``.  The last two are empty frames
+    when no search directory carries a ``convergence.json`` — the file is written by
+    `main._cmd_optimize` since the §5.1 reporting landed, so a partially re-run campaign
+    yields rows only for the searches that have it.
+    """
     results_dir = Path(results_dir)
     if not results_dir.is_dir():
         raise FileNotFoundError(f"{results_dir} is not a directory")
@@ -247,6 +341,8 @@ def build_tables(
 
     o_rows: list[dict] = []
     s_rows: list[dict] = []
+    c_rows: list[dict] = []
+    t_rows: list[dict] = []
     for scenario_id, strategy, d in searches:
         manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         summary = json.loads((d / "search_summary.json").read_text(encoding="utf-8"))
@@ -254,7 +350,13 @@ def build_tables(
         if row is not None:
             o_rows.append(row)
         s_rows.append(scenario_row(scenario_id, strategy, manifest, summary))
-    return pd.DataFrame(o_rows), pd.DataFrame(s_rows)
+        conv_path = d / "convergence.json"
+        if conv_path.is_file():
+            convergence = json.loads(conv_path.read_text(encoding="utf-8"))
+            c_rows.append(convergence_row(scenario_id, strategy, convergence))
+            t_rows.extend(turnover_rows(scenario_id, strategy, convergence))
+    return (pd.DataFrame(o_rows), pd.DataFrame(s_rows),
+            pd.DataFrame(c_rows), pd.DataFrame(t_rows))
 
 
 #: The scenario groups a human-only baseline actually varies.  `debt` and `agent` are
@@ -302,3 +404,91 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
         cols += ["best_admissible", "baseline_best_admissible"]
     return merged[[c for c in cols if c in merged]].sort_values(
         ["scenario_id", "strategy"]).reset_index(drop=True)
+
+
+# ----------------------------------------------------------------------------
+# Search convergence summary (paper §5.1)
+# ----------------------------------------------------------------------------
+
+def _median_iqr_max(values: "pd.Series") -> str:
+    """`median [q1, q3], max = …` — the shape §5.1 asks for instead of a mean.
+
+    The sizes of `I*` and the relative half-widths are expected to be strongly skewed, so
+    the paper reports order statistics rather than a mean and a standard deviation.
+    """
+    v = pd.to_numeric(values, errors="coerce").dropna()
+    if v.empty:
+        return "n/a"
+    return (f"{v.median():.3g} [{v.quantile(0.25):.3g}, {v.quantile(0.75):.3g}], "
+            f"max = {v.max():.3g}")
+
+
+def convergence_summary(convergence: "pd.DataFrame") -> str:
+    """The §5.1 numbers as a text block, one section per bullet of that subsection.
+
+    Written beside the CSVs so the figures the paper needs and the numbers its prose needs
+    come out of the same consolidation step.  Everything here is a re-reading of
+    ``convergence.csv``; nothing is computed that the table does not already hold.
+    """
+    if convergence.empty:
+        return "Search convergence (§5.1): no search carries a convergence record.\n"
+    lines = [f"Search convergence (§5.1) over {len(convergence)} search(es)", "=" * 64]
+
+    searched = convergence[convergence["n_generations_run"].fillna(0) > 0]
+    lines.append("")
+    lines.append("Elite and incumbent turnover")
+    if searched.empty:
+        lines.append("  no generational search in this campaign (enumeration only)")
+    else:
+        lines.append(f"  generations run                  {_median_iqr_max(searched['n_generations_run'])}")
+        lines.append(f"  tau_1  (first generation)        {_median_iqr_max(searched['tau_first'])}")
+        lines.append(f"  tau_G  (last generation)         {_median_iqr_max(searched['tau_last'])}")
+        lines.append(f"  tau over the last 10 generations {_median_iqr_max(searched['tau_mean_last_10'])}")
+        lines.append(f"  incumbent turnover               {_median_iqr_max(searched['incumbent_turnover'])}")
+
+    lines.append("")
+    lines.append("Size of I* at the three stages of §3.10")
+    lines.append(f"  preliminary, at K'              {_median_iqr_max(convergence['n_prelim'])}")
+    lines.append(f"  after the re-simulation at K    {_median_iqr_max(convergence['n_after_resim'])}")
+    lines.append(f"  after the parsimony tie-break   {_median_iqr_max(convergence['n_final'])}")
+
+    n = len(convergence)
+    changed = int(convergence["best_changed_by_resim"].fillna(False).astype(bool).sum())
+    discarded_total = int(pd.to_numeric(
+        convergence["n_discarded_throughput"], errors="coerce").fillna(0).sum())
+    discarded_searches = int((pd.to_numeric(
+        convergence["n_discarded_throughput"], errors="coerce").fillna(0) > 0).sum())
+    removed = pd.to_numeric(convergence["parsimony_removed"], errors="coerce").fillna(0).sum()
+    after = pd.to_numeric(convergence["n_after_resim"], errors="coerce").fillna(0).sum()
+    dominated = int(convergence["best_parsimony_dominated"].fillna(False).astype(bool).sum())
+    lines.append("")
+    lines.append("What the two reduction steps did")
+    lines.append(f"  re-simulation moved c*          {changed}/{n} searches "
+                 f"({changed / n:.1%})")
+    lines.append(f"  members discarded on throughput {discarded_total} configuration(s) "
+                 f"in {discarded_searches}/{n} searches")
+    if after:
+        lines.append(f"  parsimony removed               {removed:.0f}/{after:.0f} members "
+                     f"({removed / after:.1%} of the set at K)")
+    else:
+        # Every search was inadmissible, so there was no set for parsimony to reduce.
+        lines.append("  parsimony removed               n/a (no admissible set)")
+    lines.append(f"  c* itself parsimony-dominated   {dominated}/{n} searches "
+                 f"(kept by its §3.10 exemption)")
+
+    inadmissible = convergence[~convergence["best_admissible"].fillna(False).astype(bool)]
+    lines.append("")
+    lines.append(f"Inadmissible searches: {len(inadmissible)}/{n}")
+    for _, row in inadmissible.sort_values("scenario_id").iterrows():
+        ratio = row.get("value_ratio")
+        # value_ratio is the achieved throughput over r_arrival, so 1 - epsilon is the bar;
+        # §5.1 wants the distance to the admissible region visible.
+        ratio_txt = "n/a" if pd.isna(ratio) else f"{ratio:.3f} x r_arrival"
+        lines.append(f"  {row['scenario_id']:<24} {row['strategy']:<12} value = {ratio_txt}")
+
+    lines.append("")
+    lines.append("Relative CI half-width rho after the re-simulation (Eq. rel_halfwidth)")
+    lines.append(f"  mean over the final I*          {_median_iqr_max(convergence['rho_mean'])}")
+    lines.append(f"  at c*                           {_median_iqr_max(convergence['rho_best'])}")
+    lines.append("")
+    return "\n".join(lines)

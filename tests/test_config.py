@@ -364,13 +364,23 @@ class TestAgentCountQa:
 
 class TestSimulationHorizon:
     def test_valid(self):
-        s = SimulationHorizon(T=52, K=100, master_seed=42)
-        assert s.T == 52 and s.K == 100
+        s = SimulationHorizon(T=52, K_search=100, K_final=100, master_seed=42)
+        assert s.T == 52 and s.K_search == 100 and s.K_final == 100
 
     def test_T_zero_raises(self):
         with pytest.raises(ValueError):
-            SimulationHorizon(T=0, K=10, master_seed=0)
+            SimulationHorizon(T=0, K_search=10, K_final=10, master_seed=0)
 
     def test_K_zero_raises(self):
         with pytest.raises(ValueError):
-            SimulationHorizon(T=10, K=0, master_seed=0)
+            SimulationHorizon(T=10, K_search=0, K_final=0, master_seed=0)
+
+    def test_K_final_below_K_search_raises(self):
+        """§3.10 re-simulates with K > K'; fewer replications could only widen the CIs."""
+        with pytest.raises(ValueError, match="K_final must be >= K_search"):
+            SimulationHorizon(T=10, K_search=100, K_final=10, master_seed=0)
+
+    def test_the_paper_protocol_is_accepted(self):
+        # §4.2, Table 6: K' = 100 during the search, K = 1,000 for the re-simulation.
+        s = SimulationHorizon(T=104, K_search=100, K_final=1000, master_seed=42)
+        assert s.K_final > s.K_search

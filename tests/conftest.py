@@ -55,7 +55,7 @@ def base_params():
 
 @pytest.fixture
 def small_settings():
-    return SimulationHorizon(T=4, K=3, master_seed=42)
+    return SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=42)
 
 
 @pytest.fixture

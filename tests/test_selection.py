@@ -458,7 +458,7 @@ class TestAggregateConfigResult:
     def test_the_three_cost_drivers_sum_to_the_objective(self, base_config, base_params):
         """Over a real simulation, not a hand-built fixture (§3.8)."""
         from src.config import SimulationHorizon
-        s = SimulationHorizon(T=6, K=4, master_seed=0)
+        s = SimulationHorizon(T=6, K_search=4, K_final=4, master_seed=0)
         agg = aggregate_config_result(
             run_configuration(base_config, s, base_params), master_seed=0
         )

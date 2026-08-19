@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Consolidate the 864 searches of paper §4.2 into two flat tables.
+"""Consolidate the 864 searches of paper §4.2 into flat tables.
 
 Reads every ``<results-dir>/<scenario_id>/<strategy>/{manifest,search_summary}.json``
 written by ``python -m src.main optimize`` and emits:
@@ -17,6 +17,12 @@ written by ``python -m src.main optimize`` and emits:
                     written only when the tree holds human-only baselines (§4.1): each
                     search optimum against the baseline at its human / project /
                     bugimpact tiers, with the cost ratio between them
+    convergence.csv one row per (scenario, strategy): the search-convergence measures of
+                    §5.1 — elite and incumbent turnover, the size of I* at each of the
+                    three stages of §3.10, and the relative CI half-width rho
+    elite_turnover.csv
+                    long format, one row per (scenario, strategy, generation): tau_g of
+                    Eq. (elite_turnover), the input to the §5.1 convergence figure
 
 The table schemas live in ``src/campaign.py``.
 
@@ -66,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: no finished searches found under {results_dir}", file=sys.stderr)
         return 1
 
-    optima, scenarios = build_tables(results_dir, args.config_dir)
+    optima, scenarios, convergence, turnover = build_tables(results_dir, args.config_dir)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     optima_path = out_dir / "optima.csv"
@@ -77,6 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     uplift = baseline_uplift(optima)
     if not uplift.empty:
         uplift.to_csv(out_dir / "baseline_uplift.csv", index=False)
+    # The §5.1 convergence tables; absent for a campaign whose searches predate them.
+    if not convergence.empty:
+        convergence.to_csv(out_dir / "convergence.csv", index=False)
+    if not turnover.empty:
+        turnover.to_csv(out_dir / "elite_turnover.csv", index=False)
 
     n_scenarios = len({sid for sid, _, _ in searches})
     print(f"Collected {len(searches)} search(es) over {n_scenarios} scenario(s)")

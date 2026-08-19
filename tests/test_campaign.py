@@ -11,6 +11,7 @@ import pytest
 from src.campaign import (
     baseline_uplift,
     build_tables,
+    convergence_summary,
     expected_modes,
     is_baseline_scenario,
     optimum_row,
@@ -90,8 +91,8 @@ def campaign(tmp_path) -> Path:
     d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps({
         "scenario_id": _SID, "strategy": "evolutionary",
-        "horizon": {"path": "config/horizon_default.json", "T": 104, "K": 100,
-                    "master_seed": 42},
+        "horizon": {"path": "config/horizon_default.json", "T": 104,
+                    "K_search": 100, "K_final": 1000, "master_seed": 42},
         "n_evaluated": 100, "n_simulated": 85, "best_admissible": True,
         "wall_clock_s": 12.5,
     }))
@@ -99,8 +100,28 @@ def campaign(tmp_path) -> Path:
         "best": "N2_R4_00007",
         "indistinguishable": ["N2_R4_00007", "N2_R4_00011"],
         "throughput_floor": 11.76,
-        "objectives": {"N2_R4_00007": _objective(1000.0),
-                       "N2_R4_00011": _objective(1050.0)},
+        "K_search": 100, "K_final": 1000,
+        # The search's own K'-replication estimates of every simulated candidate …
+        "objectives": {"N2_R4_00007": _objective(1200.0),
+                       "N2_R4_00011": _objective(1250.0)},
+        # … and the K-replication estimates the report comes from (§3.10).
+        "final_objectives": {"N2_R4_00007": _objective(1000.0),
+                             "N2_R4_00011": _objective(1050.0)},
+    }))
+    (d / "convergence.json").write_text(json.dumps({
+        "scenario_id": _SID, "strategy": "evolutionary",
+        "n_elite": 10, "n_generations": 3, "n_generations_run": 3,
+        "K_search": 100, "K_final": 1000,
+        "elite_turnover": [0.5, 0.2, 0.1],
+        "incumbent_changed": [True, False, False],
+        "incumbent_turnover": 1 / 3,
+        "best_cost": [1400.0, 1300.0, 1200.0],
+        "i_star": {"n_prelim": 5, "n_resimulated": 5, "n_discarded_throughput": 1,
+                   "n_after_resim": 3, "n_final": 2, "parsimony_removed": 1,
+                   "best_changed_by_resim": True, "best_parsimony_dominated": False,
+                   "rho_mean": 0.04, "rho_best": 0.03},
+        "throughput_floor": 11.76, "best_admissible": True, "value_ratio": 0.99,
+        "wall_clock_s": 12.5, "resimulation_s": 3.0,
     }))
     return tmp_path
 
@@ -142,9 +163,20 @@ class TestOptimumRow:
         d = campaign / _SID / "evolutionary"
         manifest = json.loads((d / "manifest.json").read_text())
         summary = json.loads((d / "search_summary.json").read_text())
-        summary["objectives"]["N2_R4_00007"] = _objective(0.0)
+        # The reported numbers come from the re-simulated set, so that is what has to
+        # carry the zero for the share columns to see it.
+        summary["final_objectives"]["N2_R4_00007"] = _objective(0.0)
         row = optimum_row(_SID, "evolutionary", manifest, summary)
         assert math.isnan(row["cost_agent_share"])
+
+    def test_falls_back_to_the_search_estimates_without_a_re_simulation(self, campaign):
+        """A result written before the two-stage selection has no `final_objectives`."""
+        d = campaign / _SID / "evolutionary"
+        manifest = json.loads((d / "manifest.json").read_text())
+        summary = json.loads((d / "search_summary.json").read_text())
+        del summary["final_objectives"]
+        row = optimum_row(_SID, "evolutionary", manifest, summary)
+        assert row["cost_mean"] == 1200.0
 
     def test_carries_every_tier_and_both_compositions(self, campaign):
         row = self._row(campaign)
@@ -181,10 +213,45 @@ class TestOptimumRow:
 
 class TestBuildTables:
     def test_one_row_per_search_in_each_table(self, campaign):
-        optima, scenarios = build_tables(campaign)
+        optima, scenarios, convergence, turnover = build_tables(campaign)
         assert len(optima) == 1 and len(scenarios) == 1
         assert scenarios.iloc[0]["n_infeasible"] == 100 - 85
-        assert scenarios.iloc[0]["K"] == 100
+        assert scenarios.iloc[0]["K_search"] == 100
+        assert scenarios.iloc[0]["K_final"] == 1000
+
+    def test_the_optimum_is_reported_at_K_not_at_K_prime(self, campaign):
+        """`optima.csv` must carry the re-simulated estimates, not the search's (§3.10)."""
+        optima, _, _, _ = build_tables(campaign)
+        assert optima.iloc[0]["cost_mean"] == 1000.0        # final_objectives
+        assert optima.iloc[0]["cost_mean"] != 1200.0        # objectives, at K'
+
+    def test_convergence_tables_carry_the_5_1_measures(self, campaign):
+        _, _, convergence, turnover = build_tables(campaign)
+        assert len(convergence) == 1
+        row = convergence.iloc[0]
+        assert row["n_prelim"] == 5 and row["n_after_resim"] == 3 and row["n_final"] == 2
+        assert row["parsimony_removed"] == 1 and row["n_discarded_throughput"] == 1
+        assert bool(row["best_changed_by_resim"]) is True
+        assert row["tau_first"] == 0.5 and row["tau_last"] == 0.1
+        assert row["n_generations_run"] == 3
+        # One row per generation, in order, and the incumbent flag travels with it.
+        assert list(turnover["generation"]) == [1, 2, 3]
+        assert list(turnover["tau"]) == [0.5, 0.2, 0.1]
+        assert list(turnover["incumbent_changed"]) == [True, False, False]
+
+    def test_a_search_without_convergence_json_yields_no_row(self, campaign):
+        (campaign / _SID / "evolutionary" / "convergence.json").unlink()
+        optima, scenarios, convergence, turnover = build_tables(campaign)
+        assert len(optima) == 1 and len(scenarios) == 1
+        assert convergence.empty and turnover.empty
+
+    def test_convergence_summary_reports_every_stage(self, campaign):
+        _, _, convergence, _ = build_tables(campaign)
+        text = convergence_summary(convergence)
+        assert "preliminary, at K'" in text
+        assert "after the re-simulation at K" in text
+        assert "after the parsimony tie-break" in text
+        assert "Inadmissible searches: 0/1" in text
 
     def test_missing_directory_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="is not a directory"):
@@ -233,8 +300,8 @@ def campaign_with_baseline(campaign) -> Path:
     d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps({
         "scenario_id": _BASELINE_SID, "strategy": "human_only",
-        "horizon": {"path": "config/horizon_default.json", "T": 104, "K": 100,
-                    "master_seed": 42},
+        "horizon": {"path": "config/horizon_default.json", "T": 104,
+                    "K_search": 100, "K_final": 1000, "master_seed": 42},
         "n_evaluated": 99, "n_simulated": 99, "best_admissible": True,
         "wall_clock_s": 20.0,
     }))
@@ -243,6 +310,7 @@ def campaign_with_baseline(campaign) -> Path:
         "indistinguishable": ["N2_R4_00003"],
         "throughput_floor": 11.76,
         "objectives": {"N2_R4_00003": _baseline_objective()},
+        "final_objectives": {"N2_R4_00003": _baseline_objective()},
     }))
     return campaign
 
@@ -276,7 +344,7 @@ class TestBaselineInTheTables:
         assert (_SID, "evolutionary") in found
 
     def test_optima_carries_the_baseline_row(self, campaign_with_baseline):
-        optima, _ = build_tables(campaign_with_baseline)
+        optima, *_ = build_tables(campaign_with_baseline)
         row = optima[optima["strategy"] == "human_only"].iloc[0]
         assert row["scenario_id"] == _BASELINE_SID
         assert row["cost_agent_mean"] == 0.0
@@ -284,7 +352,7 @@ class TestBaselineInTheTables:
         assert all(row[f"a_dev_{k + 1}"] == 0 for k in range(AGENT_ROLE_COUNT))
 
     def test_team_config_round_trips_an_all_zero_row(self, campaign_with_baseline):
-        optima, _ = build_tables(campaign_with_baseline)
+        optima, *_ = build_tables(campaign_with_baseline)
         row = optima[optima["strategy"] == "human_only"].iloc[0]
         cfg = team_config(row)
         assert cfg.A_dev == (0,) * AGENT_ROLE_COUNT
@@ -293,7 +361,7 @@ class TestBaselineInTheTables:
 
 class TestBaselineUplift:
     def test_joins_on_the_three_varying_groups(self, campaign_with_baseline):
-        optima, _ = build_tables(campaign_with_baseline)
+        optima, *_ = build_tables(campaign_with_baseline)
         uplift = baseline_uplift(optima)
         assert len(uplift) == 1
         row = uplift.iloc[0]
@@ -325,5 +393,5 @@ class TestBaselineUplift:
         assert uplift["cost_ratio"].tolist() == pytest.approx([4.0] * 12)
 
     def test_no_baseline_yields_an_empty_table(self, campaign):
-        optima, _ = build_tables(campaign)
+        optima, *_ = build_tables(campaign)
         assert baseline_uplift(optima).empty

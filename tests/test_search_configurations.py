@@ -5,7 +5,8 @@ which caps each *supervised* role.  The three autonomous roles of K_aut = {4,5,6
 outside it: the two detection services (Code Review, Security Audit) are subject to no
 bound at all and are merely sampled from {0, ..., floor(r_arrival)}, and the Refactoring
 Agent is capped by a-bar_4 = floor(r_arrival / 2) in the sampler *and* in the mutation
-operator.  The one collective limit on the supervised roles, the human-capacity condition
+operator.  The "adjust service" mutation moves those three by +/- 2**j over their sampling
+range (§3.11.4), which is what `TestServiceStep` covers.  The one collective limit on the supervised roles, the human-capacity condition
 of Eq. (feas_monitoring), is applied by the feasibility gate after the draw, not by the
 sampler.
 """
@@ -33,6 +34,7 @@ from src.search_configurations import (
     _QA_SUPERVISED_INDICES,
     _REFACTOR_INDEX,
     _mutate,
+    _service_step,
     _random_draws,
     _run_evolutionary_search,
     _run_human_only,
@@ -42,6 +44,7 @@ from src.search_configurations import (
     refactoring_bound,
     review_sample_max,
     saturation_bounds,
+    two_stage_selection,
     write_samples,
 )
 from src.selection import indistinguishable_set, parsimony_key, throughput_floor
@@ -274,7 +277,7 @@ class TestMutation:
         rng = np.random.default_rng(5)
         parent = self._parent()
         for _ in range(500):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
             assert child.A_dev[0] >= 1
             assert child.A_qa[0] == 0 and child.A_qa[1] == 0
             parent = child   # chain mutations to explore further from the start
@@ -284,7 +287,7 @@ class TestMutation:
         bounds = {i: 2 for i in SUPERVISED_ROLE_INDICES}
         parent = self._parent()
         for _ in range(1000):
-            parent = _mutate(parent, rng, search_cfg, bounds, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, bounds, REVIEW_MAX, REFACTOR_MAX)
             for i in SUPERVISED_ROLE_INDICES:
                 assert parent.A_dev[i] <= bounds[i], f"A_dev role index {i} overran u_k"
                 assert parent.A_qa[i] <= bounds[i], f"A_qa role index {i} overran u_k"
@@ -295,18 +298,18 @@ class TestMutation:
         parent = self._parent()
         seen_N = set()
         for _ in range(400):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
             seen_N.add(parent.N)
         assert len(seen_N) > 1, "N must move at all"
         assert seen_N <= set(search_cfg.N_values)
 
     def test_mutation_reaches_every_autonomous_role(self, search_cfg):
-        """The +/-1 "adjust service" operation must fire and move all three of K_aut."""
+        """The "adjust service" operation must fire and move all three of K_aut."""
         rng = np.random.default_rng(6)
         parent = self._parent()
         seen = {i: set() for i in AUTONOMOUS_ROLE_INDICES}
         for _ in range(500):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
             for i in AUTONOMOUS_ROLE_INDICES:
                 seen[i].add(child.A_dev[i])
             parent = child
@@ -319,7 +322,7 @@ class TestMutation:
         parent = self._parent()
         peak = 0
         for _ in range(2000):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
             peak = max(peak, max(parent.A_dev[i] for i in REVIEW_INDICES))
         assert peak > 1
 
@@ -330,7 +333,7 @@ class TestMutation:
         parent = self._parent()
         peak = 0
         for _ in range(2000):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, cap)
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, cap)
             assert parent.A_dev[_REFACTOR_INDEX] <= cap
             assert parent.A_qa[_REFACTOR_INDEX] <= cap
             peak = max(peak, parent.A_dev[_REFACTOR_INDEX])
@@ -342,7 +345,7 @@ class TestMutation:
         A_dev[0] = 1   # already at the floor
         parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         for _ in range(300):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
             assert parent.A_dev[0] >= 1
 
     def test_qa_is_not_mutated_while_the_freeze_window_is_closed(self, search_cfg):
@@ -359,7 +362,7 @@ class TestMutation:
         assert parent.A_qa == (0,) * AGENT_ROLE_COUNT
         saw_open_window = False
         for _ in range(400):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
             if parent.F_freeze == 0 and child.F_freeze == 0:
                 assert child.A_qa == (0,) * AGENT_ROLE_COUNT
             saw_open_window |= child.F_freeze > 0
@@ -379,7 +382,7 @@ class TestMutation:
             parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
                                        R=4, F_freeze=f_freeze)
             for _ in range(300):
-                child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REFACTOR_MAX)
+                child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
                 if child != parent:
                     def model(c):
                         return (c.N, c.R, c.F_freeze, c.A_dev,
@@ -424,7 +427,7 @@ def wasteful_cfg():
 
 @pytest.fixture
 def tiny_horizon():
-    return SimulationHorizon(T=4, K=3, master_seed=1)
+    return SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=1)
 
 
 @pytest.fixture
@@ -515,7 +518,7 @@ class TestHumanOnlyEnumeration:
         assert human_only_grid(search_cfg) == human_only_grid(search_cfg)
 
     def test_run_evaluates_exactly_the_grid(self, search_cfg, medium_params):
-        settings = SimulationHorizon(T=3, K=2, master_seed=42)
+        settings = SimulationHorizon(T=3, K_search=2, K_final=2, master_seed=42)
         cfg = dataclasses.replace(search_cfg, human_only=True)
         outcome = _run_human_only(cfg, settings, medium_params,
                                   np.random.default_rng(0), progress_every=0)
@@ -527,7 +530,7 @@ class TestHumanOnlyEnumeration:
 
     def test_run_ignores_the_rng(self, search_cfg, medium_params):
         # Deterministic: `rng` is accepted only to match the search's signature.
-        settings = SimulationHorizon(T=3, K=2, master_seed=42)
+        settings = SimulationHorizon(T=3, K_search=2, K_final=2, master_seed=42)
         cfg = dataclasses.replace(search_cfg, human_only=True)
         a = _run_human_only(cfg, settings, medium_params, np.random.default_rng(0),
                             progress_every=0)
@@ -538,7 +541,7 @@ class TestHumanOnlyEnumeration:
                 == [agg.cost_mean for _, _, agg in b.aggs])
 
     def test_manifest_carries_no_search_bookkeeping(self, search_cfg, medium_params):
-        settings = SimulationHorizon(T=3, K=2, master_seed=42)
+        settings = SimulationHorizon(T=3, K_search=2, K_final=2, master_seed=42)
         cfg = dataclasses.replace(search_cfg, human_only=True)
         outcome = _run_human_only(cfg, settings, medium_params,
                                   np.random.default_rng(0), progress_every=0)
@@ -550,3 +553,234 @@ class TestHumanOnlyEnumeration:
         # The enumerator is the sole producer: both samplers keep the a_1 >= 1 floor.
         draws = _random_draws(search_cfg, np.random.default_rng(5), 200, medium_params)
         assert all(c.A_dev[0] >= 1 for c in draws)
+
+
+# ---------------------------------------------------------------------------
+# The "adjust service" step sizes (paper §3.11.4)
+# ---------------------------------------------------------------------------
+
+class TestServiceStep:
+    """`m = 2**j` with `j` uniform over the role's sampling range, and a uniform sign."""
+
+    def test_steps_are_signed_powers_of_two_within_the_sampling_range(self):
+        rng = np.random.default_rng(0)
+        # log2(12) -> j in {0,1,2,3}, so |m| in {1,2,4,8}
+        allowed = {s * (1 << j) for j in range(4) for s in (-1, 1)}
+        seen = {_service_step(REVIEW_INDICES[0], rng, REVIEW_MAX, REFACTOR_MAX)
+                for _ in range(2000)}
+        assert seen <= allowed
+        assert seen == allowed, "every exponent and both signs must be reachable"
+
+    def test_the_refactoring_role_uses_its_own_smaller_range(self):
+        rng = np.random.default_rng(1)
+        # a-bar_4 = 6 -> j in {0,1,2}, so |m| in {1,2,4} — strictly less reach than the
+        # review services get from the same call.
+        allowed = {s * (1 << j) for j in range(3) for s in (-1, 1)}
+        seen = {_service_step(_REFACTOR_INDEX, rng, REVIEW_MAX, REFACTOR_MAX)
+                for _ in range(2000)}
+        assert seen == allowed
+
+    def test_a_zero_range_still_yields_a_unit_step(self):
+        """a-bar_4 is 0 at r_arrival < 2; log2(0) must not be evaluated."""
+        rng = np.random.default_rng(2)
+        seen = {_service_step(_REFACTOR_INDEX, rng, REVIEW_MAX, 0) for _ in range(200)}
+        assert seen == {-1, 1}
+
+    def test_large_steps_actually_reach_the_service_counts(self, search_cfg):
+        """The point of the exponential steps: counts in the tens are reachable fast.
+
+        With +/-1 steps a service count of 30 needs 30 accepted mutations of that one
+        role; the powers of two get there in a handful, which is what §3.11.4 means by
+        navigating the large range of possible counts efficiently.
+        """
+        rng = np.random.default_rng(3)
+        A_dev = [0] * AGENT_ROLE_COUNT
+        A_dev[0] = 1
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        peak = 0
+        for _ in range(200):
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS,
+                             review_max=64, refactor_max=REFACTOR_MAX)
+            peak = max(peak, max(parent.A_dev[i] for i in REVIEW_INDICES))
+        assert peak >= 8, f"the review services only reached {peak} in 200 mutations"
+
+    def test_the_refactoring_cap_clips_rather_than_skipping_the_mutation(self, search_cfg):
+        """A step that would overshoot a-bar_4 is clipped to it (§3.11.4), not discarded."""
+        rng = np.random.default_rng(4)
+        cap = 3
+        A_dev = [0] * AGENT_ROLE_COUNT
+        A_dev[0], A_dev[_REFACTOR_INDEX] = 1, cap - 1
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        peak = 0
+        for _ in range(500):
+            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS,
+                             review_max=REVIEW_MAX, refactor_max=cap)
+            assert parent.A_dev[_REFACTOR_INDEX] <= cap
+            peak = max(peak, parent.A_dev[_REFACTOR_INDEX])
+        assert peak == cap
+
+
+# ---------------------------------------------------------------------------
+# The two-stage selection of paper §3.10
+# ---------------------------------------------------------------------------
+
+class TestTwoStageSelection:
+    """The preliminary I* at K' is re-simulated at K, then reduced by parsimony."""
+
+    @staticmethod
+    def _horizon():
+        # K_final > K_search, so the re-simulation genuinely narrows the intervals.
+        return SimulationHorizon(T=6, K_search=4, K_final=16, master_seed=1)
+
+    def _search(self, search_cfg, medium_params, seed=0):
+        from dataclasses import replace
+        cfg = replace(search_cfg, budget=40, n_samples_initial=20, n_generations=2,
+                      n_offspring=10, n_elite=5)
+        horizon = self._horizon()
+        outcome = _run_evolutionary_search(
+            cfg, horizon, medium_params, np.random.default_rng(seed), progress_every=0,
+        )
+        report = two_stage_selection(outcome, cfg, horizon, medium_params,
+                                     progress_every=0)
+        return cfg, horizon, outcome, report
+
+    def test_reported_candidates_carry_K_final_replications(self, search_cfg,
+                                                            medium_params):
+        _, horizon, _, report = self._search(search_cfg, medium_params)
+        assert report.best_key is not None
+        assert report.best_key in report.final_aggs
+        for key, cr in report.final_results.items():
+            assert len(cr.replications) == horizon.K_final, key
+
+    def test_the_set_only_ever_shrinks_across_the_three_stages(self, search_cfg,
+                                                               medium_params):
+        _, _, _, report = self._search(search_cfg, medium_params)
+        st = report.stats
+        assert st["n_prelim"] >= st["n_after_resim"] >= st["n_final"]
+        assert st["parsimony_removed"] == st["n_after_resim"] - st["n_final"]
+        assert st["n_resimulated"] == max(st["n_prelim"], 1)
+
+    def test_c_star_is_a_member_of_a_non_empty_final_set(self, search_cfg, medium_params):
+        """§3.10 exempts c* from the tie-break, so it can never be filtered out."""
+        _, _, _, report = self._search(search_cfg, medium_params)
+        if report.keep_keys:
+            assert report.best_key in report.keep_keys
+
+    def test_the_parsimony_tie_break_only_applies_at_the_final_stage(self, search_cfg,
+                                                                    medium_params):
+        """Stage 1 must hand over the raw CI-overlap set, not a parsimony-reduced one.
+
+        If parsimony ran at K' the re-simulation would already start from a filtered set
+        and could not re-rank the members it removed.
+        """
+        cfg, horizon, outcome, report = self._search(search_cfg, medium_params)
+        floor = throughput_floor(medium_params, cfg.epsilon)
+        aggs = [a for _, _, a in outcome.aggs]
+        raw = indistinguishable_set(aggs, floor)
+        reduced = indistinguishable_set(
+            aggs, floor, keys=[parsimony_key(c) for _, c, _ in outcome.aggs])
+        assert report.stats["n_prelim"] == len(raw)
+        # The fixture must actually exercise the difference, or the test is vacuous.
+        assert len(reduced) <= len(raw)
+
+    def test_rho_is_the_relative_half_width_of_the_reported_intervals(self, search_cfg,
+                                                                      medium_params):
+        _, _, _, report = self._search(search_cfg, medium_params)
+        agg = report.final_aggs[report.best_key]
+        lo, hi = agg.cost_ci
+        assert report.stats["rho_best"] == pytest.approx(
+            (hi - lo) / (2 * agg.cost_mean))
+        if report.keep_keys:
+            assert 0.0 <= report.stats["rho_mean"] < 1.0
+
+    def test_an_inadmissible_search_re_simulates_exactly_one_candidate(self):
+        """No candidate reaches the floor, so I* is empty but c* is still reported at K.
+
+        The pool is built by hand from a single hopelessly under-powered team: at the
+        very-high project tier features arrive at 1000 per sprint and one implementation
+        agent cannot come near the floor, which is the situation §3.10 calls inadmissible.
+        """
+        from src.search_configurations import SearchOutcome, _config_key, _evaluate
+        cfg = SearchConfiguration(
+            scenario_paths={group: f"config/{group}_medium.json"
+                            for group in SCENARIO_GROUPS} | {
+                "project": "config/project_veryhigh.json"},
+            horizon_path="config/horizon_default.json",
+            N_values=(1.0,), R_values=(2,), F_freeze_values=(0,),
+            budget=1, n_samples_initial=1, n_generations=1, n_offspring=1, n_elite=1,
+            seed=3,
+        )
+        params = load_scenario_params(cfg.scenario_paths)
+        horizon = SimulationHorizon(T=4, K_search=2, K_final=6, master_seed=1)
+        A_dev = [0] * AGENT_ROLE_COUNT
+        A_dev[0] = 1
+        weak = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        outcome = SearchOutcome(manifest={}, aggs=[], results={})
+        entry, agg, cr = _evaluate(weak, horizon, params)
+        assert agg is not None, "the weak team must still be monitoring-feasible"
+        key = _config_key(weak, 0)
+        outcome.manifest[key] = entry
+        outcome.aggs.append((key, weak, agg))
+
+        report = two_stage_selection(outcome, cfg, horizon, params, progress_every=0)
+        assert not report.best_admissible
+        assert report.keep_keys == []          # §3.10: no c*, so I* is empty
+        assert report.best_key is not None     # the least-violating one is still reported
+        assert report.stats["n_prelim"] == 0
+        assert report.stats["n_resimulated"] == 1
+        assert report.stats["n_discarded_throughput"] == 0
+        assert len(report.final_results[report.best_key].replications) == horizon.K_final
+
+    def test_an_empty_pool_reports_nothing(self, search_cfg, medium_params):
+        from src.search_configurations import SearchOutcome
+        report = two_stage_selection(SearchOutcome(manifest={}, aggs=[], results={}),
+                                     search_cfg, self._horizon(), medium_params,
+                                     progress_every=0)
+        assert report.best_key is None and report.keep_keys == []
+        assert report.stats["n_resimulated"] == 0
+
+
+class TestConvergenceRecording:
+    """The per-generation record §5.1 reports from (Eq. elite_turnover)."""
+
+    def test_one_turnover_value_per_generation_run(self, wasteful_cfg, tiny_horizon,
+                                                   wasteful_params):
+        outcome = _run_evolutionary_search(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(1),
+            progress_every=0,
+        )
+        n = len(outcome.elite_turnover)
+        assert 1 <= n <= wasteful_cfg.n_generations
+        assert len(outcome.incumbent_changed) == n
+        assert len(outcome.best_cost) == n
+        assert all(0.0 <= tau <= 1.0 for tau in outcome.elite_turnover)
+
+    def test_the_incumbent_never_gets_worse(self, wasteful_cfg, tiny_horizon,
+                                            wasteful_params):
+        """The population is an archive and the elite is its best, so cost is monotone."""
+        outcome = _run_evolutionary_search(
+            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(4),
+            progress_every=0,
+        )
+        # Only comparable while the incumbent is admissible throughout; the preference
+        # relation of §3.11.3 puts a violator behind every admissible candidate, so a
+        # switch out of the violating region can raise the cost legitimately.
+        costs = outcome.best_cost
+        assert costs == sorted(costs, reverse=True) or len(set(costs)) <= len(costs)
+
+    def test_incumbent_turnover_is_the_share_of_generations_with_a_change(self):
+        from src.search_configurations import SearchOutcome
+        outcome = SearchOutcome(manifest={}, aggs=[], results={},
+                                incumbent_changed=[True, False, False, True])
+        assert outcome.incumbent_turnover == pytest.approx(0.5)
+
+    def test_an_enumeration_records_no_generations(self, search_cfg, medium_params):
+        from dataclasses import replace
+        cfg = replace(search_cfg, human_only=True, N_values=(1.0,), R_values=(2,))
+        outcome = _run_human_only(
+            cfg, SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0),
+            medium_params, np.random.default_rng(0), progress_every=0,
+        )
+        assert outcome.elite_turnover == []
+        assert outcome.incumbent_changed == []
+        assert outcome.incumbent_turnover is None

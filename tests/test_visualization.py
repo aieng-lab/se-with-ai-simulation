@@ -34,6 +34,7 @@ from src.visualization import (
     _tiers_present,
     plot_agent_human_ratio_matrix,
     plot_human_agent_matrix,
+    plot_elite_turnover,
     plot_optima_matrix,
     plot_quality_development_matrix,
     save_figure,
@@ -293,6 +294,18 @@ class TestVisualizeCampaign:
             "quality_development_matrix_evolutionary.png",
         ]
 
+    def test_the_turnover_figure_is_added_when_the_curves_are_given(self, tmp_path):
+        visualize_campaign(_few(("evolutionary",)), tmp_path,
+                           turnover=_turnover(("evolutionary",)))
+        assert (tmp_path / "elite_turnover_evolutionary.png").is_file()
+
+    def test_a_mode_without_curves_gets_no_turnover_figure(self, tmp_path):
+        """The human-only enumeration has no generations, so it contributes no rows."""
+        visualize_campaign(_few(("evolutionary",)), tmp_path,
+                           turnover=_turnover(("human_only",)))
+        assert not (tmp_path / "elite_turnover_evolutionary.png").is_file()
+        assert (tmp_path / "optima_matrix_evolutionary.png").is_file()
+
     def test_channels_are_passed_through(self, tmp_path):
         # A duplicated channel must surface, not be swallowed by the loop.
         with pytest.raises(ValueError, match="only one visual channel"):
@@ -301,6 +314,43 @@ class TestVisualizeCampaign:
     def test_a_table_without_strategies_is_rejected(self, tmp_path):
         with pytest.raises(KeyError, match="strategy"):
             visualize_campaign(_few().drop(columns=["strategy"]), tmp_path)
+
+
+def _turnover(strategies=("evolutionary",), n_searches=3, n_generations=5):
+    """A long-format elite_turnover table like the campaign's."""
+    return pd.DataFrame([
+        {"scenario_id": f"s{i}", "strategy": strategy, "generation": g,
+         "tau": 1.0 / (g + i), "incumbent_changed": g <= 2, "best_cost": 1000.0 - g}
+        for strategy in strategies
+        for i in range(n_searches)
+        for g in range(1, n_generations + 1)
+    ])
+
+
+class TestEliteTurnover:
+    """The §5.1 convergence figure: median tau_g with the 5 %–95 % band."""
+
+    def test_draws_a_figure(self):
+        fig = plot_elite_turnover(_turnover(), title="turnover")
+        assert isinstance(fig, Figure)
+        ax = fig.axes[0]
+        # One median line, one incumbent line, and the band as a filled collection.
+        assert len(ax.lines) == 2
+        assert len(ax.collections) == 1
+        plt.close(fig)
+
+    def test_the_x_axis_covers_every_generation(self):
+        fig = plot_elite_turnover(_turnover(n_generations=7))
+        assert fig.axes[0].get_xlim() == (1.0, 7.0)
+        plt.close(fig)
+
+    def test_an_empty_table_is_rejected(self):
+        with pytest.raises(ValueError, match="at least one generation"):
+            plot_elite_turnover(_turnover().iloc[0:0])
+
+    def test_a_table_without_tau_is_rejected(self):
+        with pytest.raises(KeyError, match="tau"):
+            plot_elite_turnover(_turnover().drop(columns=["tau"]))
 
 
 class TestSaveFigure:

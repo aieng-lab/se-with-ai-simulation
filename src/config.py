@@ -361,14 +361,27 @@ class SearchConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class SimulationHorizon:
-    """Top-level simulation horizon and Monte Carlo settings."""
+    """Top-level simulation horizon and Monte Carlo settings.
+
+    The two replication counts are the two stages of the selection rule of §3.10:
+    `K_search` is the paper's `K'`, the count every candidate the search evaluates is
+    scored with, and `K_final` is the paper's `K`, the larger count the preliminary `I*`
+    is re-simulated with before it is reported.  §4.2 uses 100 and 1,000.
+    """
 
     T: int                      # Sprints per replication
-    K: int                      # Monte Carlo replications per configuration
+    K_search: int               # K': replications per candidate during the search
+    K_final: int                # K:  replications for the re-simulation of I* (§3.10)
     master_seed: int            # Root seed s_0
 
     def __post_init__(self) -> None:
         if self.T < 1:
             raise ValueError(f"T must be >= 1, got {self.T}")
-        if self.K < 1:
-            raise ValueError(f"K must be >= 1, got {self.K}")
+        if self.K_search < 1:
+            raise ValueError(f"K_search must be >= 1, got {self.K_search}")
+        if self.K_final < self.K_search:
+            # The re-simulation exists to narrow the confidence intervals of Eq. (topset),
+            # which it can only do with more replications than the search used.
+            raise ValueError(
+                f"K_final must be >= K_search, got {self.K_final} < {self.K_search}"
+            )

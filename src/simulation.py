@@ -155,17 +155,36 @@ def run_configuration(
     *,
     capture_traces: bool = False,
     initial_state: SystemState | None = None,
+    K: int | None = None,
+    k_offset: int = 0,
 ) -> ConfigResult | ConfigTrace:
     """Run K independent replications of `config` under `settings` and `params`.
 
     With `capture_traces=False` (default) returns a lightweight `ConfigResult`.
     With `capture_traces=True` returns a `ConfigTrace` with full per-sprint history.
     `initial_state` sets the starting system state; defaults to all-zero if not provided.
+
+    `K` overrides the replication count, which otherwise is `settings.K_search` — the
+    paper's `K'`, what the search scores a candidate with.  `k_offset` shifts the block of
+    replication indices the run uses, from `[0, K)` to `[k_offset, k_offset + K)`.
+
+    Both exist for the two-stage selection of §3.10, which re-simulates the preliminary
+    `I*` with `K = settings.K_final` replications at `k_offset = settings.K_search`.  The
+    offset makes that a **disjoint** sample: the candidates entered the preliminary set by
+    being the minimum of thousands of noisy `K'`-replication estimates, so those estimates
+    are biased low by the selection itself, and reusing them would carry a fraction of that
+    winner's curse into the reported figure.  A fresh block of indices does not.
     """
     rep_results: list[ReplicationResult] = []
     rep_traces: list[ReplicationTrace] = []
 
-    for k in range(settings.K):
+    n_replications = settings.K_search if K is None else K
+    if n_replications < 1:
+        raise ValueError(f"K must be >= 1, got {n_replications}")
+    if k_offset < 0:
+        raise ValueError(f"k_offset must be >= 0, got {k_offset}")
+
+    for k in range(k_offset, k_offset + n_replications):
         result, trace = _run_replication(config, settings, params, k, capture_traces, initial_state)
         rep_results.append(result)
         if trace is not None:

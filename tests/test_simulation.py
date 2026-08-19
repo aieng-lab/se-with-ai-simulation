@@ -11,13 +11,13 @@ from src.state import SystemState
 
 class TestRunConfigurationBasic:
     def test_result_count(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=0)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=0)
         result = run_configuration(base_config, s, base_params)
         assert isinstance(result, ConfigResult)
         assert len(result.replications) == 3
 
     def test_objectives_non_negative(self, base_config, base_params):
-        s = SimulationHorizon(T=8, K=5, master_seed=0)
+        s = SimulationHorizon(T=8, K_search=5, K_final=5, master_seed=0)
         result = run_configuration(base_config, s, base_params)
         for rep in result.replications:
             assert rep.value >= 0
@@ -28,6 +28,47 @@ class TestRunConfigurationBasic:
         result = run_configuration(base_config, small_settings, base_params)
         assert type(result) is ConfigResult
 
+    def test_K_override_sets_the_replication_count(self, base_config, base_params):
+        s = SimulationHorizon(T=4, K_search=3, K_final=11, master_seed=0)
+        assert len(run_configuration(base_config, s, base_params).replications) == 3
+        result = run_configuration(base_config, s, base_params, K=s.K_final)
+        assert len(result.replications) == 11
+
+    def test_the_replication_block_is_reproducible_and_index_addressed(
+        self, base_config, base_params
+    ):
+        """Every replication is seeded from `(config, k)` alone, so index k is index k."""
+        s = SimulationHorizon(T=6, K_search=4, K_final=12, master_seed=17)
+        short = run_configuration(base_config, s, base_params)
+        long = run_configuration(base_config, s, base_params, K=s.K_final)
+        assert long.replications[:s.K_search] == short.replications
+
+    def test_k_offset_yields_a_disjoint_sample(self, base_config, base_params):
+        """The re-simulation of §3.10 must not reuse the replications that selected it.
+
+        A member of the preliminary I* got there by having one of the lowest of thousands
+        of noisy K'-replication estimates, so that estimate is biased low by the selection.
+        Shifting the block past K_search makes the re-simulated estimate independent of it.
+        """
+        s = SimulationHorizon(T=6, K_search=4, K_final=8, master_seed=17)
+        search_block = run_configuration(base_config, s, base_params)
+        resim = run_configuration(base_config, s, base_params,
+                                  K=s.K_final, k_offset=s.K_search)
+        assert len(resim.replications) == s.K_final
+        # Disjoint by construction: no replication of the search block reappears.
+        long = run_configuration(base_config, s, base_params,
+                                 K=s.K_search + s.K_final)
+        assert resim.replications == long.replications[s.K_search:]
+        assert search_block.replications == long.replications[:s.K_search]
+
+    def test_a_negative_offset_raises(self, base_config, base_params, small_settings):
+        with pytest.raises(ValueError, match="k_offset must be >= 0"):
+            run_configuration(base_config, small_settings, base_params, k_offset=-1)
+
+    def test_K_below_one_raises(self, base_config, base_params, small_settings):
+        with pytest.raises(ValueError, match="K must be >= 1"):
+            run_configuration(base_config, small_settings, base_params, K=0)
+
 
 class TestTraceCapture:
     def test_trace_returns_ConfigTrace(self, base_config, base_params, small_settings):
@@ -35,13 +76,13 @@ class TestTraceCapture:
         assert type(trace) is ConfigTrace
 
     def test_trace_shape(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=2, master_seed=0)
+        s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
         trace = run_configuration(base_config, s, base_params, capture_traces=True)
         assert len(trace.traces) == 2
         assert all(len(rt.snapshots) == 4 for rt in trace.traces)
 
     def test_trace_objectives_identical_to_no_trace(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=42)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=42)
         no_trace = run_configuration(base_config, s, base_params)
         with_trace = run_configuration(base_config, s, base_params, capture_traces=True)
         for a, b in zip(no_trace.replications, with_trace.replications):
@@ -51,7 +92,7 @@ class TestTraceCapture:
 
 class TestDeterminism:
     def test_same_seed_same_results(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=7)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=7)
         r1 = run_configuration(base_config, s, base_params)
         r2 = run_configuration(base_config, s, base_params)
         assert r1.replications == r2.replications
@@ -59,7 +100,7 @@ class TestDeterminism:
 
 class TestInitialState:
     def test_non_zero_backlog_affects_results(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=0)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=0)
         zero_result = run_configuration(base_config, s, base_params)
         warm_result = run_configuration(
             base_config, s, base_params, initial_state=SystemState(F_backlog=50)
@@ -70,20 +111,20 @@ class TestInitialState:
         assert warm_mean > zero_mean
 
     def test_initial_state_object_not_mutated(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=0)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=0)
         init = SystemState(F_backlog=20)
         run_configuration(base_config, s, base_params, initial_state=init)
         assert init.F_backlog == 20
 
     def test_same_seed_same_results_with_initial_state(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=7)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=7)
         init = SystemState(F_backlog=10, D_tech=1.0)
         r1 = run_configuration(base_config, s, base_params, initial_state=init)
         r2 = run_configuration(base_config, s, base_params, initial_state=init)
         assert r1.replications == r2.replications
 
     def test_none_initial_state_equals_default(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K=3, master_seed=5)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=5)
         r_none = run_configuration(base_config, s, base_params, initial_state=None)
         r_zero = run_configuration(base_config, s, base_params, initial_state=SystemState())
         assert r_none.replications == r_zero.replications
@@ -98,7 +139,7 @@ class TestCostAccounting:
             c_salary=0.0,
             c_token=tuple(0.0 for _ in range(AGENT_ROLE_COUNT)),
         )
-        s = SimulationHorizon(T=4, K=2, master_seed=0)
+        s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
         result = run_configuration(base_config, s, zero_params)
         for rep in result.replications:
             assert rep.cost == pytest.approx(0.0)
@@ -111,7 +152,7 @@ class TestCostAccounting:
             c_salary=0.0,
             c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
         )
-        s = SimulationHorizon(T=4, K=1, master_seed=0)
+        s = SimulationHorizon(T=4, K_search=1, K_final=1, master_seed=0)
         trace = run_configuration(base_config, s, params, capture_traces=True)
         rep = trace.replications[0]
         F_completed = trace.traces[0].snapshots[-1].F_completed
@@ -131,7 +172,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=tuple(1 for _ in range(AGENT_ROLE_COUNT)), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=6, K=1, master_seed=0)
+        s = SimulationHorizon(T=6, K_search=1, K_final=1, master_seed=0)
         rep = run_configuration(config, s, params).replications[0]
 
         # k=1..3 idle: no features arrive, so nothing is implemented, no change
@@ -159,7 +200,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=(2, 0, 0, 0, 1, 1, 1, 1), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=5, K=1, master_seed=3)
+        s = SimulationHorizon(T=5, K_search=1, K_final=1, master_seed=3)
         rep = run_configuration(config, s, params).replications[0]
 
         # k=1 saturates at floor(r_F * 1.0 * a_1) features every sprint.
@@ -234,7 +275,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=10, K=1, master_seed=4)
+        s = SimulationHorizon(T=10, K_search=1, K_final=1, master_seed=4)
         trace = run_configuration(config, s, params, capture_traces=True)
         rep = trace.replications[0]
 
@@ -258,7 +299,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=10, K=1, master_seed=4)
+        s = SimulationHorizon(T=10, K_search=1, K_final=1, master_seed=4)
         trace = run_configuration(config, s, params, capture_traces=True)
 
         for snap in trace.traces[0].snapshots:
@@ -269,7 +310,7 @@ class TestCostAccounting:
     def test_cost_split_sums_to_cost(self, base_config, base_params):
         """The three cost drivers of §3.8 partition Eq. (cost_rep) exactly."""
         params = dataclasses.replace(base_params, c_salary=120_000.0)
-        s = SimulationHorizon(T=8, K=3, master_seed=11)
+        s = SimulationHorizon(T=8, K_search=3, K_final=3, master_seed=11)
         for rep in run_configuration(base_config, s, params).replications:
             assert (rep.cost_quality + rep.cost_human + rep.cost_agent
                     == pytest.approx(rep.cost))
@@ -279,7 +320,7 @@ class TestCostAccounting:
     def test_escaped_bugs_are_priced_into_the_objective(self, base_params):
         """Eq. (obj_Q): the omega weights are dollars, so they move `cost` directly."""
         from src.simulation import escaped_bug_cost
-        s = SimulationHorizon(T=12, K=3, master_seed=13)
+        s = SimulationHorizon(T=12, K_search=3, K_final=3, master_seed=13)
         # Plenty of bugs and nobody to catch or repair them, so every injected bug ships.
         leaky = dataclasses.replace(base_params, r_bugs=1.0, d_test=0.0)
         config = TeamConfiguration(
@@ -307,7 +348,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=3, A_dev=(1, 0, 0, 2, 0, 0, 0, 0), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=7, K=1, master_seed=5)
+        s = SimulationHorizon(T=7, K_search=1, K_final=1, master_seed=5)
         # Two runs whose debt trajectories differ wildly: one where refactoring has
         # something to remove, one where debt never accrues at all.
         busy = dataclasses.replace(base_params, delta_impl=0.5, delta_fix=0.5)
@@ -320,7 +361,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 0, 0), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=5, K=1, master_seed=6)
+        s = SimulationHorizon(T=5, K_search=1, K_final=1, master_seed=6)
         rep = run_configuration(config, s, base_params).replications[0]
         assert rep.actions[3] == pytest.approx(0.0)
 
@@ -335,13 +376,13 @@ class TestContributionAccounting:
         """impl_human + impl_agents == F_completed(T) == value * T, exactly."""
         params = dataclasses.replace(base_params, r_arrival=r_arrival,
                                      h_feature=h_feature)
-        s = SimulationHorizon(T=12, K=3, master_seed=7)
+        s = SimulationHorizon(T=12, K_search=3, K_final=3, master_seed=7)
         result = run_configuration(base_config, s, params)
         for rep in result.replications:
             assert rep.impl_human + rep.impl_agents == pytest.approx(rep.value * s.T)
 
     def test_bug_fixing_split_matches_the_billed_agent_unit(self, base_config, base_params):
-        s = SimulationHorizon(T=12, K=3, master_seed=8)
+        s = SimulationHorizon(T=12, K_search=3, K_final=3, master_seed=8)
         for rep in run_configuration(base_config, s, base_params).replications:
             assert rep.fixes_agent == pytest.approx(rep.actions[2])
             assert rep.fixes_human >= 0.0
@@ -356,7 +397,7 @@ class TestContributionAccounting:
         config = TeamConfiguration(
             N=2, A_dev=(2, 1, 0, 0, 1, 0, 0, 0), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=16, K=3, master_seed=9)
+        s = SimulationHorizon(T=16, K_search=3, K_final=3, master_seed=9)
         for rep in run_configuration(config, s, params).replications:
             arch_impl = (rep.actions[0] - rep.impl_agents) / ARCH_IMPL_COST_UNITS
             assert arch_impl >= 0.0
@@ -365,9 +406,9 @@ class TestContributionAccounting:
     def test_replications_keep_distinct_trace_labels(self, base_config, base_params):
         """Regression: the per-role accumulator used to shadow the replication index,
         so every ReplicationTrace was labelled with the last role instead of its k."""
-        s = SimulationHorizon(T=4, K=3, master_seed=12)
+        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=12)
         trace = run_configuration(base_config, s, base_params, capture_traces=True)
-        assert {tr.k for tr in trace.traces} == set(range(s.K))
+        assert {tr.k for tr in trace.traces} == set(range(s.K_search))
 
 
 class TestHumanOnlyBaselineCost:
@@ -384,21 +425,21 @@ class TestHumanOnlyBaselineCost:
         params = dataclasses.replace(
             base_params, c_token=tuple(1000.0 for _ in range(AGENT_ROLE_COUNT)),
         )
-        s = SimulationHorizon(T=6, K=2, master_seed=0)
+        s = SimulationHorizon(T=6, K_search=2, K_final=2, master_seed=0)
         result = run_configuration(self._cfg(), s, params)
         for rep in result.replications:
             assert rep.cost_agent == 0.0
             assert sum(rep.actions) == 0.0
 
     def test_the_cost_split_still_sums_to_the_total(self, base_params):
-        s = SimulationHorizon(T=6, K=2, master_seed=0)
+        s = SimulationHorizon(T=6, K_search=2, K_final=2, master_seed=0)
         result = run_configuration(self._cfg(), s, base_params)
         for rep in result.replications:
             assert rep.cost == pytest.approx(
                 rep.cost_quality + rep.cost_human + rep.cost_agent)
 
     def test_every_feature_is_implemented_by_a_human(self, base_params):
-        s = SimulationHorizon(T=6, K=2, master_seed=0)
+        s = SimulationHorizon(T=6, K_search=2, K_final=2, master_seed=0)
         result = run_configuration(self._cfg(), s, base_params)
         for rep in result.replications:
             assert rep.impl_agents == 0

@@ -84,17 +84,26 @@ class TestLoadSimulationHorizon:
     def test_default_horizon_loads(self):
         # The Monte Carlo protocol of paper §4.2, Table 6: two years of weekly sprints.
         s = load_simulation_horizon("config/horizon_default.json")
-        assert s.T == 104 and s.K == 100 and s.master_seed == 42
+        assert (s.T == 104 and s.K_search == 100 and s.K_final == 1000
+                and s.master_seed == 42)
 
     def test_basic(self, tmp_path):
         p = tmp_path / "h.json"
-        p.write_text('{"T": 52, "K": 100, "master_seed": 42}')
+        p.write_text('{"T": 52, "K_search": 100, "K_final": 500, "master_seed": 42}')
         s = load_simulation_horizon(p)
-        assert s.T == 52 and s.K == 100 and s.master_seed == 42
+        assert (s.T == 52 and s.K_search == 100 and s.K_final == 500
+                and s.master_seed == 42)
 
     def test_missing_T_raises(self, tmp_path):
         p = tmp_path / "h.json"
-        p.write_text('{"K": 10, "master_seed": 0}')
+        p.write_text('{"K_search": 10, "K_final": 10, "master_seed": 0}')
+        with pytest.raises(KeyError):
+            load_simulation_horizon(p)
+
+    def test_a_horizon_with_only_the_old_K_key_raises(self, tmp_path):
+        """Both replication counts of §3.10 are required; there is no silent default."""
+        p = tmp_path / "h.json"
+        p.write_text('{"T": 52, "K": 100, "master_seed": 42}')
         with pytest.raises(KeyError):
             load_simulation_horizon(p)
 
