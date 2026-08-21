@@ -11,30 +11,32 @@ class SystemState:
 
     F_backlog: int = 0
     F_completed: int = 0
-    B_hid_min: int = 0     # hidden bugs (not detected; escape at next release)
+    B_hid_min: int = 0    # injected but undetected, by severity
     B_hid_maj: int = 0
     B_hid_sec: int = 0
-    B_kno_min: int = 0
+    B_kno_min: int = 0    # detected but not yet repaired, by severity
     B_kno_maj: int = 0
     B_kno_sec: int = 0
-    B_escaped_min: int = 0
+    B_escaped_min: int = 0  # cumulative count that reached production
     B_escaped_maj: int = 0
     B_escaped_sec: int = 0
-    B_rel_min: int = 0     # escaped bugs still open in production
+    B_rel_min: int = 0    # of those, the ones still open
     B_rel_maj: int = 0
     B_rel_sec: int = 0
-    D_tech: float = 0.0
-    Q_rev: int = 0
-    Q_arch: int = 0       # pending architecture change requests (impl-generated, arch-drained)
-    Q_arch_impl: int = 0  # approved architecture proposals awaiting implementation (rev_done-filled)
-    Q_esc: int = 0
-    N_test: float = 0.0     # cumulative tests written by Test Development Agent
-    N_doc: float = 0.0     # cumulative documentation items written
+    D_tech: float = 0.0   # normalised technical debt, in [0, 1]
+    Q_rev: int = 0        # architecture proposals awaiting human review
+    Q_arch: int = 0       # architecture change requests awaiting an agent
+    Q_arch_impl: int = 0  # approved proposals awaiting implementation
+    Q_esc: int = 0        # escalations awaiting a human
+    N_test: float = 0.0   # cumulative tests written
+    N_doc: float = 0.0    # cumulative documentation items written
 
     @property
     def B_kno(self) -> int:
+        """Detected, unrepaired bugs over all three severities."""
         return self.B_kno_min + self.B_kno_maj + self.B_kno_sec
 
     @property
     def B_hid(self) -> int:
+        """Undetected bugs over all three severities."""
         return self.B_hid_min + self.B_hid_maj + self.B_hid_sec

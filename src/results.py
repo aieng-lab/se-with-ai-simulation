@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
+from typing import Any, TypeVar
 
 import pandas as pd
 
@@ -11,18 +13,33 @@ from .config import AGENT_ROLE_COUNT, TeamConfiguration
 from .selection import AggregatedObjectives
 from .simulation import ConfigResult, ConfigTrace, ReplicationResult, SprintSnapshot
 
+_T = TypeVar("_T")
 
-# All SprintSnapshot field names except 't' (stored as 'sprint' in the DataFrame)
+# Every SprintSnapshot field except 't', which the DataFrame calls 'sprint'.  This is the
+# column order of a persisted trace CSV.
 _SNAPSHOT_FIELDS: tuple[str, ...] = tuple(
-    f.name for f in SprintSnapshot.__dataclass_fields__.values() if f.name != "t"
+    f.name for f in dataclasses.fields(SprintSnapshot) if f.name != "t"
 )
+
+# JSON has no tuples, so these come back as lists and have to be converted on load.
+_TUPLE_FIELDS = frozenset({
+    "actions", "actions_mean", "cost_ci", "value_ci", "A_dev", "A_qa",
+})
+
+
+def _from_json(cls: "type[_T]", data: dict[str, Any]) -> _T:
+    """Rebuild a dataclass from its `asdict` form, restoring the tuple-typed fields."""
+    kwargs = {
+        f.name: tuple(data[f.name]) if f.name in _TUPLE_FIELDS else data[f.name]
+        for f in dataclasses.fields(cls)          # type: ignore[arg-type]
+    }
+    return cls(**kwargs)                          # type: ignore[operator]
 
 
 def to_dataframe(trace: ConfigTrace) -> pd.DataFrame:
-    """Convert a ConfigTrace to a tidy DataFrame indexed by (replication, sprint).
+    """Convert a ConfigTrace to a DataFrame indexed by (replication, sprint).
 
-    Each row corresponds to one sprint in one replication. Columns include all
-    SystemState fields (end-of-sprint values).
+    One row per sprint per replication, one column per SprintSnapshot field.
     """
     rows = []
     for rep_trace in trace.traces:
@@ -41,36 +58,9 @@ def save_result(
 ) -> None:
     """Save ConfigResult summary and AggregatedObjectives to a JSON file."""
     data = {
-        "config": {
-            "N": result.config.N,
-            "A_dev": list(result.config.A_dev),
-            "R": result.config.R,
-            "F_freeze": result.config.F_freeze,
-            "A_qa": list(result.config.A_qa),  # type: ignore[arg-type]
-        },
-        "replications": [
-            {"value": r.value, "cost": r.cost,
-             "cost_quality": r.cost_quality,
-             "cost_human": r.cost_human, "cost_agent": r.cost_agent,
-             "actions": list(r.actions),
-             "impl_human": r.impl_human, "impl_agents": r.impl_agents,
-             "fixes_human": r.fixes_human, "fixes_agent": r.fixes_agent}
-            for r in result.replications
-        ],
-        "aggregated": {
-            "value_mean": agg.value_mean,
-            "value_ci": list(agg.value_ci),
-            "cost_mean": agg.cost_mean,
-            "cost_ci": list(agg.cost_ci),
-            "cost_quality_mean": agg.cost_quality_mean,
-            "cost_human_mean": agg.cost_human_mean,
-            "cost_agent_mean": agg.cost_agent_mean,
-            "actions_mean": list(agg.actions_mean),
-            "impl_human_mean": agg.impl_human_mean,
-            "impl_agents_mean": agg.impl_agents_mean,
-            "fixes_human_mean": agg.fixes_human_mean,
-            "fixes_agent_mean": agg.fixes_agent_mean,
-        },
+        "config": dataclasses.asdict(result.config),
+        "replications": [dataclasses.asdict(r) for r in result.replications],
+        "aggregated": dataclasses.asdict(agg),
     }
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -79,52 +69,22 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     """Load a JSON file written by save_result."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
-    cfg = data["config"]
-    A_dev = tuple(cfg["A_dev"])
-    if len(A_dev) != AGENT_ROLE_COUNT:
-        raise ValueError(f"A_dev has length {len(A_dev)}, expected {AGENT_ROLE_COUNT}")
-    config = TeamConfiguration(N=cfg["N"], A_dev=A_dev, R=cfg["R"],
-                               F_freeze=cfg["F_freeze"], A_qa=tuple(cfg["A_qa"]))
-
-    replications = tuple(
-        ReplicationResult(value=r["value"], cost=r["cost"],
-                          cost_quality=r["cost_quality"],
-                          cost_human=r["cost_human"],
-                          cost_agent=r["cost_agent"],
-                          actions=tuple(r["actions"]),
-                          impl_human=r["impl_human"],
-                          impl_agents=r["impl_agents"],
-                          fixes_human=r["fixes_human"],
-                          fixes_agent=r["fixes_agent"])
-        for r in data["replications"]
+    if len(data["config"]["A_dev"]) != AGENT_ROLE_COUNT:
+        raise ValueError(f"A_dev has length {len(data['config']['A_dev'])}, "
+                         f"expected {AGENT_ROLE_COUNT}")
+    result = ConfigResult(
+        config=_from_json(TeamConfiguration, data["config"]),
+        replications=tuple(_from_json(ReplicationResult, r)
+                           for r in data["replications"]),
     )
-    result = ConfigResult(config=config, replications=replications)
-
-    ag = data["aggregated"]
-    agg = AggregatedObjectives(
-        value_mean=ag["value_mean"],
-        value_ci=tuple(ag["value_ci"]),
-        cost_mean=ag["cost_mean"],
-        cost_ci=tuple(ag["cost_ci"]),
-        cost_quality_mean=ag["cost_quality_mean"],
-        cost_human_mean=ag["cost_human_mean"],
-        cost_agent_mean=ag["cost_agent_mean"],
-        actions_mean=tuple(ag["actions_mean"]),
-        impl_human_mean=ag["impl_human_mean"],
-        impl_agents_mean=ag["impl_agents_mean"],
-        fixes_human_mean=ag["fixes_human_mean"],
-        fixes_agent_mean=ag["fixes_agent_mean"],
-    )
-    return result, agg
+    return result, _from_json(AggregatedObjectives, data["aggregated"])
 
 
 def save_traces(trace: ConfigTrace, path: str | Path) -> None:
     """Save the full per-sprint time-series trace to a CSV file."""
-    df = to_dataframe(trace)
-    df.reset_index().to_csv(path, index=False)
+    to_dataframe(trace).reset_index().to_csv(path, index=False)
 
 
 def load_traces(path: str | Path) -> pd.DataFrame:
     """Load a CSV written by save_traces; restores the (replication, sprint) MultiIndex."""
-    df = pd.read_csv(path)
-    return df.set_index(["replication", "sprint"])
+    return pd.read_csv(path).set_index(["replication", "sprint"])

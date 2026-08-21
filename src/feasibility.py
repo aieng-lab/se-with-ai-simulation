@@ -1,9 +1,4 @@
-"""Human-capacity gate, applied to a configuration before it is simulated.
-
-Supervising the supervised agent roles must not exhaust one FTE's net capacity.  The
-check is evaluated at perfect documentation, i.e. at the smallest monitoring overhead
-the configuration can ever incur, so passing it is necessary but not sufficient.
-"""
+"""Human-capacity gate, applied to a configuration before it is simulated."""
 
 from __future__ import annotations
 
@@ -23,12 +18,15 @@ def check_feasibility(
     config: TeamConfiguration,
     params: ScenarioParameters,
 ) -> FeasibilityReport:
-    """Check the human-capacity condition; return the outcome and, on failure, why."""
-    # Monitoring overhead per supervised agent at perfect documentation coverage.
+    """Check that supervising the agents leaves an FTE some capacity; say why if not.
+
+    Evaluated at perfect documentation coverage, i.e. at the lowest monitoring overhead
+    the configuration can incur, so passing is necessary but not sufficient.
+    """
     H_mon_eff_star = params.H_monitoring_overhead * (1.0 - params.Gamma_doc)
     H_net = net_capacity(params.H_capacity, params.c_comm, config.N)
 
-    # A_qa is only checked when a freeze window exists; without one it is never applied.
+    # A_qa is applied only when there is a freeze window to apply it in.
     compositions = [("A_dev", config.A_dev)]
     if config.F_freeze > 0:
         compositions.append(("A_qa", config.A_qa))

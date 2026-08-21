@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Generate one search configuration per campaign scenario.
 
-The five scenario groups each come in a low / medium / high tier; `project` carries a
-fourth "very high" tier and `agent` a fourth "pessimistic" one, so combining them freely
-yields 3^3 * 4 * 4 = 432 scenarios.  Every generated file is the template with its five
-`scenario` entries repointed at one tier combination; the search range, budgets, horizon
-and seed are inherited unchanged, so all 432 searches share the experimental setup.
+Every generated file is `config/search_default.json` with its five `scenario` entries
+repointed at one tier combination; the search range, budget, horizon and seed are
+inherited unchanged, so every generated search shares the experimental setup.
 
 Usage
 -----
-    python scripts/generate_search_configs.py                 # write config/search/
-    python scripts/generate_search_configs.py --force         # overwrite existing files
-    python scripts/generate_search_configs.py --out-dir /tmp/x --template t.json
-    python scripts/generate_search_configs.py --baseline   # config/search_baseline/
+    python scripts/generate_search_configs.py                # write config/search/
+    python scripts/generate_search_configs.py --force        # overwrite existing files
+    python scripts/generate_search_configs.py --baseline     # config/search_baseline/
+    python scripts/generate_search_configs.py --out-dir /tmp/x
 """
 
 from __future__ import annotations
@@ -39,8 +37,8 @@ DEFAULT_OUT_DIR = "config/search"
 BASELINE_OUT_DIR = "config/search_baseline"
 
 #: Groups the human-only baseline varies.  `debt` and `agent` are inert for a zero-agent
-#: team (see config/{debt,agent}_unused.json), so they take the UNUSED_TIER sentinel and
-#: the grid is 3 x 4 x 3 = 36 scenarios rather than 432.
+#: team, so they take the UNUSED_TIER sentinel and point at their `_unused.json`
+#: placeholders, which keeps the grid far smaller than the full campaign's.
 BASELINE_VARYING_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
 
 
@@ -64,7 +62,7 @@ def baseline_tier_combinations() -> list[tuple[str, ...]]:
     """Tier tuples of the human-only baseline grid, in SCENARIO_GROUPS order.
 
     `debt` and `agent` are held at UNUSED_TIER, so the product runs over the other three
-    groups only: 3 human x 4 project x 3 bugimpact = 36 scenarios.
+    groups only.
     """
     per_group = [
         scenario_tiers(g) if g in BASELINE_VARYING_GROUPS else (UNUSED_TIER,)
@@ -76,8 +74,7 @@ def baseline_tier_combinations() -> list[tuple[str, ...]]:
 def build_baseline_config(template: dict, tiers: tuple[str, ...]) -> dict:
     """Like `build_config`, but for a human-only baseline scenario.
 
-    Points `debt` and `agent` at their `_unused.json` placeholders and sets `human_only`,
-    which enumerates the 99-point zero-agent grid instead of searching.
+    Sets `human_only`, which enumerates the zero-agent grid instead of searching.
     """
     config = build_config(template, tiers)
     tier_list = ", ".join(
@@ -93,8 +90,6 @@ def build_baseline_config(template: dict, tiers: tuple[str, ...]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--template", default=DEFAULT_TEMPLATE, metavar="PATH",
-                        help=f"Search config to derive from (default: {DEFAULT_TEMPLATE})")
     parser.add_argument("--out-dir", default=None, metavar="DIR",
                         help=f"Output directory (default: {DEFAULT_OUT_DIR}, "
                              f"or {BASELINE_OUT_DIR} with --baseline)")
@@ -105,10 +100,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Overwrite existing files instead of failing")
     args = parser.parse_args(argv)
 
-    template = json.loads(Path(args.template).read_text(encoding="utf-8"))
+    template = json.loads(Path(DEFAULT_TEMPLATE).read_text(encoding="utf-8"))
     for key in ("horizon", "search"):
         if key not in template:
-            parser.error(f"template {args.template} is missing the {key!r} key")
+            parser.error(f"template {DEFAULT_TEMPLATE} is missing the {key!r} key")
 
     default_out = BASELINE_OUT_DIR if args.baseline else DEFAULT_OUT_DIR
     out_dir = Path(args.out_dir or default_out)
@@ -140,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         shape = " x ".join(str(len(scenario_tiers(g))) for g in SCENARIO_GROUPS)
         print(f"Wrote {written} search configurations to {out_dir}/ "
               f"({shape} = {expected} scenarios, one search each)")
-    print(f"Template: {args.template}")
+    print(f"Template: {DEFAULT_TEMPLATE}")
     return 0
 
 

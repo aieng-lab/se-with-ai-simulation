@@ -18,6 +18,7 @@ from .config import (
 from .parameters import ScenarioParameters
 from .state import SystemState
 
+
 def _parse_value(key: str, value: Any) -> float:
     """Coerce a scenario parameter to a float, rejecting anything that is not a number."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -67,15 +68,12 @@ def load_team_config(path: str | Path) -> TeamConfiguration:
     """Parse a team configuration JSON file and return TeamConfiguration."""
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-    A_dev = tuple(int(x) for x in data["A_dev"])
-    A_qa_raw = data.get("A_qa")
-    A_qa = tuple(int(x) for x in A_qa_raw) if A_qa_raw is not None else None
     return TeamConfiguration(
         N=float(data["N"]),
-        A_dev=A_dev,
+        A_dev=tuple(int(x) for x in data["A_dev"]),
         R=int(data["R"]),
         F_freeze=int(data.get("F_freeze", 1)),
-        A_qa=A_qa,
+        A_qa=tuple(int(x) for x in data.get("A_qa") or ()),
     )
 
 

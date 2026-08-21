@@ -32,18 +32,15 @@ class ScenarioParameters:
     h_feature: float                 # Human hours per feature
     h_fix: float                     # Human hours per bug fixed
     c_comm: float                    # Per-peer communication overhead
-    f_fix: float                     # Fraction of residual capacity used for bug fixing; 1-f_fix goes to coding
-    # The three below drive the human quality-assurance stage, which is reached only when
-    # the team has no agents at all (`config.is_human_only`).
+    f_fix: float                     # Share of residual capacity spent on bug fixing
+    # Read only by a team with no agents (`config.is_human_only`).
     f_qa: float                      # Share of net capacity reserved for QA in dev sprints
     h_qa: float                      # Human hours to review one implemented feature in full
     d_qa: float                      # Probability a fully reviewed bug is detected
 
     # --- Bug injection  ---
-    r_bugs: float                    # Base bug injection rate per feature (agents)
-    # Absolute Poisson rate of bugs per human-implemented feature.  NOT a scale factor on
-    # r_bugs, and not amplified by the debt factor: human-written code injects at a fixed
-    # per-feature rate.
+    r_bugs: float                    # Bug injection rate per agent-implemented feature
+    # Bugs per human-implemented feature: an absolute rate, not a factor on r_bugs.
     r_bugs_human: float
     theta_maj: float                 # Major bug fraction [0, 1)
     theta_sec: float                 # Security bug fraction [0, 1)
@@ -68,14 +65,12 @@ class ScenarioParameters:
     rho_esc: float                   # Per-agent escalation rate
 
     # --- Costs ---
-    # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix/1/1/1/r_test/r_doc
-    # for roles 1-8), not per sprint.  Roles 4-6 have no countable unit of output, so
-    # their rate is 1 and c_token is a flat fee per deployed instance per sprint.
+    # Price of one unit of each role's throughput, k=1..8, in that role's own unit.
+    # Roles 4-6 are counted per deployed instance per sprint, the rest per artefact.
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Annual fully-loaded cost of one FTE
-    # Expected dollar cost of a single escaped bug of each severity.  Absolute costs, not
-    # relative quality weights.  The defaults are the medium bugimpact tier; every
-    # scenario file supplies them explicitly.
+    # Dollar cost of one escaped bug, by severity.  The defaults here and on c_token /
+    # c_salary above are for direct construction in tests; every scenario file sets them.
     omega_min: float = 150.0         # Cost of one escaped minor bug
     omega_maj: float = 300_000.0     # Cost of one escaped major bug
     omega_sec: float = 1_000_000.0   # Cost of one escaped security bug

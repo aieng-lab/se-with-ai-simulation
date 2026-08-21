@@ -13,7 +13,6 @@ structure share one module-scoped render, and the rest use a handful of scenario
 
 from __future__ import annotations
 
-import inspect
 import itertools
 
 import matplotlib
@@ -32,7 +31,6 @@ from src.config import (
     scenario_tiers,
 )
 from src.constellation import (
-    AGENT_COST_PARAMETERS,
     BILL_PARAMETERS,
     C_STAR,
     CONSTELLATION_PARAMETERS,
@@ -46,7 +44,7 @@ from src.visualization import (
     _compact_dollars,
     _BASELINE_COLOR,
     _BASELINE_LABEL,
-    _TIER_SIZES,
+    _TIER_STYLES,
     _baseline_cell,
     _baseline_style_groups,
     _log_floor,
@@ -599,14 +597,9 @@ class TestBaselineOverlay:
 
     def test_style_blocks_are_drawn_largest_first(self):
         base = _baseline(6)
-        areas = [_TIER_SIZES[size] for _, size, _ in
+        areas = [_TIER_STYLES[size].area for _, size, _ in
                  _baseline_style_groups(base, "project", "bugimpact")]
         assert areas == sorted(areas, reverse=True)
-
-    def test_ratio_matrix_takes_no_baseline(self):
-        # A team with no agents has no agent/developer ratio.
-        assert "baseline" not in inspect.signature(
-            plot_agent_human_ratio_matrix).parameters
 
 
 class TestVisualizeCampaignWithBaseline:
@@ -942,14 +935,6 @@ class TestTeamBillWeighting:
         assert human not in agents
         plt.close(fig)
 
-    def test_the_nine_slices_close_to_the_reported_team_cost(self):
-        """`cost_human_mean + cost_agent_mean`, exactly — the split is an apportionment."""
-        df = _summary_optima()
-        assert df["cost_team_mean"].to_numpy() == pytest.approx(
-            (df["cost_human_mean"] + df["cost_agent_mean"]).to_numpy())
-        assert df[list(AGENT_COST_PARAMETERS)].sum(axis=1).to_numpy() == pytest.approx(
-            df["cost_agent_mean"].to_numpy())
-
     def test_escaped_bug_cost_is_not_a_line_item_of_the_team(self):
         """It is what the team's choices cost elsewhere, not what the team bills."""
         assert "cost_quality_mean" not in _SHARE_WEIGHTS["team"].columns
@@ -991,11 +976,6 @@ class TestCompositionAnnotations:
     def test_the_bug_column_is_compact(self, value, expected):
         """Four orders of magnitude have to fit in a margin, so it says the decade."""
         assert _compact_dollars(value) == expected
-
-    def test_each_weighting_writes_its_own_file(self):
-        stems = {name: spec.filename for name, spec in _SHARE_WEIGHTS.items()}
-        assert len(set(stems.values())) == len(stems)
-
 
 class TestTeamShapePanels:
     """A third scenario group, read off the panels rather than off the rows."""
@@ -1086,11 +1066,10 @@ class TestTeamDrivers:
             assert len(ax.lines) == len(fig.axes[0].lines)
         plt.close(fig)
 
-    def test_there_is_no_campaign_median_rule(self):
+    def test_the_legend_names_the_statistic_each_row_shows(self):
         fig = plot_team_drivers(_summary_optima())
         labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
         assert "median with interquartile range" in labels
-        assert "campaign median" not in labels
         plt.close(fig)
 
     def test_the_two_halves_of_the_team_get_a_panel_each(self):

@@ -22,11 +22,10 @@ Output layout
             N2_R4_00042.json   per-replication objectives, for the candidates
                                SearchConfiguration.samples selects
 
-Supervised role counts are bounded per role by `saturation_bounds` — beyond that an agent
-has no work to do — and collectively by the human-capacity check in `src.feasibility`,
-which runs after the draw.  The three autonomous roles are outside both: the two detection
-services are capped by nothing at all and are merely sampled within a range, and the
-Refactoring Agent is capped by `refactoring_bound`.
+Supervised role counts are bounded per role by `saturation_bounds` and collectively by
+the human-capacity check in `src.feasibility`, which runs after the draw.  The autonomous
+roles are outside both: `review_sample_max` is only a sampling range, and only the
+Refactoring Agent carries a real cap, `refactoring_bound`.
 """
 
 from __future__ import annotations
@@ -76,22 +75,16 @@ _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
 def saturation_bounds(params, sigma: float) -> dict[int, int]:
     """Per-role upper bounds for the supervised roles, keyed by 0-based role index.
 
-    Every supervised role is fed by work that derives from the feature arrival rate, so
-    deploying more agents than the inflow can keep busy buys nothing.  The bound is
-    `ceil(sigma * workload / rate)`: `workload` is the steady-state inflow that reaches
-    the role, `rate` the throughput one agent sustains with the debt amplifier at its
-    floor, and `sigma >= 1` the headroom against the Poisson peaks of the arrivals.
-
-    The autonomous roles are absent — see `refactoring_bound` and `review_sample_max`.
-    Every workload is a positive multiple of r_arrival, so every bound is at least 1.
+    `ceil(sigma * workload / rate)`, where `workload` is the steady-state inflow reaching
+    the role, `rate` the throughput one agent sustains at the debt floor, and `sigma >= 1`
+    the headroom against Poisson peaks.  Every workload is a positive multiple of
+    r_arrival, so every bound is at least 1.  The autonomous roles are not covered here.
     """
     if sigma < 1:
         raise ValueError(f"sigma must be >= 1, got {sigma}")
 
     r = params.r_arrival
-    # The bug-fixing inflow counts the agent-injected stream only; the human stream is an
-    # absolute per-feature rate and is not represented here.  That under-counts, but
-    # harmlessly: the bug-fixing rate is in the hundreds, so the bound is 1 either way.
+    # Counts the agent-injected stream only, which under-counts the true inflow.
     bug_inflow = params.r_bugs * (2.0 - params.delta_min) * r
     workload = {
         0: (1.0 + params.f_arch_chg) * r,                       # k=1 Feature Implementation
@@ -119,84 +112,49 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
 
 
 def review_sample_max(params) -> int:
-    """Sampling range of the two detection services: features arriving per sprint.
+    """Sampling range of the two detection services: `floor(r_arrival)`.
 
-    The two are drawn uniformly from {0, ..., floor(r_arrival)}, i.e. at most one service
-    instance per arriving feature.  This is a sampling choice, not a bound — nothing caps
-    these roles, and the mutation operator may take them beyond it.
+    A sampling choice, not a bound: nothing caps these two roles, and the mutation
+    operator may take them past it.
     """
     return int(params.r_arrival)
 
 
 def refactoring_bound(params) -> int:
-    """Upper bound on the Refactoring Agent: floor(r_arrival / 2).
+    """Upper bound on the Refactoring Agent: `floor(r_arrival / 2)`.
 
-    Unlike `review_sample_max` this is a genuine cap, honoured by the sampler and by the
-    mutation operator alike: up to one Refactoring Agent per two arriving features.  It is
-    not scaled by `sigma`, and it is 0 below r_arrival = 2, which pins the role to zero.
+    Unlike `review_sample_max` this is a real cap, honoured by the sampler and by the
+    mutation operator.  It is not scaled by `sigma`, and it is 0 below r_arrival = 2.
     """
     return int(params.r_arrival // 2)
 
 
-def _sample_count(rng: np.random.Generator, upper: int) -> int:
-    """Draw one autonomous-role count uniformly from {0, ..., upper}."""
-    return int(rng.integers(0, upper + 1))
-
-
-def _assemble_composition(
-    supervised: dict[int, int],
-    rng: np.random.Generator,
-    review_max: int,
-    refactor_max: int,
-) -> tuple[int, ...]:
-    """Build a full 8-role vector from supervised counts plus fresh autonomous draws."""
-    A = [0] * AGENT_ROLE_COUNT
-    for idx, count in supervised.items():
-        A[idx] = count
-    for idx in AUTONOMOUS_ROLE_INDICES:
-        upper = refactor_max if idx == _REFACTOR_INDEX else review_max
-        A[idx] = _sample_count(rng, upper)
-    return tuple(A)
-
-
-def _sample_supervised(
+def _sample_composition(
     rng: np.random.Generator,
     bounds: dict[int, int],
-    indices: tuple[int, ...],
-    min_impl: bool,
-) -> dict[int, int]:
-    """Draw each supervised role independently and uniformly within its bound.
+    review_max: int,
+    refactor_max: int,
+    *,
+    qa: bool,
+) -> tuple[int, ...]:
+    """Draw a full 8-role composition, each role independently and uniformly.
 
-    `a_k ~ U{0, ..., bound_k}`, except that with `min_impl` the dev-phase Feature
-    Implementation role is drawn from `U{1, ..., bound_1}` so `a_dev,1 >= 1` holds by
-    construction.  The human-capacity condition is not enforced here; a draw that
-    violates it is rejected later by the feasibility gate.
+    Every supervised role is drawn from `U{0, ..., bounds[k]}` and every autonomous one
+    from `U{0, ..., review_max}` (or `refactor_max` for the Refactoring Agent).  Two
+    structural constraints are met by construction: a dev-phase composition draws role 1
+    from `U{1, ...}` so that `a_dev,1 >= 1`, and a QA-phase one leaves roles 1-2 at zero.
+
+    The human-capacity condition is not enforced here; a draw that violates it is
+    rejected later by the feasibility gate.
     """
-    supervised: dict[int, int] = {}
-    for idx in indices:
-        lo = 1 if (min_impl and idx == 0) else 0
-        supervised[idx] = int(rng.integers(lo, bounds[idx] + 1))
-    return supervised
-
-
-def _sample_dev_composition(
-    rng: np.random.Generator, bounds: dict[int, int],
-    review_max: int, refactor_max: int,
-) -> tuple[int, ...]:
-    """Sample a dev-phase composition: every supervised role within a-bar_k, a_1 >= 1."""
-    supervised = _sample_supervised(rng, bounds, SUPERVISED_ROLE_INDICES, min_impl=True)
-    return _assemble_composition(supervised, rng, review_max, refactor_max)
-
-
-def _sample_qa_composition(
-    rng: np.random.Generator, bounds: dict[int, int],
-    review_max: int, refactor_max: int,
-) -> tuple[int, ...]:
-    """Sample a QA-phase composition: a_1=a_2=0, the rest within their bound a-bar_k."""
-    # Roles 1-2 (indices 0-1) are forced to zero (no new features or architecture
-    # proposals during feature freeze).
-    supervised = _sample_supervised(rng, bounds, _QA_SUPERVISED_INDICES, min_impl=False)
-    return _assemble_composition(supervised, rng, review_max, refactor_max)
+    A = [0] * AGENT_ROLE_COUNT
+    for idx in (_QA_SUPERVISED_INDICES if qa else SUPERVISED_ROLE_INDICES):
+        lo = 0 if (qa or idx != 0) else 1
+        A[idx] = int(rng.integers(lo, bounds[idx] + 1))
+    for idx in AUTONOMOUS_ROLE_INDICES:
+        upper = refactor_max if idx == _REFACTOR_INDEX else review_max
+        A[idx] = int(rng.integers(0, upper + 1))
+    return tuple(A)
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +170,10 @@ def _service_step(idx: int, rng: np.random.Generator,
                   review_max: int, refactor_max: int) -> int:
     """One signed "adjust service" step for autonomous role `idx`.
 
-    The size is `2**j` with `j` uniform over `{0, ..., floor(log2 range)}`, where `range`
-    is the role's sampling range — `review_max` for the detection services, `refactor_max`
-    for the Refactoring Agent — and the sign is uniform.  Exponentially spaced steps let
-    the search traverse counts in the hundreds, which a +/-1 walk could not.  A range of 0
-    leaves only `j = 0`.
+    The size is `2**j` with `j` uniform over `{0, ..., floor(log2 range)}` and the sign
+    uniform; `range` is `review_max` for the detection services and `refactor_max` for the
+    Refactoring Agent.  Exponentially spaced, so the search can traverse counts in the
+    hundreds.  A range of 0 leaves only `j = 0`.
     """
     s = refactor_max if idx == _REFACTOR_INDEX else review_max
     max_exponent = int(math.log2(s)) if s >= 1 else 0
@@ -369,10 +326,10 @@ def _random_draws(
         # real parameter at all.  Restricted to the admissible values for this R; the list
         # is never empty, since SearchConfiguration requires 0 in F_freeze_values.
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
-        A_dev = _sample_dev_composition(rng, bounds, review_max, refactor_max)
+        A_dev = _sample_composition(rng, bounds, review_max, refactor_max, qa=False)
         # With no freeze window the QA composition is never applied, so drawing one would
         # only attach meaningless coordinates to the candidate.
-        A_qa = (_sample_qa_composition(rng, bounds, review_max, refactor_max)
+        A_qa = (_sample_composition(rng, bounds, review_max, refactor_max, qa=True)
                 if F_freeze > 0 else (0,) * AGENT_ROLE_COUNT)
         draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
                                        F_freeze=F_freeze, A_qa=A_qa))
@@ -423,28 +380,21 @@ def _evaluate(
 class SearchOutcome:
     """Everything a search or enumeration produces, independent of how it is persisted.
 
-    `results` holds the per-candidate ConfigResults kept for possible sample export: empty
-    under the "none" retention policy, and every simulated candidate otherwise (~2.5 KB
-    each, so ~25 MB at the campaign budget).
+    `results` holds the per-candidate ConfigResults kept for sample export: empty under
+    the "none" retention policy, every simulated candidate otherwise.
     """
 
-    manifest: dict[str, dict]
-    aggs: list[tuple[str, TeamConfiguration, "AggregatedObjectives"]]
-    results: dict[str, ConfigResult]
-    # One entry per generation actually run.  `run_human_only` leaves all three empty:
-    # an enumeration has no generations.
+    manifest: dict[str, dict] = field(default_factory=dict)
+    aggs: list[tuple[str, TeamConfiguration, "AggregatedObjectives"]] = field(default_factory=list)
+    results: dict[str, ConfigResult] = field(default_factory=dict)
+    # One entry per generation actually run; an enumeration leaves all three empty.
     elite_turnover: list[float] = field(default_factory=list)
     incumbent_changed: list[bool] = field(default_factory=list)
     best_cost: list[float] = field(default_factory=list)
 
     @property
     def incumbent_turnover(self) -> float | None:
-        """Share of generations in which the incumbent changed; None if none ran.
-
-        Reported beside the elite turnover because that one has a noise floor: candidates
-        whose costs are indistinguishable at K_search swap ranks inside the elite without
-        any improvement taking place.
-        """
+        """Share of generations in which the incumbent changed; None if none ran."""
         if not self.incumbent_changed:
             return None
         return sum(self.incumbent_changed) / len(self.incumbent_changed)
@@ -471,7 +421,7 @@ class SearchOutcome:
         if agg is not None:
             self.aggs.append((key, config, agg))
             if keep_samples:
-                self.results[key] = cr    # type: ignore[assignment]
+                self.results[key] = cr
 
     @property
     def n_evaluated(self) -> int:
@@ -488,29 +438,24 @@ def write_samples(
     outcome: SearchOutcome,
     out_dir: Path,
     keys: list[str],
-    aggs_override: "dict[str, AggregatedObjectives] | None" = None,
-) -> int:
-    """Persist `samples/<key>.json` for the requested keys; returns the file count.
+    aggs_override: "dict[str, AggregatedObjectives]",
+) -> None:
+    """Persist `samples/<key>.json` for the requested keys.
 
     `aggs_override` replaces the search's `K_search` aggregates for the keys it holds, so
     a re-simulated candidate's sample file carries the `K_final` estimates it is reported
     from.
     """
     if not keys:
-        return 0
+        return
     samples_dir = out_dir / "samples"
     samples_dir.mkdir(exist_ok=True, parents=True)
     aggs_by_key = {key: agg for key, _, agg in outcome.aggs}
-    if aggs_override:
-        aggs_by_key.update(aggs_override)
-    written = 0
+    aggs_by_key.update(aggs_override)
     for key in keys:
         cr = outcome.results.get(key)
-        if cr is None:
-            continue
-        save_result(cr, aggs_by_key[key], samples_dir / f"{key}.json")
-        written += 1
-    return written
+        if cr is not None:
+            save_result(cr, aggs_by_key[key], samples_dir / f"{key}.json")
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +498,7 @@ def run_search(
     refactor_max = refactoring_bound(params)
     floor = throughput_floor(params, search_cfg.epsilon)
 
-    outcome = SearchOutcome(manifest={}, aggs=[], results={})
+    outcome = SearchOutcome()
     # Every candidate that has consumed budget, feasible or not, so a duplicate is
     # never charged twice.
     seen: set[TeamConfiguration] = set()
@@ -612,8 +557,8 @@ def run_search(
         order = rank([a for _, _, a in outcome.aggs], floor)
         elite = {outcome.aggs[i][1] for i in order[:n_elite]}
         incumbent = outcome.aggs[order[0]][1] if order else None
-        # The denominator is `n_elite`, not the realised elite size; with
-        # n_samples_initial >= n_elite the elite is full from the first generation anyway.
+        # Against `n_elite` rather than the realised elite size, so the measure has a
+        # fixed denominator across generations.
         outcome.elite_turnover.append(len(elite - prev_elite) / n_elite)
         outcome.incumbent_changed.append(incumbent != prev_incumbent)
         outcome.best_cost.append(
@@ -634,9 +579,7 @@ def run_search(
 def human_only_grid(search_cfg: SearchConfiguration) -> list[TeamConfiguration]:
     """Every zero-agent team in the search range, in a deterministic order.
 
-    With both composition vectors fixed at zero only `(N, R, F_freeze)` remain free, so
-    the space is `|N_values| * |{(R, F) : F in F_freeze_values, 0 <= F <= R-1}|` — 99
-    points at the campaign range (11 staffing levels x 9 valid `(R, F_freeze)` pairs).
+    With both composition vectors fixed at zero, only `(N, R, F_freeze)` remain free.
     """
     zero = (0,) * AGENT_ROLE_COUNT
     return [
@@ -657,14 +600,13 @@ def run_human_only(
 ) -> SearchOutcome:
     """Exhaustively enumerate the zero-agent grid.
 
-    Not a search: at 99 candidates there is nothing to search, so `budget` and the
-    generation settings are ignored and the result is deterministic.  `saturation_bounds`
-    is never called either — it bounds supervised roles this grid does not staff.  Every
-    candidate still passes through `_evaluate`, so an infeasible one counts as an
-    evaluation exactly as in the search.
+    The grid is small enough not to need searching, so `budget` and the generation
+    settings are ignored and the result is deterministic.  Every candidate still goes
+    through `_evaluate`, so an infeasible one counts as an evaluation as it would in a
+    search.  `saturation_bounds` is never consulted: this grid staffs no agents.
     """
     keep_samples = search_cfg.samples != "none"
-    outcome = SearchOutcome(manifest={}, aggs=[], results={})
+    outcome = SearchOutcome()
     grid = human_only_grid(search_cfg)
 
     for cfg in grid:
@@ -678,7 +620,6 @@ def run_human_only(
     return outcome
 
 
-
 # ---------------------------------------------------------------------------
 # Final selection
 # ---------------------------------------------------------------------------
@@ -688,9 +629,8 @@ class SelectionReport:
     """The `(c*, I*)` pair to report, and how the two-stage selection arrived at it.
 
     `final_aggs` / `final_results` hold the `K_final` estimates of the re-simulated
-    candidates — the numbers every reported figure comes from.  The search's own
-    `K_search` aggregates stay in `SearchOutcome.aggs`, which is what it ranked by and
-    what a plot of the whole evaluated pool shows.  `stats` carries the stage counters.
+    candidates, which every reported number comes from; the search's own `K_search`
+    aggregates stay in `SearchOutcome.aggs`.  `stats` carries the stage counters.
     """
 
     best_key: str | None
@@ -718,33 +658,26 @@ def two_stage_selection(
     """Determine the reported `(c*, I*)` pair in two stages.
 
     Stage 1 ranks the `K_search` estimates the search produced and applies the parsimony
-    tie-break, giving a preliminary `I*`.  Applying the tie-break this early is what makes
-    it worth doing: a member it removes is both structurally larger and dearer in
-    expectation, so it can be dropped before it costs a `K_final` run.
+    tie-break, giving a preliminary `I*`.  The tie-break runs here, before the expensive
+    stage, so that a member it removes never costs a `K_final` run.
 
     Stage 2 re-simulates that reduced set at `K_final > K_search` and repeats the rule on
-    the narrower confidence intervals, which is what makes `I*` shrink further.  Three
-    things happen there, in this order: a member that no longer satisfies the throughput
-    constraint is discarded (`indistinguishable_set` does this by filtering on
-    `satisfies_throughput`); `c*` is re-determined and may move; and the tie-break runs a
-    second time on the better estimates.  It cannot move `c*`, which is the cost minimiser.
+    the narrower confidence intervals.  Three things happen, in this order: a member that
+    no longer satisfies the throughput constraint drops out, `c*` is re-determined and may
+    move, and the tie-break runs again on the better estimates.
 
-    When nothing reached the throughput floor there is no `c*` and `I*` is empty, so there
-    is no set to narrow — the least-violating candidate is re-simulated alone, which keeps
-    every reported value a `K_final` number.
+    With nothing above the throughput floor there is no `c*` and `I*` is empty, so the
+    least-violating candidate is re-simulated alone; every reported value is then still a
+    `K_final` number.
 
-    The re-simulation runs a **disjoint** block of replication indices rather than
-    extending the search's.  A candidate is in the preliminary set because its `K_search`
-    estimate came out at or near the minimum of thousands of noisy estimates, so that
-    estimate is biased low by the selection itself; a fresh block removes the bias at the
-    same simulation cost.
+    The re-simulation runs a block of replication indices disjoint from the search's,
+    requested through `run_configuration`'s `k_offset`, rather than extending it.
     """
     floor = throughput_floor(params, search_cfg.epsilon)
     agg_objs = [a for _, _, a in outcome.aggs]
     prelim_keys = [parsimony_key(cfg) for _, cfg, _ in outcome.aggs]
-    # Both calls return the same `c*`; the un-keyed one only supplies the set size before
-    # the tie-break.  The extra scan is O(n), and the O(n^2) parsimony pass runs over the
-    # CI-overlap members alone rather than over the whole evaluated pool.
+    # Both calls return the same `c*`; the un-keyed one supplies the set size before the
+    # tie-break, for the stats below.
     prelim_best, prelim_raw = report_optimum(agg_objs, floor)
     _, prelim_set = report_optimum(agg_objs, floor, keys=prelim_keys)
 
@@ -759,8 +692,6 @@ def two_stage_selection(
         "best_changed_by_resim": False,
         "rho_mean": None,
         "rho_best": None,
-        "K_search": settings.K_search,
-        "K_final": settings.K_final,
     }
     if prelim_best is None:
         # Nothing was simulated at all; there is nothing to report or re-simulate.
@@ -785,7 +716,7 @@ def two_stage_selection(
         resim_keys.append(key)
         resim_cfgs.append(cfg)
         resim_aggs.append(aggregate_config_result(cr, master_seed=settings.master_seed))
-        final_results[key] = cr           # type: ignore[assignment]
+        final_results[key] = cr
         if progress_every and (n % progress_every == 0 or n == len(resim_idx)):
             print(f"  [{n}/{len(resim_idx)}] re-simulated", flush=True)
 
@@ -799,8 +730,8 @@ def two_stage_selection(
     keep_keys = [resim_keys[i] for i in keep]
 
     stats["n_resimulated"] = len(resim_idx)
-    # Only a preliminary member can be discarded: in the inadmissible case the single
-    # re-simulated candidate is the reported result, not a member of any set.
+    # Only a preliminary member can be discarded; in the inadmissible case the single
+    # re-simulated candidate is the reported result, not a member of a set.
     stats["n_discarded_throughput"] = (
         sum(1 for a in resim_aggs if not satisfies_throughput(a, floor))
         if prelim_set else 0

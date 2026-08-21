@@ -26,7 +26,7 @@ from src.config import (
     scenario_tiers,
     supervised_agent_count,
 )
-from src.rng import _config_hash
+from src.rng import config_hash
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
@@ -226,8 +226,8 @@ class TestAutonomousRoleBudget:
     def test_large_background_count_accepted(self):
         A = _A((1, 1), (5, 50), (6, 25))
         cfg = TeamConfiguration(N=1, A_dev=A, A_qa=_A((5, 7)), R=2)
-        assert cfg.agent_count_dev(5) == 50
-        assert cfg.agent_count_dev(6) == 25
+        assert cfg.A_dev[4] == 50
+        assert cfg.A_dev[5] == 25
 
     def test_no_impl_agent_raises(self):
         A = list(_VALID_A)
@@ -261,7 +261,7 @@ class TestAutonomousRoleBudget:
     def test_single_impl_agent_valid(self):
         A = _A((1, 1), (3, 1), (4, 1), (5, 1), (7, 2))  # sum=6, a_1=1
         cfg = TeamConfiguration(N=2, A_dev=A, A_qa=_VALID_A_QA, R=4)
-        assert cfg.agent_count_dev(1) == 1
+        assert cfg.A_dev[0] == 1
 
     def test_qa_impl_agent_nonzero_raises(self):
         A_qa = list(_VALID_A_QA)
@@ -293,7 +293,7 @@ class TestAutonomousRoleBudget:
         """The regression test for the behavioural-duplicate finding.
 
         Configurations differing only in an unexercised A_qa are the same model, and must
-        therefore be the same object: equal, equally hashed, and — via _config_hash —
+        therefore be the same object: equal, equally hashed, and — via config_hash —
         scored on the same RNG stream.  Otherwise each variant lands at a different cost
         and the search spends budget distinguishing teams that are not distinct.
         """
@@ -307,7 +307,7 @@ class TestAutonomousRoleBudget:
                 for v in variants]
         assert len({c.A_qa for c in cfgs}) == 1
         assert len(set(cfgs)) == 1
-        assert len({_config_hash(c) for c in cfgs}) == 1
+        assert len({config_hash(c) for c in cfgs}) == 1
 
     def test_qa_preserved_when_freeze_present(self):
         cfg = TeamConfiguration(N=2, A_dev=_VALID_A, A_qa=_VALID_A_QA, R=4, F_freeze=1)
@@ -318,38 +318,10 @@ class TestAutonomousRoleBudget:
             base_config.N = 99  # type: ignore[misc]
 
 
-class TestAgentCountDev:
-    def test_1indexed(self, base_config):
-        assert base_config.agent_count_dev(2) == base_config.A_dev[1]
-        assert base_config.agent_count_dev(1) == base_config.A_dev[0]
-        assert base_config.agent_count_dev(8) == base_config.A_dev[7]
-
-    def test_role_0_raises(self, base_config):
-        with pytest.raises(ValueError):
-            base_config.agent_count_dev(0)
-
-    def test_role_too_large_raises(self, base_config):
-        with pytest.raises(ValueError):
-            base_config.agent_count_dev(AGENT_ROLE_COUNT + 1)
-
-
-class TestAgentCountQa:
-    def test_1indexed(self, base_config):
-        assert base_config.agent_count_qa(2) == base_config.A_qa[1]
-        assert base_config.agent_count_qa(1) == base_config.A_qa[0]
-        assert base_config.agent_count_qa(8) == base_config.A_qa[7]
-
-    def test_role_0_raises(self, base_config):
-        with pytest.raises(ValueError):
-            base_config.agent_count_qa(0)
-
-    def test_role_too_large_raises(self, base_config):
-        with pytest.raises(ValueError):
-            base_config.agent_count_qa(AGENT_ROLE_COUNT + 1)
-
+class TestQaComposition:
     def test_impl_and_arch_are_zero(self, base_config):
-        assert base_config.agent_count_qa(1) == 0
-        assert base_config.agent_count_qa(2) == 0
+        assert base_config.A_qa[0] == 0
+        assert base_config.A_qa[1] == 0
 
 
 class TestSimulationHorizon:

@@ -50,7 +50,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .analysis import final_distribution, mean_trajectory
 from .config import (
     AGENT_ROLE_NAMES,
     AUTONOMOUS_ROLE_INDICES,
@@ -120,18 +119,13 @@ def _print_objectives(agg) -> None:
 def _print_config(config: TeamConfiguration) -> None:
     print(f"Team configuration:  N={config.N:g} FTE, R={config.R}, "
           f"F_freeze={config.F_freeze}")
-    for phase, A, getter in (
-        ("Dev phase ", config.A_dev, config.agent_count_dev),
-        ("QA phase  ", config.A_qa, config.agent_count_qa),
-    ):
-        n_sup = supervised_agent_count(A)   # type: ignore[arg-type]
-        n_aut = sum(A) - n_sup             # type: ignore[arg-type]
-        print(f"  {phase} ({n_sup} supervised, {n_aut} autonomous)")
+    for phase, A in (("Dev phase ", config.A_dev), ("QA phase  ", config.A_qa)):
+        n_sup = supervised_agent_count(A)
+        print(f"  {phase} ({n_sup} supervised, {sum(A) - n_sup} autonomous)")
         for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
-            count = getter(k)
-            if count:
+            if A[k - 1]:
                 tier = "aut" if (k - 1) in AUTONOMOUS_ROLE_INDICES else "   "
-                print(f"    role {k:>2} {tier} {name:<48}  x{count}")
+                print(f"    role {k:>2} {tier} {name:<48}  x{A[k - 1]}")
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -228,7 +222,7 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     if (T - 1) not in sprints_to_show:
         sprints_to_show.append(T - 1)
 
-    means = {f: mean_trajectory(df, f) for f in fields}
+    means = {f: df.groupby("sprint")[f].mean() for f in fields}
     for s in sprints_to_show:
         row = f"{s:>6}  "
         row += "  ".join(f"{means[f].iloc[s]:>{col_w}.3f}" for f in fields)
@@ -236,8 +230,9 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
 
     print()
     print("Final-sprint distribution (across replications):")
+    final = df.xs(T - 1, level="sprint")
     for f, lbl in zip(fields, labels):
-        fd = final_distribution(df, f)
+        fd = final[f]
         print(f"  {lbl:<12}  min={fd.min():.3f}  mean={fd.mean():.3f}  max={fd.max():.3f}")
 
 
@@ -272,7 +267,7 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def _print_search_banner(cfg_path: Path, search_cfg, horizon, params, mode: str,
-                         human_only: bool, start_state: str) -> None:
+                         start_state: str) -> None:
     """What is about to be run: inputs, protocol, budget and throughput floor."""
     print(f"Search:      {cfg_path}")
     print(f"Scenario id: {search_cfg.scenario_id or '(unnamed)'}")
@@ -284,7 +279,7 @@ def _print_search_banner(cfg_path: Path, search_cfg, horizon, params, mode: str,
     print(f"Horizon:     K'={horizon.K_search} replications during the search, "
           f"K={horizon.K_final} for the re-simulation of I* * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
-    if human_only:
+    if mode == HUMAN_ONLY_MODE:
         n_grid = len(human_only_grid(search_cfg))
         print(f"Budget:      none; exhaustive enumeration of the {n_grid}-point "
               f"zero-agent grid")
@@ -299,71 +294,11 @@ def _print_search_banner(cfg_path: Path, search_cfg, horizon, params, mode: str,
     print()
 
 
-def _cmd_optimize(args: argparse.Namespace) -> None:
-    cfg_path = Path(args.search_config)
-    search_cfg = load_search_config(cfg_path)
-    human_only = args.human_only or search_cfg.human_only
-    mode = HUMAN_ONLY_MODE if human_only else SEARCH_MODE
-    if args.samples is not None:
-        search_cfg = replace(search_cfg, samples=args.samples)
-
-    horizon = load_simulation_horizon(search_cfg.horizon_path)
-    scenario_values = {
-        group: json.loads(Path(path).read_text(encoding="utf-8"))
-        for group, path in search_cfg.scenario_paths.items()
-    }
-    params = load_scenario_params(search_cfg.scenario_paths)
-    initial_state = load_initial_state(args.start_state)
-
-    _print_search_banner(cfg_path, search_cfg, horizon, params, mode, human_only,
-                         args.start_state)
-
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(search_cfg.seed)
-
-    t_start = time.perf_counter()
-    if human_only:
-        outcome = run_human_only(search_cfg, horizon, params, initial_state,
-                                 progress_every=args.progress_every)
-    else:
-        outcome = run_search(search_cfg, horizon, params, rng, initial_state,
-                             progress_every=args.progress_every)
-    wall_clock_s = time.perf_counter() - t_start
-
-    aggs = outcome.aggs
-    floor = throughput_floor(params, search_cfg.epsilon)
-    # c* and the set of admissible configurations indistinguishable from it, in two
-    # stages; see `search.two_stage_selection`.  I* is empty only when no candidate
-    # reached the throughput floor, in which case c* is the least-violating one.
-    t_select = time.perf_counter()
-    report = two_stage_selection(
-        outcome, search_cfg, horizon, params, initial_state,
-        progress_every=args.progress_every,
-    )
-    resim_s = time.perf_counter() - t_select
-    best_key = report.best_key
-    keep_keys = report.keep_keys
-    # c* may violate the throughput constraint when nothing in the pool satisfies it; say so
-    # rather than presenting it as an admissible answer.
-    best_admissible = report.best_admissible
-
-    # Sample files are written only now, so the "best" policy can restrict them to the
-    # configurations actually reported.  I* is empty when nothing reached the throughput
-    # floor, so fall back to c* there: it is still reported, just marked inadmissible.
-    if search_cfg.samples == "none":
-        sample_keys: list[str] = []
-    elif search_cfg.samples == "all":
-        sample_keys = [key for key, _, _ in aggs]
-    else:
-        sample_keys = keep_keys or ([best_key] if best_key is not None else [])
-    # The re-simulated ConfigResults replace the search's for the keys they cover, so a
-    # reported candidate's sample file carries the K replications it is reported from.
-    outcome.results.update(report.final_results)
-    n_samples_written = write_samples(outcome, out_dir, sample_keys,
-                                      aggs_override=report.final_aggs)
-
-    manifest_out = {
+def _manifest_payload(cfg_path: Path, search_cfg, horizon, mode: str,
+                      scenario_values: dict, outcome, floor: float,
+                      best_admissible: bool, wall_clock_s: float) -> dict:
+    """`manifest.json`: what was run, and one entry per evaluated candidate."""
+    return {
         "search_config": str(cfg_path),
         "scenario_id": search_cfg.scenario_id,
         "scenario": {"paths": search_cfg.scenario_paths, "values": scenario_values},
@@ -382,58 +317,57 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             "n_generations": search_cfg.n_generations,
             "n_offspring": search_cfg.n_offspring,
             "n_elite": search_cfg.n_elite,
-            "human_only": human_only,
+            "human_only": mode == HUMAN_ONLY_MODE,
             "samples": search_cfg.samples,
             "seed": search_cfg.seed,
         },
-        # n_evaluated counts everything that consumed budget; n_simulated excludes the
-        # candidates rejected by the human-capacity check.
+        # n_evaluated is the budget spend; n_simulated excludes the candidates the
+        # human-capacity check rejected.
         "n_evaluated": outcome.n_evaluated,
         "n_simulated": outcome.n_simulated,
-        "n_infeasible": outcome.n_evaluated - outcome.n_simulated,
-        "n_feasible": outcome.n_simulated,
         "throughput_floor": floor,
         "best_admissible": best_admissible,
-        # The final size of I*, after the re-simulation and the parsimony tie-break;
-        # convergence.json carries the size at each earlier stage.
-        "n_indistinguishable": len(keep_keys),
-        "n_samples_written": n_samples_written,
         "wall_clock_s": round(wall_clock_s, 1),
-        "resimulation_s": round(resim_s, 1),
         "configs": outcome.manifest,
     }
-    _write_json(out_dir / "manifest.json", manifest_out)
 
+
+def _search_summary_payload(aggs, report, horizon, floor: float) -> dict:
+    """`search_summary.json`: the reported pair, and the objectives behind it.
+
+    `objectives` holds every simulated candidate at `K_search`, which is what the search
+    ranked by; `final_objectives` holds the re-simulated ones at `K_final`, which is what
+    `best` and `indistinguishable` key into and what every reported number comes from.
+    """
     configs_by_key = {key: cfg for key, cfg, _ in aggs}
-    final_best = (_objective_entry(configs_by_key[best_key],
-                                   report.final_aggs[best_key], floor)
-                  if best_key is not None else None)
-    search_summary = {
-        "best": best_key,
-        "indistinguishable": keep_keys,
+    return {
+        "best": report.best_key,
+        "indistinguishable": report.keep_keys,
         "throughput_floor": floor,
         "K_search": horizon.K_search,
         "K_final": horizon.K_final,
-        # Every simulated candidate at K_search replications: what the search ranked by,
-        # and what a plot of the whole evaluated pool shows.
         "objectives": {
-            key: _objective_entry(cfg, agg, floor)
-            for key, cfg, agg in aggs
+            key: _objective_entry(cfg, agg, floor) for key, cfg, agg in aggs
         },
-        # The re-simulated candidates at K_final replications; "best" and
-        # "indistinguishable" key into this block, and every reported number comes from it.
         "final_objectives": {
             key: _objective_entry(configs_by_key[key], agg, floor)
             for key, agg in report.final_aggs.items()
         },
     }
-    _write_json(out_dir / "search_summary.json", search_summary)
 
-    convergence = {
+
+def _convergence_payload(search_cfg, horizon, mode: str, outcome, report,
+                         params, final_best: dict | None, floor: float,
+                         wall_clock_s: float, resim_s: float) -> dict:
+    """`convergence.json`: the per-generation record and the stages of the selection.
+
+    Written separately from the manifest so that consolidating a campaign does not have
+    to parse the manifest's per-candidate block for a handful of scalars.
+    """
+    return {
         "scenario_id": search_cfg.scenario_id,
         "mode": mode,
         "n_elite": search_cfg.n_elite,
-        "n_generations": search_cfg.n_generations,
         "n_generations_run": len(outcome.elite_turnover),
         "K_search": horizon.K_search,
         "K_final": horizon.K_final,
@@ -442,15 +376,120 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "incumbent_turnover": outcome.incumbent_turnover,
         "best_cost": outcome.best_cost,
         "i_star": report.stats,
-        "throughput_floor": floor,
-        "best_admissible": best_admissible,
-        "value_mean": final_best["value_mean"] if final_best else None,
+        "best_admissible": report.best_admissible,
         "value_ratio": (final_best["value_mean"] / params.r_arrival
                         if final_best else None),
         "wall_clock_s": round(wall_clock_s, 1),
         "resimulation_s": round(resim_s, 1),
     }
-    _write_json(out_dir / "convergence.json", convergence)
+
+
+def _print_optimum(report, horizon, floor: float, final_best: dict | None) -> None:
+    """The reported optimum and how the selection narrowed down to it."""
+    if final_best is None:
+        print("No candidate was simulated — nothing to report.")
+        return
+
+    obj = final_best
+    if not report.best_admissible:
+        print(f"WARNING: no candidate reached the throughput floor of "
+              f"{floor:.3f} features/sprint; reporting the least-violating one.")
+    print(f"Best configuration c* ({report.best_key}):")
+    print(f"  N={obj['N']:g} R={obj['R']} F_freeze={obj['F_freeze']}  "
+          f"cost={obj['cost_mean']:.0f} $/feature "
+          f"[{obj['cost_ci'][0]:.0f}, {obj['cost_ci'][1]:.0f}]  "
+          f"value={obj['value_mean']:.3f}")
+    print(f"  cost split: escaped bugs {obj['cost_quality_mean']:.0f}   "
+          f"developers {obj['cost_human_mean']:.0f}   "
+          f"agents {obj['cost_agent_mean']:.0f}")
+    print(f"  A_dev={obj['A_dev']}")
+    print(f"  A_qa ={obj['A_qa']}")
+
+    if not report.best_admissible:
+        # With nothing admissible there is no c* for a set to form around, so I* is
+        # empty rather than a set of one; the line below would read as a tie.
+        print("Indistinguishable set I*: empty (the result is inadmissible)")
+        return
+
+    st = report.stats
+    print(f"Statistically indistinguishable from c*: {len(report.keep_keys)} config(s)")
+    print(f"  I*: {st['n_prelim']} at K'={horizon.K_search} → "
+          f"{st['n_resimulated']} after the parsimony tie-break → "
+          f"{st['n_after_resim']} after the re-simulation at K={horizon.K_final} "
+          f"({st['n_discarded_throughput']} discarded on throughput) → "
+          f"{st['n_final']} after the second tie-break")
+    if st["best_changed_by_resim"]:
+        print("  the re-simulation moved c* to a different configuration")
+
+
+def _cmd_optimize(args: argparse.Namespace) -> None:
+    cfg_path = Path(args.search_config)
+    search_cfg = load_search_config(cfg_path)
+    human_only = args.human_only or search_cfg.human_only
+    mode = HUMAN_ONLY_MODE if human_only else SEARCH_MODE
+    if args.samples is not None:
+        search_cfg = replace(search_cfg, samples=args.samples)
+
+    horizon = load_simulation_horizon(search_cfg.horizon_path)
+    scenario_values = {
+        group: json.loads(Path(path).read_text(encoding="utf-8"))
+        for group, path in search_cfg.scenario_paths.items()
+    }
+    params = load_scenario_params(search_cfg.scenario_paths)
+    initial_state = load_initial_state(args.start_state)
+
+    _print_search_banner(cfg_path, search_cfg, horizon, params, mode, args.start_state)
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    t_start = time.perf_counter()
+    if human_only:
+        outcome = run_human_only(search_cfg, horizon, params, initial_state,
+                                 progress_every=args.progress_every)
+    else:
+        outcome = run_search(search_cfg, horizon, params,
+                             np.random.default_rng(search_cfg.seed), initial_state,
+                             progress_every=args.progress_every)
+    wall_clock_s = time.perf_counter() - t_start
+
+    floor = throughput_floor(params, search_cfg.epsilon)
+    t_select = time.perf_counter()
+    report = two_stage_selection(
+        outcome, search_cfg, horizon, params, initial_state,
+        progress_every=args.progress_every,
+    )
+    resim_s = time.perf_counter() - t_select
+
+    # Samples are written only now, so the "best" policy can restrict them to the
+    # configurations actually reported.  I* is empty when nothing reached the throughput
+    # floor, so fall back to c*, which is still reported, just marked inadmissible.
+    if search_cfg.samples == "none":
+        sample_keys: list[str] = []
+    elif search_cfg.samples == "all":
+        sample_keys = [key for key, _, _ in outcome.aggs]
+    else:
+        sample_keys = report.keep_keys or (
+            [report.best_key] if report.best_key is not None else [])
+    # The re-simulated results replace the search's for the keys they cover, so a
+    # reported candidate's sample file carries the K_final replications behind its row.
+    outcome.results.update(report.final_results)
+    write_samples(outcome, out_dir, sample_keys, report.final_aggs)
+
+    final_best = (
+        _objective_entry({key: cfg for key, cfg, _ in outcome.aggs}[report.best_key],
+                         report.final_aggs[report.best_key], floor)
+        if report.best_key is not None else None
+    )
+
+    _write_json(out_dir / "manifest.json",
+                _manifest_payload(cfg_path, search_cfg, horizon, mode, scenario_values,
+                                  outcome, floor, report.best_admissible, wall_clock_s))
+    _write_json(out_dir / "search_summary.json",
+                _search_summary_payload(outcome.aggs, report, horizon, floor))
+    _write_json(out_dir / "convergence.json",
+                _convergence_payload(search_cfg, horizon, mode, outcome, report, params,
+                                     final_best, floor, wall_clock_s, resim_s))
 
     print()
     print(f"Evaluated {outcome.n_evaluated} candidates "
@@ -459,37 +498,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
           f"in {wall_clock_s:.1f} s")
     print(f"Re-simulated {report.stats['n_resimulated']} configuration(s) at "
           f"K={horizon.K_final} in {resim_s:.1f} s")
-    if best_key is None:
-        print("No candidate was simulated — nothing to report.")
-    else:
-        obj = final_best
-        if not best_admissible:
-            print(f"WARNING: no candidate reached the throughput floor of "
-                  f"{floor:.3f} features/sprint; reporting the least-violating one.")
-        print(f"Best configuration c* ({best_key}):")
-        print(f"  N={obj['N']:g} R={obj['R']} F_freeze={obj['F_freeze']}  "
-              f"cost={obj['cost_mean']:.0f} $/feature "
-              f"[{obj['cost_ci'][0]:.0f}, {obj['cost_ci'][1]:.0f}]  "
-              f"value={obj['value_mean']:.3f}")
-        print(f"  cost split: escaped bugs {obj['cost_quality_mean']:.0f}   "
-              f"developers {obj['cost_human_mean']:.0f}   "
-              f"agents {obj['cost_agent_mean']:.0f}")
-        print(f"  A_dev={obj['A_dev']}")
-        print(f"  A_qa ={obj['A_qa']}")
-        if best_admissible:
-            st = report.stats
-            print(f"Statistically indistinguishable from c*: {len(keep_keys)} config(s)")
-            print(f"  I*: {st['n_prelim']} at K'={horizon.K_search} → "
-                  f"{st['n_resimulated']} after the parsimony tie-break → "
-                  f"{st['n_after_resim']} after the re-simulation at K={horizon.K_final} "
-                  f"({st['n_discarded_throughput']} discarded on throughput) → "
-                  f"{st['n_final']} after the second tie-break")
-            if st["best_changed_by_resim"]:
-                print("  the re-simulation moved c* to a different configuration")
-        else:
-            # With no admissible candidate there is no c* for a set to form around, so
-            # I* is empty rather than a set of one; the line above would read as a tie.
-            print("Indistinguishable set I*: empty (the result is inadmissible)")
+    _print_optimum(report, horizon, floor, final_best)
     print()
     print(f"Results saved to: {out_dir}")
 
@@ -517,9 +526,6 @@ def _cmd_visualize(args: argparse.Namespace) -> None:
 
 
 #: Which scenario group drives which visual channel of the optima matrices, by default.
-#: Two groups have a fourth tier: `project` sits on the shape channel, the only per-point
-#: channel whose fourth level reads as a peer rather than as "more", and `agent` on a
-#: facet axis, where a fourth tier costs only one extra column.
 CAMPAIGN_CHANNEL_DEFAULTS: dict[str, str] = {
     "x": "agent", "y": "human", "color": "debt", "marker": "project", "size": "bugimpact",
 }
@@ -540,8 +546,6 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
     optima_path = out_dir / "optima.csv"
 
     if args.figures_only:
-        # Redraw from the tables a previous run consolidated, without re-reading the
-        # result tree or rewriting a single CSV.
         hint = "run the campaign without --figures-only first."
         optima = _read_table(optima_path, "reported optima", hint)
         if optima.empty:
@@ -591,8 +595,8 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print(f"  {convergence_path}   {len(convergence)} search(es) with convergence measures")
     if not turnover.empty:
         print(f"  {turnover_path}   {len(turnover)} generation(s) of elite turnover")
-    # A baseline scenario is enumerated once and has no search counterpart, so the
-    # expected mode count is per scenario rather than a flat 1.
+    # Per scenario rather than a flat 1: a baseline scenario is enumerated once and has
+    # no search counterpart.
     missing = sum(len(expected_modes(sid)) for sid in scenario_ids) - len(searches)
     if missing:
         print(f"  note: {missing} (scenario, mode) pair(s) have no results yet")
@@ -618,12 +622,8 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
 
 def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
                       args: argparse.Namespace,
-                      turnover: pd.DataFrame | None = None) -> None:
-    """The channel flags of the `campaign` subcommand, applied to the figures.
-
-    The CLI names a channel `--color` where the plot functions take `color_group`, so the
-    mapping lives here rather than being repeated at both call sites.
-    """
+                      turnover: pd.DataFrame) -> None:
+    """Map the subcommand's `--<channel>` flags onto `visualize_campaign`'s arguments."""
     visualize_campaign(
         optima, out_dir, args.format, turnover=turnover,
         x_group=args.x, y_group=args.y, color_group=args.color,
@@ -634,14 +634,13 @@ def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
 def _cmd_constellation(args: argparse.Namespace) -> None:
     """What the optimal teams are made of, cut along two scenario groups.
 
-    Separate from `campaign` because it is a second pass over the same tree, reading a
-    different block of each ``search_summary.json`` — the final `I*`, not just `c*` — and
-    must not force a re-consolidation just to be re-cut on a different grid.
+    A second pass over the same tree, reading each ``search_summary.json``'s final `I*`
+    rather than just its `c*`, so it can be re-cut on a different grid without forcing a
+    re-consolidation.
     """
     out_dir = Path(args.out)
     cells_path = out_dir / "constellation_cells.csv"
-    # `--rows`/`--cols` name the *figure* axes; the tables are keyed in `CELL_GROUPS`
-    # order, i.e. the column group first, so the summary blocks read one per column tier.
+    # `--rows`/`--cols` name the figure axes; the tables are keyed column group first.
     groups = (args.cols, args.rows)
 
     optima_path = out_dir / "optima.csv"
@@ -652,9 +651,8 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
                             "run the constellation analysis without --figures-only first.")
         visualize_constellation(cells, out_dir, args.format,
                                 rows_group=args.rows, cols_group=args.cols)
-        # The two summary figures read the per-scenario table, not the cell statistics:
-        # their shares and rates are formed inside a scenario, which an aggregate cannot
-        # undo.  Redrawn here too, since a plotting change is why --figures-only is used.
+        # These two read the per-scenario table rather than the cell statistics: their
+        # shares are formed within a scenario, which an aggregate cannot undo.
         optima = _read_table(optima_path, "reported optima", optima_hint)
         visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
                                block_group=args.cols, bar_group=args.rows)
@@ -701,7 +699,7 @@ def main(argv: list[str] | None = None) -> None:
         description="agent-ai-cost-sim: Monte Carlo simulation of AI+human dev teams.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sub = parser.add_subparsers(dest="cmd", metavar="COMMAND")
+    sub = parser.add_subparsers(metavar="COMMAND")
 
     # -- run --
     p_run = sub.add_parser("run", help="Run a simulation.")
@@ -723,6 +721,7 @@ def main(argv: list[str] | None = None) -> None:
         help="JSON file with initial SystemState values "
              "(default: config/startstate_default.json, which is all-zero)",
     )
+    p_run.set_defaults(func=_cmd_run)
 
     # -- analyze --
     p_ana = sub.add_parser("analyze", help="Analyse persisted results.")
@@ -730,6 +729,7 @@ def main(argv: list[str] | None = None) -> None:
                        help="Path to result.json written by 'run --out'")
     p_ana.add_argument("traces", nargs="?", metavar="traces.csv",
                        help="Path to traces.csv written by 'run --out --traces' (optional)")
+    p_ana.set_defaults(func=_cmd_analyze)
 
     # -- optimize --
     p_optimize = sub.add_parser("optimize", help="Search for optimal team compositions.")
@@ -757,6 +757,7 @@ def main(argv: list[str] | None = None) -> None:
         help="JSON file with initial SystemState values "
              "(default: config/startstate_default.json, which is all-zero)",
     )
+    p_optimize.set_defaults(func=_cmd_optimize)
 
     # -- visualize --
     p_vis = sub.add_parser("visualize", help="Generate plots from sweep results.")
@@ -766,6 +767,7 @@ def main(argv: list[str] | None = None) -> None:
                        help="Output image format (default: png)")
     p_vis.add_argument("--out", default=None, metavar="DIR",
                        help="Output directory for plots (default: RESULT_DIR/plots/)")
+    p_vis.set_defaults(func=_cmd_visualize)
 
     # -- campaign --
     p_camp = sub.add_parser(
@@ -795,6 +797,7 @@ def main(argv: list[str] | None = None) -> None:
             f"--{channel}", default=default, choices=list(SCENARIO_GROUPS),
             help=f"Scenario group on the {channel} channel (default: {default})",
         )
+    p_camp.set_defaults(func=_cmd_campaign)
 
     # -- constellation --
     p_const = sub.add_parser(
@@ -822,35 +825,13 @@ def main(argv: list[str] | None = None) -> None:
     p_const.add_argument("--figures-only", action="store_true",
                          help="Redraw from an existing OUT/constellation_cells.csv "
                               "instead of re-reading the campaign")
+    p_const.set_defaults(func=_cmd_constellation)
 
-    args = parser.parse_args(argv)
-
-    # Default: run smoke test if no subcommand given
-    if args.cmd is None:
-        args.cmd = "run"
-        for group, default in DEFAULT_SCENARIO_PATHS.items():
-            setattr(args, group, default)
-        args.team = "config/team_default.json"
-        args.horizon = "config/horizon_default.json"
-        args.start_state = "config/startstate_default.json"
-        args.out = None
-        args.traces = False
-
-    if args.cmd == "run":
-        _cmd_run(args)
-    elif args.cmd == "analyze":
-        _cmd_analyze(args)
-    elif args.cmd == "optimize":
-        _cmd_optimize(args)
-    elif args.cmd == "visualize":
-        _cmd_visualize(args)
-    elif args.cmd == "campaign":
-        _cmd_campaign(args)
-    elif args.cmd == "constellation":
-        _cmd_constellation(args)
-    else:
-        parser.print_help()
-        sys.exit(1)
+    if argv is None:
+        argv = sys.argv[1:]
+    # No subcommand runs the smoke test, i.e. `run` with every default.
+    args = parser.parse_args(argv or ["run"])
+    args.func(args)
 
 
 if __name__ == "__main__":

@@ -7,26 +7,20 @@ vectors — within each cell of a two-group tier grid.  The default grid is
 `project` x `bugimpact`: 4 x 3 = 12 cells, each holding the 36 scenarios whose `human`,
 `debt` and `agent` tiers are free.
 
-Two populations are tabulated separately, because a campaign reports one optimum per
-scenario but does not claim it is the only one:
+Two populations are tabulated separately, since a campaign reports one optimum per
+scenario without claiming it is the only one:
 
 ``c_star``
     The reported `c*` of each scenario — one row of ``optima.csv`` per scenario.
 
 ``i_star``
     The whole indistinguishable set `I*`, whose members are statistically tied with `c*`
-    on cost.  `|I*|` runs into the hundreds, so a `c*`-only table partly tabulates an
-    arbitrary pick inside a tie; the `i_star` table says whether the pattern survives it.
-
-`I*` is the key list under ``indistinguishable``, **not** ``final_objectives`` — that
-block holds the preliminary set that was re-simulated, before the throughput filter and
-the second parsimony tie-break.  The members' objectives are then looked up in
-``final_objectives``.
+    on cost.  This is the key list under ``indistinguishable``, *not* the wider
+    ``final_objectives`` block; the members' objectives are looked up in that block.
 
 The `i_star` statistics are scenario-balanced: each scenario's `I*` is reduced to one mean
 vector first (:func:`scenario_means`), so both populations share a unit of observation and
-an `n`, which is what makes their two `sd` columns comparable.  Pooling members instead
-would let a scenario with a wide tie outweigh one with a narrow tie many times over.
+an `n`, which makes their two `sd` columns comparable.
 
 Teams with no agents are excluded from both populations: they have no composition to
 describe.
@@ -54,8 +48,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .campaign import (composition_columns, scenario_columns,
-                       scenario_params_for_id, search_dirs)
+from .campaign import (composition_columns, require_search_dirs, scenario_columns,
+                       scenario_params_for_id)
 from .config import (
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
@@ -134,17 +128,11 @@ def indistinguishable_rows(scenario_id: str, mode: str, summary: dict) -> list[d
 def build_indistinguishable(results_dir: str | Path) -> pd.DataFrame:
     """Read every finished search under `results_dir` into one `I*` member table.
 
-    Same tree and same discovery as `campaign.build_tables` — :func:`campaign.search_dirs`
-    — so a partially finished campaign simply contributes fewer rows.  Only the
-    ``search_summary.json`` is read; the 10,000-entry ``objectives`` block is untouched
-    unless a pre-re-simulation result forces the fallback.
+    Same tree and same discovery as `campaign.build_tables`, so a partially finished
+    campaign simply contributes fewer rows.  Only ``search_summary.json`` is read, and
+    only its `final_objectives` block.
     """
-    results_dir = Path(results_dir)
-    if not results_dir.is_dir():
-        raise FileNotFoundError(f"{results_dir} is not a directory")
-    searches = search_dirs(results_dir)
-    if not searches:
-        raise FileNotFoundError(f"no finished searches found under {results_dir}")
+    searches = require_search_dirs(results_dir)
 
     rows: list[dict] = []
     for scenario_id, mode, d in searches:
@@ -174,16 +162,13 @@ AGENT_COST_PARAMETERS: tuple[str, ...] = tuple(
 def role_bill(optima: pd.DataFrame, config_dir: str = "config") -> pd.DataFrame:
     """Add the per-role agent bill to a copy of an ``optima.csv`` frame.
 
-    The agent cost is already split by role in the data: ``actions_k`` is the work role
-    `k` completed over the horizon in its own throughput unit, and `c_token_k` prices that
-    unit at the scenario's `agent` tier, so their product is the exact per-role bill
-    rather than an apportionment.  Summing the eight columns reproduces the reported
-    `cost_agent_mean * F_completed` to within a fraction of a per cent, the residual being
-    that `cost_agent_mean` is a mean of per-replication ratios while this is a ratio of
-    means.  A *share* has no such gap, being formed inside a single row.
-
-    `AGENT_COST_PARAMETERS` carries the same split in the reported dollars-per-feature
-    unit, and `cost_team_mean` the developers and the agents together.
+    ``actions_k`` is the work role `k` completed over the horizon in its own throughput
+    unit and `c_token_k` prices that unit, so `BILL_PARAMETERS` is an exact per-role split
+    rather than an apportionment.  Summing the eight reproduces
+    `cost_agent_mean * F_completed` only to within a fraction of a per cent, since
+    `cost_agent_mean` is a mean of per-replication ratios and this is a ratio of means;
+    `AGENT_COST_PARAMETERS` sidesteps that by rescaling the split onto the reported
+    figure.  `cost_team_mean` is the developers and the agents together.
     """
     frame = optima.copy()
     prices = {}
@@ -203,9 +188,7 @@ def role_bill(optima: pd.DataFrame, config_dir: str = "config") -> pd.DataFrame:
     reported = frame["cost_agent_mean"].to_numpy(dtype=float)[:, None]
     for k, column in enumerate(AGENT_COST_PARAMETERS):
         frame[column] = share[:, k] * reported[:, 0]
-    # The team's own bill: the two cost drivers the composition controls.  The third,
-    # `cost_quality_mean`, is what the team's choices cost elsewhere, not a line item of
-    # the team, so it is not folded in here.
+    # The two cost drivers the composition controls; `cost_quality_mean` is not one.
     frame["cost_team_mean"] = frame["cost_human_mean"] + frame["cost_agent_mean"]
     return frame
 
@@ -234,9 +217,8 @@ def scenario_means(istar: pd.DataFrame) -> pd.DataFrame:
     """Reduce each scenario's `I*` to one mean vector, keeping its tiers.
 
     This is what makes the `i_star` cell statistics scenario-balanced: the cell mean is
-    then a mean over scenarios, exactly as the `c_star` one is, rather than over members —
-    which would weight a scenario by how wide its tie happened to be.  `n_members` records
-    `|I*|` so the pooled size stays visible in the output.
+    then a mean over scenarios, as the `c_star` one is, rather than over members.
+    `n_members` records `|I*|`, so the pooled size stays visible in the output.
     """
     if istar.empty:
         return istar
@@ -256,11 +238,10 @@ def cell_statistics(
 ) -> pd.DataFrame:
     """Mean and standard deviation of every parameter within each cell of the tier grid.
 
-    Long format — one row per (population, cell, parameter) — because the parameter set is
-    a list the caller may shorten and a wide table would then change shape.  `sd` is the
-    sample standard deviation (ddof = 1) over the scenarios in the cell, so it measures
-    how much the three free scenario groups move the optimum, **not** Monte Carlo error;
-    a cell with one scenario reports NaN.
+    Long format — one row per (population, cell, parameter) — because the parameter set
+    is a list the caller may shorten and a wide table would then change shape.  `sd` is
+    the sample standard deviation (ddof = 1) over the scenarios in the cell, i.e. their
+    spread rather than Monte Carlo error; a cell with one scenario reports NaN.
     """
     groups = require_group_pair(groups)
     cell_columns = [f"tier_{group}" for group in groups]
@@ -275,8 +256,8 @@ def cell_statistics(
     grouped = df.groupby(cell_columns, sort=False)
     stats = grouped[parameters].agg(["mean", "std"])
     counts = grouped.size().rename("n_scenarios")
-    # `c_star` contributes one configuration per scenario, so the two counts coincide
-    # there; for `i_star` the frame handed in carries the pooled `|I*|` per scenario.
+    # `c_star` has one configuration per scenario, so its two counts coincide; `i_star`
+    # carries the pooled `|I*|` per scenario in `n_members`.
     members = (grouped["n_members"].sum().rename("n_members")
                if "n_members" in df.columns else counts.rename("n_members"))
 
@@ -311,9 +292,9 @@ def _sorted_cells(
 def search_optima(optima: pd.DataFrame) -> pd.DataFrame:
     """The rows of ``optima.csv`` that describe a searched, agent-supported team.
 
-    The human-only baseline is dropped: its whole composition is the zero vector, so it
-    has no constellation.  Filtered on the mode rather than on `is_human_only`, so a
-    search that happened to report a zero-agent optimum would still be counted.
+    The human-only baseline is dropped: its composition is the zero vector, so it has no
+    constellation.  Filtered on the mode rather than on `is_human_only`, so a search that
+    happened to report a zero-agent optimum would still be counted.
     """
     if optima.empty or "mode" not in optima.columns:
         return optima
@@ -328,15 +309,13 @@ def build_constellation(
     """The two populations' cell statistics, stacked into one long table."""
     groups = require_group_pair(groups)
     frames = []
-
-    c_rows = search_optima(optima)
-    if not c_rows.empty:
-        frames.append(cell_statistics(derive_totals(c_rows), C_STAR, groups))
-
-    i_rows = search_optima(istar)
-    if not i_rows.empty:
+    for frame, population, balance in ((optima, C_STAR, False), (istar, I_STAR, True)):
+        rows = search_optima(frame)
+        if rows.empty:
+            continue
+        rows = derive_totals(rows)
         frames.append(cell_statistics(
-            scenario_means(derive_totals(i_rows)), I_STAR, groups))
+            scenario_means(rows) if balance else rows, population, groups))
 
     if not frames:
         return cell_statistics(pd.DataFrame(), C_STAR, groups)
@@ -363,8 +342,7 @@ def constellation_summary(
 
     Laid out with the *second* group across the columns and the parameters down the rows,
     so a block stays inside a terminal width whatever the parameter count; the first
-    group's tiers become the blocks.  Everything here is a re-reading of
-    ``constellation_cells.csv``; nothing is computed that the table does not already hold.
+    group's tiers become the blocks.
     """
     groups = require_group_pair(groups)
     if cells.empty:
@@ -382,7 +360,7 @@ def constellation_summary(
              "Each cell aggregates the scenarios whose remaining scenario groups are free;",
              "`sd` is their spread, not Monte Carlo error.  Populations:",
              f"  {C_STAR:<8} the reported c* of each scenario, one configuration per scenario",
-             f"  {I_STAR:<8} the indistinguishable set I* of §3.10, each scenario reduced to",
+             f"  {I_STAR:<8} the indistinguishable set I*, each scenario reduced to",
              "           its own mean first, so both populations weight scenarios equally",
              "",
              "Structural zeros to read past: a_qa_1 and a_qa_2 are 0 by construction, and the",
@@ -390,9 +368,7 @@ def constellation_summary(
              "so a zero A_qa cell means 'no feature freeze', not 'a freeze with no agents'.",
              ""]
 
-    # One column width for the whole file, measured on the widest cell it will print:
-    # a `mean ± sd` is as wide as its significant digits make it, and a per-block width
-    # would stop the blocks lining up under each other.
+    # One column width for the whole file, so the blocks line up under each other.
     width = max([len(_mean_sd(m, s)) for m, s in zip(cells["mean"], cells["sd"])]
                 + [len(t) for t in col_tiers]) + 2
     for population in populations:

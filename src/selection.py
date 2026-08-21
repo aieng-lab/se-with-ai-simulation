@@ -1,13 +1,12 @@
 """Scoring a configuration and selecting the one to report.
 
-A configuration is scored by one number, the expected cost per feature, and is admissible
-only if it keeps up with the work the project generates, `value >= (1 - eps) * r_arrival`.
-The two are combined into the total preorder `preference_key` — Deb's feasibility rule —
-so that a candidate outside the admissible region is still ranked usefully.
+A configuration is scored by its mean cost per feature and is admissible only when
+`value >= (1 - eps) * r_arrival`.  `preference_key` combines the two into a total
+preorder, so a candidate outside the admissible region is still ranked usefully.
 
-That preorder ranks by the *mean* cost, which is a Monte Carlo estimate, so the reported
-result is the minimiser `c*` together with the indistinguishable set `I*`: the admissible
-candidates whose 95 % bootstrap CI overlaps `c*`'s, reduced by the parsimony tie-break.
+Because the mean cost is a Monte Carlo estimate, the reported result is a pair: the
+minimiser `c*` and the set `I*` of admissible candidates whose cost CI overlaps its own,
+reduced by the parsimony tie-break.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .rng import _config_hash
+from .rng import config_hash
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class AggregatedObjectives:
-    """Per-configuration Monte Carlo summary: the objective, the constraint, the split.
+    """Monte Carlo summary of one configuration over its replications.
 
     `cost_mean` is the objective and `value_mean` the quantity the throughput constraint
     bounds; both carry a 95 % percentile bootstrap CI.  Every other field is reporting
@@ -40,15 +39,13 @@ class AggregatedObjectives:
     value_ci: tuple[float, float]
     cost_mean: float
     cost_ci: tuple[float, float]
-    # The three cost drivers, summing to `cost_mean`.  Stored rather than reconstructed:
-    # the quality and agent terms both depend on the realised trajectory.
+    # The three drivers of `cost_mean`, summing to it.
     cost_quality_mean: float = 0.0
     cost_human_mean: float = 0.0
     cost_agent_mean: float = 0.0
-    # Work completed per role over the horizon; `cost_agent_mean` is its inner product
-    # with c_token, so this tells a role that worked from one merely deployed.
+    # Mean work completed per role, k=1..8, each in that role's own throughput unit.
     actions_mean: tuple[float, ...] = ()
-    # Who did the work; the human share appears in no `actions_mean` entry at all.
+    # The human/agent split of the work.
     impl_human_mean: float = 0.0
     impl_agents_mean: float = 0.0
     fixes_human_mean: float = 0.0
@@ -58,6 +55,9 @@ class AggregatedObjectives:
 #: Resamples drawn for the percentile bootstrap CIs of `cost` and `value`.
 N_BOOTSTRAP = 1000
 
+#: Mixed into the bootstrap seed so it cannot collide with the simulation's own streams.
+_BOOTSTRAP_SALT = 0xB007_5EED
+
 
 def aggregate_config_result(
     result: "ConfigResult",
@@ -65,14 +65,14 @@ def aggregate_config_result(
 ) -> AggregatedObjectives:
     """Means and 95 % percentile bootstrap CIs over the replications of `result`.
 
-    Only `cost` and `value` are bootstrapped.  The cost drivers and contribution counts
-    take part in no comparison, so they are reported as plain means.
+    Only `cost` and `value` are bootstrapped; the remaining fields take part in no
+    comparison and are reported as plain means.
     """
     value_arr = np.array([r.value for r in result.replications])
     cost_arr  = np.array([r.cost  for r in result.replications])
 
     K = len(value_arr)
-    boot_seed = (master_seed ^ _config_hash(result.config) ^ 0xB007_5EED) & 0xFFFF_FFFF_FFFF_FFFF
+    boot_seed = (master_seed ^ config_hash(result.config) ^ _BOOTSTRAP_SALT) & 0xFFFF_FFFF_FFFF_FFFF
     rng = np.random.default_rng(boot_seed)
 
     idx = rng.integers(0, K, size=(N_BOOTSTRAP, K))
@@ -103,24 +103,20 @@ def aggregate_config_result(
 # ---------------------------------------------------------------------------
 
 def throughput_floor(params: "ScenarioParameters", epsilon: float) -> float:
-    """The value a configuration must reach: (1 - eps) * r_arrival.
-
-    Features cannot be implemented faster than they arrive, so `r_arrival` is the expected
-    maximum attainable value and `epsilon` the tolerance for the Poisson arrival noise.
-    """
+    """The value a configuration must reach: `(1 - epsilon) * r_arrival`."""
     if not 0.0 <= epsilon < 1.0:
         raise ValueError(f"epsilon must be in [0, 1), got {epsilon}")
     return (1.0 - epsilon) * params.r_arrival
 
 
 def violation(agg: AggregatedObjectives, floor: float) -> float:
-    """How far short of the throughput floor this configuration falls; 0 when admissible."""
+    """How far short of `floor` this configuration falls; 0 when it is admissible."""
     return max(0.0, floor - agg.value_mean)
 
 
 def satisfies_throughput(agg: AggregatedObjectives, floor: float) -> bool:
-    """True when the configuration delivers the work the project generates."""
-    return violation(agg, floor) <= 0.0
+    """True when this configuration reaches the throughput floor."""
+    return agg.value_mean >= floor
 
 
 # ---------------------------------------------------------------------------
@@ -130,28 +126,22 @@ def satisfies_throughput(agg: AggregatedObjectives, floor: float) -> bool:
 def preference_key(agg: AggregatedObjectives, floor: float) -> tuple[float, float]:
     """Ranking key, smaller is better, compared lexicographically.
 
-    Constraint violation first, cost second.  That encodes all three of Deb's rules at
-    once: two violators are separated by whose violation is smaller, an admissible
-    configuration has violation 0 and precedes every violator, and two admissible ones
-    are separated by cost alone.
+    Constraint violation first, cost second, so an admissible configuration (violation 0)
+    precedes every violator and the remaining ties are broken on cost alone.
     """
     return (violation(agg, floor), agg.cost_mean)
 
 
 def rank(aggs: "Sequence[AggregatedObjectives]", floor: float) -> list[int]:
-    """Indices of `aggs` ordered best first.
-
-    A plain stable sort: the key is a total preorder, so ties keep input order and the
-    result does not depend on the comparison sequence.
-    """
+    """Indices of `aggs` ordered best first, ties keeping their input order."""
     return sorted(range(len(aggs)), key=lambda i: preference_key(aggs[i], floor))
 
 
 def best_index(aggs: "Sequence[AggregatedObjectives]", floor: float) -> int | None:
     """Index of `c*`, the best-ranked configuration; None for an empty pool.
 
-    `c*` may violate the throughput constraint when *no* candidate satisfies it, so a
-    caller that reports it must say so; `satisfies_throughput` on the entry is the check.
+    `c*` violates the throughput constraint when no candidate satisfies it, so a caller
+    that reports it must check `satisfies_throughput` on the entry.
     """
     if not aggs:
         return None
@@ -167,9 +157,7 @@ class ParsimonyKey:
     """What the parsimony tie-break compares: team size at a fixed process.
 
     `process` is (N, R, F_freeze) and must match exactly for two candidates to be
-    comparable — without that, the rule could prefer a team with fewer agents but *more*
-    humans, which is more expensive rather than more parsimonious.  `agents` is the
-    concatenation of A_dev and A_qa, so the comparison covers both phases.
+    comparable.  `agents` concatenates A_dev and A_qa, so both phases are covered.
     """
 
     process: tuple[float, int, int]
@@ -180,7 +168,7 @@ def parsimony_key(config: "TeamConfiguration") -> ParsimonyKey:
     """Build the ParsimonyKey of a configuration."""
     return ParsimonyKey(
         process=(config.N, config.R, config.F_freeze),
-        agents=tuple(config.A_dev) + tuple(config.A_qa),  # type: ignore[arg-type]
+        agents=tuple(config.A_dev) + tuple(config.A_qa),
     )
 
 
@@ -192,12 +180,9 @@ def parsimony_dominates(
 ) -> bool:
     """True when `a` runs `b`'s process, is no larger anywhere, smaller somewhere, and cheaper.
 
-    Statistical indistinguishability is the caller's precondition: apply this only within
-    `I*`, whose members are tied on cost by construction.  The cost condition
-    `cost_a < cost_b` is checked here, which has two consequences the module relies on:
-    `c*` is the cost minimiser and therefore can never be dominated, and the relation is a
-    strict partial order, so one filtering pass suffices and its result is
-    order-independent.
+    Only meaningful between candidates already known to be statistically tied, which is
+    the caller's precondition.  Requiring `cost_a < cost_b` makes this a strict partial
+    order, so a single filtering pass suffices and its result is order-independent.
     """
     if key_a.process != key_b.process:
         return False
@@ -208,31 +193,14 @@ def parsimony_dominates(
     return all(x <= y for x, y in zip(key_a.agents, key_b.agents))
 
 
-def indistinguishable_set(
+def _members(
     aggs: "Sequence[AggregatedObjectives]",
     floor: float,
-    keys: "Sequence[ParsimonyKey] | None" = None,
+    best: int,
+    keys: "Sequence[ParsimonyKey] | None",
 ) -> list[int]:
-    """Indices of `I*`: the admissible candidates statistically tied with `c*`.
-
-    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost
-    CI overlaps `c*`'s, i.e. the two are not significantly different at the 95 % level.
-
-    With `keys` given, the parsimony tie-break is applied afterwards: a member that
-    another member parsimony-dominates is dropped.  `c*` needs no exemption — domination
-    requires a strictly lower mean cost — so it is a member of every non-empty result.
-
-    Empty in exactly two cases: an empty pool, and a pool in which no candidate satisfies
-    the throughput constraint.  In the latter there is no `c*` for a set to be built
-    around; the caller still reports the least-violating candidate, marked inadmissible.
-    """
-    best = best_index(aggs, floor)
-    if best is None:
-        return []
-    if keys is not None and len(keys) != len(aggs):
-        raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
+    """`I*` given a known `c*` index; empty when `c*` itself is inadmissible."""
     if not satisfies_throughput(aggs[best], floor):
-        # Nothing in the pool keeps up with the project, so there is no `c*` here.
         return []
 
     lo, hi = aggs[best].cost_ci
@@ -253,23 +221,43 @@ def indistinguishable_set(
     ]
 
 
+def indistinguishable_set(
+    aggs: "Sequence[AggregatedObjectives]",
+    floor: float,
+    keys: "Sequence[ParsimonyKey] | None" = None,
+) -> list[int]:
+    """Indices of `I*`: the admissible candidates statistically tied with `c*`.
+
+    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost
+    CI overlaps `c*`'s.  With `keys` given, the parsimony tie-break then drops any member
+    another member dominates; `c*` cannot be dropped, since domination requires a
+    strictly lower mean cost.
+
+    Empty for an empty pool, and for a pool in which no candidate is admissible — there
+    is no `c*` for a set to form around, though one is still reported.
+    """
+    best = best_index(aggs, floor)
+    if best is None:
+        return []
+    if keys is not None and len(keys) != len(aggs):
+        raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
+    return _members(aggs, floor, best, keys)
+
+
 def report_optimum(
     aggs: "Sequence[AggregatedObjectives]",
     floor: float,
     keys: "Sequence[ParsimonyKey] | None" = None,
 ) -> tuple[int | None, list[int]]:
-    """The `(c*, I*)` pair to report.
+    """The `(c*, I*)` pair to report; see :func:`indistinguishable_set`.
 
-    `c*` is the best-ranked candidate of the whole pool and `I*` is
-    :func:`indistinguishable_set`.  The parsimony tie-break cannot remove `c*`, so it is
-    a member of every non-empty `I*`.
-
-    The exception is the inadmissible case: when no candidate satisfies the throughput
-    constraint `I*` is empty and this returns the least-violating candidate beside it.
-    Callers must mark such a result as inadmissible; `satisfies_throughput` on the
-    returned entry is the check.  Both halves are None/empty only for an empty pool.
+    When no candidate is admissible `I*` is empty and the least-violating candidate is
+    returned beside it — callers must mark such a result as inadmissible, for which
+    `satisfies_throughput` on the returned entry is the check.
     """
     best = best_index(aggs, floor)
     if best is None:
         return None, []
-    return best, indistinguishable_set(aggs, floor, keys)
+    if keys is not None and len(keys) != len(aggs):
+        raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
+    return best, _members(aggs, floor, best, keys)

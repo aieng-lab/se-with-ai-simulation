@@ -39,8 +39,7 @@ from src.search import (
     _random_draws,
     run_search,
     run_human_only,
-    _sample_dev_composition,
-    _sample_qa_composition,
+    _sample_composition,
     human_only_grid,
     refactoring_bound,
     review_sample_max,
@@ -138,7 +137,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(0)
         bounds = saturation_bounds(medium_params, 2.0)
         for _ in range(300):
-            A = _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)
+            A = _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)
             assert len(A) == AGENT_ROLE_COUNT
             assert A[0] >= 1
             assert all(A[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
@@ -147,7 +146,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(1)
         bounds = saturation_bounds(medium_params, 2.0)
         for _ in range(300):
-            A = _sample_qa_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)
+            A = _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=True)
             assert A[0] == 0 and A[1] == 0
             assert all(A[i] <= bounds[i] for i in _QA_SUPERVISED_INDICES)
 
@@ -157,7 +156,7 @@ class TestCompositionSampling:
         bounds = {i: 3 for i in SUPERVISED_ROLE_INDICES}
         seen = {i: set() for i in SUPERVISED_ROLE_INDICES}
         for _ in range(400):
-            A = _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)
+            A = _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)
             for i in SUPERVISED_ROLE_INDICES:
                 seen[i].add(A[i])
         assert seen[0] == {1, 2, 3}, "the impl role is drawn from {1,...,a-bar_1}"
@@ -168,7 +167,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(2)
         bounds = saturation_bounds(medium_params, 2.0)
         draws = [
-            _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)[i]
+            _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)[i]
             for _ in range(400)
             for i in REVIEW_INDICES
         ]
@@ -184,7 +183,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(22)
         bounds = saturation_bounds(medium_params, 2.0)
         draws = [
-            _sample_dev_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX)[_REFACTOR_INDEX]
+            _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)[_REFACTOR_INDEX]
             for _ in range(400)
         ]
         assert min(draws) == 0 and max(draws) == REFACTOR_MAX
@@ -693,7 +692,7 @@ class TestTwoStageSelection:
         A_small[0] = 1
         A_large = list(A_small)
         A_large[4] = 1                      # one extra Code Review Agent, k=5
-        outcome = SearchOutcome(manifest={}, aggs=[], results={})
+        outcome = SearchOutcome()
         keys = []
         for i, (A, cost) in enumerate(((A_small, 100.0), (A_large, 101.0))):
             team = TeamConfiguration(N=2.0, A_dev=tuple(A), R=2, F_freeze=0)
@@ -747,7 +746,7 @@ class TestTwoStageSelection:
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0] = 1
         weak = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
-        outcome = SearchOutcome(manifest={}, aggs=[], results={})
+        outcome = SearchOutcome()
         entry, agg, cr = _evaluate(weak, horizon, params)
         assert agg is not None, "the weak team must still be monitoring-feasible"
         key = _config_key(weak, 0)
@@ -766,7 +765,7 @@ class TestTwoStageSelection:
 
     def test_an_empty_pool_reports_nothing(self, search_cfg, medium_params):
         from src.search import SearchOutcome
-        report = two_stage_selection(SearchOutcome(manifest={}, aggs=[], results={}),
+        report = two_stage_selection(SearchOutcome(),
                                      search_cfg, self._horizon(), medium_params,
                                      progress_every=0)
         assert report.best_key is None and report.keep_keys == []
@@ -804,8 +803,7 @@ class TestConvergenceRecording:
 
     def test_incumbent_turnover_is_the_share_of_generations_with_a_change(self):
         from src.search import SearchOutcome
-        outcome = SearchOutcome(manifest={}, aggs=[], results={},
-                                incumbent_changed=[True, False, False, True])
+        outcome = SearchOutcome(incumbent_changed=[True, False, False, True])
         assert outcome.incumbent_turnover == pytest.approx(0.5)
 
     def test_an_enumeration_records_no_generations(self, search_cfg, medium_params):

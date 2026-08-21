@@ -1,43 +1,27 @@
 #!/usr/bin/env bash
 #
-# Run the full experiment campaign of paper Section 4.2.
+# Run one search per scenario configuration, in parallel and resumably.
 #
-# 432 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
-# tier for project and a fourth "pessimistic" tier for agent) are each solved once by a
-# search spending a fixed budget of 10,000 candidate evaluations.  Jobs are
-# independent, so they run in parallel and the
-# simulator itself is single-threaded — but throughput does NOT scale to the core count.
-# Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
-#
-#     JOBS   throughput   speedup   wall-clock per search
-#        1    5.7 cand/s     1.0x      0.49 h
-#        2   10.2 cand/s     1.8x      0.54 h
-#        4   13.3 cand/s     2.4x      0.83 h
-#        6   14.5 cand/s     2.6x      1.12 h
-#        8   13.3 cand/s     2.3x      1.66 h
-#       14   13.7 cand/s     2.5x      2.81 h
-#
-# Throughput is flat from 4 workers on, so raising $JOBS beyond that does not finish the
-# campaign any sooner — it only stretches each individual search (and since a search
-# writes nothing until it completes, that is lost work if the run is interrupted).
-# Hence the default of 4.  The table above is measured on a 10,000-candidate search, so
-# the 432 jobs are roughly 215 core-hours.
-#
-# The same driver runs the human-only baseline of Section 4.1, which is enumerated rather
-# than searched and is far cheaper (99 configurations per scenario):
-#
-#     CONFIG_DIR=config/search_baseline MODE=human_only ./run_experiments.sh
+# Each job is `python -m src.main optimize` on one file in $CONFIG_DIR.  Jobs are
+# independent and the simulator is single-threaded, but throughput does not scale with
+# the core count: it plateaus at about four workers, which is why JOBS defaults to 4.
+# Raising it past that stretches each individual search instead of finishing the campaign
+# sooner, and a search writes nothing until it completes.
 #
 # Prerequisite:  .venv/bin/python scripts/generate_search_configs.py
 #
 # Usage:
-#     ./run_experiments.sh                  # full campaign, resuming any partial run
+#     ./run_experiments.sh                  # everything, resuming any partial run
 #     DRY_RUN=1 ./run_experiments.sh        # list the jobs and exit
 #     LIMIT=2 ./run_experiments.sh          # smoke test the first two jobs
 #     JOBS=14 ./run_experiments.sh          # pin the worker count
 #     FORCE=1 ./run_experiments.sh          # re-run jobs that already have results
-#     MODE=human_only ./run_experiments.sh  # enumerate the human-only baseline instead
+#     FILTER='*_a-p_*' ./run_experiments.sh # only the configs matching this glob
+#     MODE=human_only ./run_experiments.sh  # enumerate the zero-agent baseline instead
 #     nohup ./run_experiments.sh > campaign.log 2>&1 &     # long unattended run
+#
+# Further environment overrides: PYTHON, CONFIG_DIR, OUT_ROOT, SAMPLES, START_STATE,
+# PROGRESS_EVERY.
 #
 # Re-running is safe: a job whose search_summary.json already exists is skipped unless
 # FORCE=1.  Per-job stdout goes to $OUT_ROOT/<scenario_id>/<mode>/log.txt and one
@@ -45,7 +29,8 @@
 
 set -euo pipefail
 
-usage() { sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+# The header comment block: everything from line 3 up to the first non-comment line.
+usage() { sed -n '3,/^[^#]/p' "$0" | sed -n 's/^# \{0,1\}//p'; exit 0; }
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
 
 # ---------------------------------------------------------------------------
@@ -75,7 +60,8 @@ esac
 
 INDEX="$OUT_ROOT/index.tsv"
 
-[[ -x "$PYTHON" || $(command -v "$PYTHON") ]] || { echo "error: python not found at $PYTHON" >&2; exit 1; }
+[[ -x "$PYTHON" ]] || command -v "$PYTHON" >/dev/null \
+    || { echo "error: python not found at $PYTHON" >&2; exit 1; }
 [[ -d "$CONFIG_DIR" ]] || {
     echo "error: $CONFIG_DIR not found — run '$PYTHON scripts/generate_search_configs.py' first" >&2
     exit 1
@@ -122,7 +108,7 @@ run_job() {
     local cfg=$1 id=$2
     local out="$OUT_ROOT/$id/$MODE"
     local started=$SECONDS
-    # Arrays do not survive `export`, so rebuild the mode flag from $MODE here.
+    # Arrays do not survive `export`, so the flag is rebuilt per job from $MODE.
     local mode_flags=()
     if [[ "$MODE" == human_only ]]; then
         mode_flags=(--human-only)

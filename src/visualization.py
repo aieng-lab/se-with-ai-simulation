@@ -17,10 +17,9 @@ These take the ``optima.csv`` table of :mod:`src.campaign` rather than a per-sea
     plot_agent_human_ratio_matrix, plot_constellation_profile,
     plot_constellation_heatmap, plot_team_shape, plot_team_drivers
 
-The first three share `_draw_matrix`, which owns the five-channel tier grid, and differ
-only in the pair of columns they put on the axes.  All but the ratio figure take an
-optional `baseline` frame of zero-agent optima, drawn in black on the shape and size
-channels of the groups it varies; see `_baseline_cell` and `_baseline_style_groups`.
+The first three share `_draw_matrix`, the five-channel tier grid, and differ only in the
+pair of columns they put on the axes.  All but the ratio figure take an optional
+`baseline` frame of zero-agent optima, drawn as an overlay in black.
 
 Directory-level helpers
 -----------------------
@@ -82,7 +81,7 @@ _OTHER_COLOR = "#cccccc"       # grey — violates the throughput constraint
 _CHANGE_COLOR = cm.tab10(2)    # green — cumulative change in c*'s cost
 _STYLE       = "seaborn-v0_8-whitegrid"
 
-#: Bars drawn by plot_cost_split; a search evaluates far more candidates than fit.
+#: Most bars plot_cost_split will draw; a search evaluates far more candidates than fit.
 _BAR_LIMIT = 60
 
 
@@ -99,11 +98,8 @@ def plot_cost_vs_value(
 ) -> "Figure":
     """Every evaluated candidate as (value, cost), with the throughput floor marked.
 
-    The search problem drawn directly: the vertical line is
-    `(1 - eps) * r_arrival`, everything left of it violates the throughput constraint, and
-    the objective is to sit as low as possible to the right of it.  `c*` and the
-    indistinguishable set `I*` are highlighted, and `c*` carries its cost CI — the interval
-    whose overlap defines `I*`.
+    Everything left of the floor is inadmissible.  `c*` and the indistinguishable set
+    `I*` are highlighted, and `c*` carries the cost CI that `I*` membership is decided on.
     """
     keep = set(keep_keys) - ({best_key} if best_key else set())
     with plt.style.context(_STYLE):
@@ -167,8 +163,7 @@ def plot_cost_split(
 ) -> "Figure":
     """Stacked bars of the three cost drivers, one bar per key.
 
-    The three shares sum to `cost_mean` by construction, so this reads as "where the money
-    went" for the reported configurations.  Truncated at `_BAR_LIMIT` bars.
+    The three sum to `cost_mean` by construction.  Truncated at `_BAR_LIMIT` bars.
     """
     shown = keys[:_BAR_LIMIT]
     if not shown:
@@ -201,12 +196,14 @@ def plot_cost_split(
 # 3. State trajectories
 # ---------------------------------------------------------------------------
 
-#: `B_kno` is derived in `plot_trajectories`; the rest are persisted snapshot fields.
+#: Fields plot_trajectories draws.  All but `B_kno` are persisted snapshot columns;
+#: `B_kno` is summed from the three severities, matching `SystemState.B_kno`.
 _DEFAULT_TRAJECTORY_FIELDS = ["F_completed", "D_tech", "B_kno", "N_doc"]
+_B_KNO_COLUMNS = ("B_kno_min", "B_kno_maj", "B_kno_sec")
 _TRAJECTORY_LABELS = {
     "F_completed": "Cumulative features\n(F_completed)",
     "D_tech":      "Technical debt\n(D_tech)",
-    "B_kno":       "Known bugs\n(B_kno_min + B_kno_maj)",
+    "B_kno":       "Known bugs\n(B_kno, all severities)",
     "N_doc":       "Documentation written\n(N_doc)",
 }
 
@@ -218,19 +215,16 @@ def plot_trajectories(
 ) -> "Figure":
     """Mean trajectory per sprint for the given configs, with a shaded quantile band.
 
-    Each trace DataFrame must have a (replication, sprint) MultiIndex and columns for
-    each state field. B_kno is derived as B_kno_min + B_kno_maj if both are present.
+    Each trace DataFrame must have a (replication, sprint) MultiIndex and one column per
+    state field.  `B_kno` is summed from the per-severity columns when it is absent.
     """
     fields = _DEFAULT_TRAJECTORY_FIELDS
     wanted = set(highlight_keys)
-    palette = cm.tab10
-    config_colors = {k: palette(i % 10) for i, k in enumerate(wanted)}
+    config_colors = {k: cm.tab10(i % 10) for i, k in enumerate(wanted)}
 
     with plt.style.context(_STYLE):
-        nfields = len(fields)
-        fig, axes = plt.subplots(nfields, 1, figsize=(10, 3 * nfields), sharex=True)
-        if nfields == 1:
-            axes = [axes]
+        fig, axes = plt.subplots(len(fields), 1, figsize=(10, 3 * len(fields)),
+                                 sharex=True)
         if title:
             fig.suptitle(title, fontsize=12)
 
@@ -239,11 +233,8 @@ def plot_trajectories(
                 continue
             color = config_colors[key]
 
-            # Derive B_kno if needed
-            if "B_kno" in fields and "B_kno" not in df.columns:
-                if "B_kno_min" in df.columns and "B_kno_maj" in df.columns:
-                    df = df.copy()
-                    df["B_kno"] = df["B_kno_min"] + df["B_kno_maj"]
+            if "B_kno" not in df.columns and all(c in df.columns for c in _B_KNO_COLUMNS):
+                df = df.assign(B_kno=df[list(_B_KNO_COLUMNS)].sum(axis=1))
 
             for ax, field in zip(axes, fields):
                 if field not in df.columns:
@@ -257,7 +248,7 @@ def plot_trajectories(
                 ax.fill_between(sprints, lo, hi, color=color, alpha=0.12)
 
         for ax, field in zip(axes, fields):
-            ax.set_ylabel(_TRAJECTORY_LABELS.get(field, field), fontsize=8)
+            ax.set_ylabel(_TRAJECTORY_LABELS[field], fontsize=8)
             ax.tick_params(labelsize=7)
 
         axes[-1].set_xlabel("Sprint", fontsize=9)
@@ -289,10 +280,10 @@ def plot_comparison_optima(
             ax.set_title(title, fontsize=11)
 
         y = np.arange(len(labels))
-        means = np.array([scenarios[l]["cost_mean"] for l in labels], dtype=float)
-        lo = np.array([scenarios[l]["cost_ci"][0] for l in labels], dtype=float)
-        hi = np.array([scenarios[l]["cost_ci"][1] for l in labels], dtype=float)
-        admissible = [scenarios[l]["feasible_throughput"] for l in labels]
+        means = np.array([scenarios[key]["cost_mean"] for key in labels], dtype=float)
+        lo = np.array([scenarios[key]["cost_ci"][0] for key in labels], dtype=float)
+        hi = np.array([scenarios[key]["cost_ci"][1] for key in labels], dtype=float)
+        admissible = [scenarios[key]["feasible_throughput"] for key in labels]
 
         ax.errorbar(means, y, xerr=[means - lo, hi - means], fmt="none",
                     ecolor="#888888", elinewidth=1.2, capsize=3, zorder=1)
@@ -319,9 +310,8 @@ def plot_comparison_optima(
 def _drop_label(values: np.ndarray) -> str:
     """Legend label for the drop curve, saying so when the log axis cannot draw it.
 
-    A search whose incumbent never moves has a drop of zero throughout, and a curve with no
-    positive value has nothing for a log axis to place.  Matplotlib would drop it silently
-    and leave an unexplained legend entry, so the label says it instead.
+    A drop that is zero throughout has nothing for a log axis to place, and matplotlib
+    would omit the curve silently, leaving an unexplained legend entry.
     """
     label = "mean drop in $c^\\star$ cost"
     positive = np.asarray(values, dtype=float) > 0.0
@@ -335,13 +325,9 @@ def _incumbent_cost_drop(
 ) -> "np.ndarray | None":
     """`c*`'s mean drop since the previous generation, relative and unsigned.
 
-    `|best_cost(g) / best_cost(g-1) - 1|` per search, then the mean over searches.
-    Relative, because the optima span four decades and a pooled dollar drop would picture
-    the scenario grid rather than the search; unsigned and per-generation, so that it is a
-    rate like the turnover.  Generation 1 has no predecessor and therefore no value.
-
-    The mean only: an incumbent moves in a handful of generations and stands still in the
-    rest, so the median over searches is exactly zero almost everywhere.
+    `|best_cost(g) / best_cost(g-1) - 1|` per search, then the mean over searches.  It is
+    taken relative because the optima span four decades, and unsigned per generation so
+    that it is a rate like the turnover.  Generation 1 has no predecessor and no value.
 
     Returns None when the column carries no usable value; the figure then keeps its
     turnover curves alone.
@@ -371,22 +357,15 @@ def plot_elite_turnover(
     """Elite turnover and the incumbent's cost drop, against the generation index.
 
     Takes the long-format ``elite_turnover.csv`` of :mod:`src.campaign` — one row per
-    (scenario, mode, generation) — and draws three curves, since one per search would not
-    be readable at several hundred of them.  In blue on the left axis, the turnover as a
-    mean (solid) and a median (dotted) over searches; in green on a logarithmic right-hand
-    axis, the mean of `c*`'s relative drop since the previous generation.
+    (scenario, mode, generation) — and draws three curves aggregated over searches: in
+    blue on the left axis the turnover, as a mean (solid) and a median (dotted); in green
+    on a logarithmic right-hand axis the mean relative drop in `c*`'s cost.
 
-    The two are the same kind of quantity, an unsigned rate per generation, but the drop
-    runs one to two decades lower, hence the second, logarithmic axis: on a shared linear
-    one it is a flat line on zero.  It has no median curve for the same reason — that
-    median is exactly zero almost everywhere.  A drop that is zero in every generation
-    cannot be drawn at all, and :func:`_drop_label` says so in the legend.
+    Both are unsigned rates per generation, but the drop runs one to two decades lower,
+    which is why it gets its own logarithmic axis.  A drop that is zero in every
+    generation cannot be drawn at all, and :func:`_drop_label` says so in the legend.
 
-    Reading the two together is the point: turnover has a noise floor, since candidates
-    indistinguishable at `K_search` swap ranks inside the elite without anything
-    improving, and turnover that persists after the drop curve decays is exactly that
-    churn.  It carries no tier channels: convergence is a property of the search, not of
-    the scenario grid.
+    Carries no tier channels: convergence is a property of the search, not of the grid.
     """
     needed = {"scenario_id", "mode", "generation", "tau", "best_cost"}
     missing = needed - set(turnover.columns)
@@ -411,10 +390,6 @@ def plot_elite_turnover(
         ax.plot(generations, median, color=_KEEP_COLOR, linewidth=1.5, linestyle=":",
                 label=r"median $\tau_g$")
 
-        # A twin axis, and a logarithmic one: the drop is the same *kind* of quantity as
-        # `tau_g` — an unsigned rate per generation — but one to two decades below it, so
-        # sharing the linear axis flattens it onto zero.  Its own log axis is what makes
-        # its decay legible next to a linear `tau_g`.
         drop = _incumbent_cost_drop(turnover, generations)
         ax2 = None
         if drop is not None:
@@ -423,21 +398,15 @@ def plot_elite_turnover(
             ax2.set_yscale("log")
             ax2.plot(generations, drop, color=_CHANGE_COLOR, linewidth=1.8,
                      label=_drop_label(drop))
-            # A degenerate case worth handling rather than warning through: an incumbent
-            # that never moves gives a drop of 0 in every generation, and autoscaling a log
-            # axis over no positive value at all raises.  The label says the curve is
-            # missing (`_drop_label`); the axis just needs a range it can draw.
+            # An incumbent that never moves gives a drop of 0 everywhere, which a log
+            # axis cannot autoscale over; the label already says the curve is missing.
             if not np.nanmax(drop) > 0.0:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", "Data has no positive values")
                     ax2.set_ylim(1e-4, 1.0)
 
-            # A campaign's drop covers barely two decades, so decade ticks alone would
-            # leave two labels on the whole axis; the 2/5 subdivisions are labelled too.
-            ax2.yaxis.set_major_locator(LogLocator(base=10.0))
-            ax2.yaxis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
-            ax2.yaxis.set_major_formatter(FuncFormatter(_percent_tick))
-            ax2.yaxis.set_minor_formatter(FuncFormatter(_percent_tick))
+            # Only two decades wide, so the 2/5 subdivisions are labelled as well.
+            _decade_axis(ax2.yaxis, _percent_tick, label_minor=True)
             ax2.set_ylabel(r"relative drop in $c^\star$ cost per generation (log)",
                            fontsize=9, color=_CHANGE_COLOR)
             ax2.tick_params(axis="y", which="both", labelsize=8, colors=_CHANGE_COLOR)
@@ -449,8 +418,7 @@ def plot_elite_turnover(
         ax.tick_params(axis="y", labelsize=8, colors=_KEEP_COLOR)
         ax.set_ylim(bottom=0.0)
         ax.set_xlim(generations.min(), generations.max())
-        # One legend for both axes, and it lives on the twin: `twinx` draws it above the
-        # left axis, so a legend on `ax` would sit under the drop curves.
+        # One legend for both axes; it goes on the twin, which `twinx` draws on top.
         handles, labels = ax.get_legend_handles_labels()
         legend_ax = ax if ax2 is None else ax2
         if ax2 is not None:
@@ -469,54 +437,43 @@ def plot_elite_turnover(
 # 5. The campaign in one figure: all five scenario groups at once
 # ---------------------------------------------------------------------------
 
-# Ordered so the legends read low -> medium -> high -> fourth tier, not alphabetically.
-# These are ordinal-position encodings keyed by tier name, so `veryhigh` and `pessimistic`
-# share the fourth slot: they are the fourth tier of `project` and of `agent` respectively
-# and no group holds both, so no channel ever has to draw them side by side.  Keeping the
-# vocabulary at four levels is what lets the shape channel stay legible.
-_TIER_COLORS = {"low": cm.tab10(0), "medium": cm.tab10(1), "high": cm.tab10(3),
-                "veryhigh": cm.tab10(4), "pessimistic": cm.tab10(4)}
+#: One visual style per tier, in mild -> extreme order so the legends read that way.
+#: `veryhigh` and `pessimistic` share the fourth slot: they are the fourth tier of
+#: `project` and of `agent` respectively, and no group holds both, so no channel ever has
+#: to draw them side by side.  The four marker shapes stay apart when overplotted at
+#: small sizes, and the areas are spaced by a roughly constant ratio in marker *width*.
+class _TierStyle(NamedTuple):
+    color: tuple
+    marker: str
+    filled: bool
+    area: float                 # pt^2
 
-# Marker shape per tier.  A cross, an open circle, a filled triangle and a filled square
-# stay apart from each other even when overplotted at small sizes; four filled shapes do
-# not, and a fifth distinct shape would not survive the smallest size tier at all.
-_TIER_MARKERS = {"low": "x", "medium": "o", "high": "^", "veryhigh": "s",
-                 "pessimistic": "s"}
-_TIER_MARKER_FILLED = {"low": False, "medium": False, "high": True, "veryhigh": True,
-                       "pessimistic": True}
 
-# Marker area (pt^2) per tier.  An 8x spread from low to high (~2.9x in marker width), so
-# the size channel survives the alpha blending of a dense panel.  Spaced by a roughly
-# constant ratio in *width* (2.8 / 4.9 / 8.1 / 12.7 pt), which is what the eye compares,
-# with the low tier setting a floor below which an open cross or circle loses its shape.
-_TIER_SIZES = {"low": 8.0, "medium": 24.0, "high": 66.0, "veryhigh": 160.0,
-               "pessimistic": 160.0}
+_TIER_STYLES: dict[str, _TierStyle] = {
+    "low":         _TierStyle(cm.tab10(0), "x", False, 8.0),
+    "medium":      _TierStyle(cm.tab10(1), "o", False, 24.0),
+    "high":        _TierStyle(cm.tab10(3), "^", True, 66.0),
+    "veryhigh":    _TierStyle(cm.tab10(4), "s", True, 160.0),
+    "pessimistic": _TierStyle(cm.tab10(4), "s", True, 160.0),
+}
 
-# The baseline varies only three of the five groups, so it can carry a per-point channel
-# exactly where that channel's group is one of the three: `_baseline_style_groups` then
-# reads its shape and size from _TIER_MARKERS / _TIER_SIZES, reusing the four tier shapes
-# rather than adding a fifth.  A channel whose group the baseline holds at UNUSED_TIER has
-# no tier to encode and falls back to the fixed star and size below.
-#
-# Colour stays fixed at black on every layout: with shape and size shared with the search
-# optima it is the only channel left that says "no agents", and it is off the tier
-# palette.  It is drawn at the panel's alpha so the reference level does not hide the
-# optima it is there to be compared against; the legend proxy stays opaque.
+#: The baseline reuses the tier shape and size wherever the channel's group is one it
+#: varies; on a group it holds at UNUSED_TIER it falls back to the fixed star below.
+#: Its colour is fixed on every layout — with shape and size shared, colour is the only
+#: channel left that says "no agents".
 _BASELINE_COLOR = "black"
 _BASELINE_MARKER = "*"
 _BASELINE_SIZE = 90.0
-#: Wrapped, because it is by some margin the longest entry in the colour legend and the
-#: legend column is a fixed width in inches: on one line it overruns the figure edge at
-#: `_MATRIX_FONT["legend"]`, and widening the column takes the inches off the panels.
+#: Wrapped: on one line this is the longest colour-legend entry and overruns the
+#: fixed-width legend column.
 _BASELINE_LABEL = "human-only\nbaseline"
 
 
 def _percent_tick(value: float, _pos: int | None = None) -> str:
     """Tick label for a fraction on a log axis: ``10%``, ``1%``, ``0.1%``, …
 
-    A fixed number of decimals cannot serve an axis spanning three decades; the label
-    keeps exactly as many as the tick needs.  Shared with the drop axis of
-    :func:`plot_elite_turnover`, which spans two.
+    Keeps exactly as many decimals as the tick needs, since one fixed number of them
+    cannot serve an axis spanning several decades.
     """
     pct = 100.0 * value
     if pct <= 0:
@@ -534,10 +491,9 @@ def _dollar_tick(value: float, _pos: int | None = None) -> str:
 
 
 def _ratio_tick(value: float, _pos: int | None = None) -> str:
-    """Tick label for a dimensionless ratio on a log axis: ``0.001``, ``0.1``, ``1``, ``100``.
+    """Tick label for a ratio on a log axis: ``0.001``, ``0.1``, ``1``, ``100``.
 
-    Matplotlib's default would write the sub-unit decades in scientific mathtext; a ratio
-    reads better as the plain number, and the axis is only five decades wide.
+    Matplotlib's default writes the sub-unit decades in scientific mathtext.
     """
     return f"{value:g}"
 
@@ -545,8 +501,7 @@ def _ratio_tick(value: float, _pos: int | None = None) -> str:
 def _tiers_present(df: "pd.DataFrame", column: str) -> list[str]:
     """The tiers occurring in `column`, in mild→extreme order.
 
-    Only `project` reaches "veryhigh" and only `agent` reaches "pessimistic", and a campaign
-    may be partial, so the count varies per group and callers must not assume a fixed set.
+    The count varies per group, and a partial campaign may narrow it further.
     """
     return [tier for tier in ALL_SCENARIO_TIERS if (df[column] == tier).any()]
 
@@ -569,10 +524,44 @@ def _log_floor(df: "pd.DataFrame", column: str) -> float | None:
     return None
 
 
+def _clipped_xy(
+    df: "pd.DataFrame",
+    x_col: str, y_col: str,
+    x_floor: float | None, y_floor: float | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The two plot columns as arrays, non-positive values moved onto their log floor."""
+    x = df[x_col].to_numpy(dtype=float)
+    y = df[y_col].to_numpy(dtype=float)
+    if x_floor is not None:
+        x = np.where(x > 0, x, x_floor)
+    if y_floor is not None:
+        y = np.where(y > 0, y, y_floor)
+    return x, y
+
+
+def _padded_log_range(
+    positive: np.ndarray,
+    what: str,
+    extra_decades_below: float = 0.0,
+) -> tuple[float, float]:
+    """A log-axis range covering `positive`, padded by 5 % of the span in log space.
+
+    `extra_decades_below` widens the low end further, for a figure whose marks grow from
+    the frame.  Raises when nothing positive is left to scale.
+    """
+    positive = positive[positive > 0]
+    if positive.size == 0:
+        raise ValueError(f"no positive values in {what}; cannot scale a log axis")
+    lo, hi = float(positive.min()), float(positive.max())
+    pad = 0.05 * max(np.log10(hi / lo), 0.4)
+    return (10.0 ** (np.log10(lo) - pad - extra_decades_below),
+            10.0 ** (np.log10(hi) + pad))
+
+
 def _common_log_limits(
     df: "pd.DataFrame",
     columns: tuple[str, ...],
-    floors: tuple[float | None, ...] = (),
+    floors: tuple[float | None, ...],
 ) -> tuple[float, float]:
     """One padded (min, max) covering every column of `columns`, for a log axis.
 
@@ -582,14 +571,7 @@ def _common_log_limits(
     """
     parts = [df[c].to_numpy(dtype=float) for c in columns]
     parts.append(np.array([f for f in floors if f is not None], dtype=float))
-    values = np.concatenate(parts)
-    positive = values[values > 0]
-    if positive.size == 0:
-        raise ValueError(f"no positive values in {list(columns)}; cannot scale a log axis")
-    lo, hi = float(positive.min()), float(positive.max())
-    # 5 % of the span in log space, so the extreme points do not sit on the frame.
-    pad = 0.05 * max(np.log10(hi / lo), 0.4)
-    return 10.0 ** (np.log10(lo) - pad), 10.0 ** (np.log10(hi) + pad)
+    return _padded_log_range(np.concatenate(parts), str(list(columns)))
 
 
 def _marker_kwargs(marker_tier: str, color, area: float) -> dict:
@@ -599,8 +581,8 @@ def _marker_kwargs(marker_tier: str, color, area: float) -> dict:
     the marker; the filled shapes must have none or the edge swallows them at the smallest
     size tier.
     """
-    marker = _TIER_MARKERS[marker_tier]
-    if _TIER_MARKER_FILLED[marker_tier]:
+    marker = _TIER_STYLES[marker_tier].marker
+    if _TIER_STYLES[marker_tier].filled:
         return {"marker": marker, "color": color, "linewidths": 0}
     width = max(0.35, 0.16 * float(np.sqrt(area)))
     if marker == "o":
@@ -620,6 +602,24 @@ def _baseline_marker_kwargs(marker_tier: "str | None", area: float) -> dict:
     return _marker_kwargs(marker_tier, _BASELINE_COLOR, area)
 
 
+#: Style of the reference lines drawn on the cost planes and the ratio figure.
+_REFERENCE_LINE = {"color": "0.6", "linewidth": 0.8, "linestyle": (0, (4, 3)),
+                   "zorder": 0}
+
+
+def _decade_axis(axis, formatter, label_minor: bool = False) -> None:
+    """Put decade ticks on a log axis, formatted by `formatter`.
+
+    The 2 and 5 subdivisions are always drawn; `label_minor` also labels them, which a
+    range only two decades wide needs to carry more than two labels.
+    """
+    axis.set_major_locator(LogLocator(base=10.0))
+    axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
+    axis.set_major_formatter(FuncFormatter(formatter))
+    axis.set_minor_formatter(FuncFormatter(formatter) if label_minor
+                             else NullFormatter())
+
+
 def _density_style(n: int) -> tuple[float, float]:
     """(marker-size multiplier, alpha) for a point cloud of `n` points."""
     if n <= 2_000:
@@ -630,16 +630,15 @@ def _density_style(n: int) -> tuple[float, float]:
 
 
 #: Width (inches) reserved to the right of the panels for the three channel legends, and
-#: the vertical gap (inches) between two of them.  Both are absolute: the legends are the
-#: same objects whatever the grid, so their column must not grow with the facet count.
+#: the vertical gap (inches) between two of them.  Absolute rather than fractional: the
+#: legends are the same objects whatever the grid, so the column must not grow with it.
 _LEGEND_WIDTH_IN = 2.1
 _LEGEND_GAP_IN = 0.25
 
-#: Font sizes (points) for the tier grid, chosen against the size the figure is *read* at
-#: rather than drawn at: the grid is 17-20 inches wide and goes onto a text column at
-#: `\linewidth`, a reduction of roughly a third.  Enlarging the figure instead achieves
-#: nothing, since the same reduction cancels it, so the type grows inside the same inches
-#: and the panel geometry stays fixed.
+#: Font sizes (points) for the tier grid.  Chosen against the size the figure is read at
+#: rather than drawn at: it is 17-20 inches wide and is placed at a text column's width,
+#: about a third of that.  Enlarging the figure instead would cancel out, so the type
+#: grows inside the same inches and the panel geometry stays fixed.
 _MATRIX_FONT: dict[str, int] = {
     "suptitle": 17,
     "column":   15,   # the facet tier heading, on the top row only
@@ -655,8 +654,8 @@ def _figure_bbox(fig: "Figure", artist) -> "matplotlib.transforms.Bbox":
     """`artist`'s bounding box in figure coordinates.
 
     A legend has no extent until a renderer has laid it out, and nothing has drawn the
-    figure yet at the point the next legend needs placing; the Agg canvas this module
-    pins at import time hands one over without a draw pass.
+    figure at the point the next legend needs placing; the Agg canvas this module pins at
+    import time supplies a renderer without a draw pass.
     """
     renderer = fig.canvas.get_renderer()
     return artist.get_window_extent(renderer).transformed(fig.transFigure.inverted())
@@ -730,11 +729,9 @@ def _baseline_style_groups(
 ) -> "list[tuple[str | None, str | None, pd.DataFrame]]":
     """`cell` split into (marker tier, size tier, rows) blocks, largest size first.
 
-    The baseline carries a real tier for the three groups it varies and `UNUSED_TIER` for
-    the two it does not, so a channel is encodable exactly when its group is one of the
-    three.  A group held at `UNUSED_TIER` yields `None` for that channel — there is no
-    tier to encode and the caller draws the fixed fallback style.  Sorted largest area
-    first for the same reason the tier loop is: the small markers must not be buried.
+    A channel is encodable exactly when its group is one the baseline varies; a group
+    held at `UNUSED_TIER` yields `None` there and the caller draws the fallback style.
+    Sorted largest area first, so the small markers are not buried.
     """
     import pandas as pd    # runtime-only: the module-level import is TYPE_CHECKING
 
@@ -751,7 +748,7 @@ def _baseline_style_groups(
         for (marker_tier, size_tier), sub in
         cell.groupby([tiers(marker_group), tiers(size_group)], sort=False)
     ]
-    blocks.sort(key=lambda b: _TIER_SIZES[b[1]] if b[1] else _BASELINE_SIZE, reverse=True)
+    blocks.sort(key=lambda b: _TIER_STYLES[b[1]].area if b[1] else _BASELINE_SIZE, reverse=True)
     return blocks
 
 
@@ -775,37 +772,32 @@ def _draw_matrix(
 ) -> "Figure":
     """The five-channel tier grid, for any pair of columns.
 
-    The facet layout, the colour/shape/size encoding of the three non-facet groups and the
-    three proxy legends live here and nowhere else; callers validate the channel assignment
+    The facet layout, the colour/shape/size encoding of the three non-facet groups and
+    the three proxy legends live here; callers validate the channel assignment
     (:func:`_check_matrix_groups`) and supply the two plot columns.  `x_floor` / `y_floor`
     clip non-positive values onto a log axis (see :func:`_log_floor`).
 
-    `shared_limits` puts the *same* range on both axes — only meaningful when the two
-    columns are in the same unit.  The panels then also get an equal aspect, so a decade is
-    the same length on both and the 1:1 diagonal runs at 45°; without that the equal range
-    would be a claim the picture does not keep.
+    `shared_limits` puts the same range on both axes, which is only meaningful when the
+    two columns are in the same unit.  The panels then also get an equal aspect, so a
+    decade is the same length on both and the 1:1 diagonal runs at 45°.
 
-    `baseline` holds the zero-agent optima, which carry no tier for the two groups they do
-    not vary and are therefore drawn outside the three per-point channels: one
-    fixed black marker, matched to a panel by the *facet* groups alone.  Where a facet
-    group is one the baseline does not vary (`agent` on the default layout), every column
-    gets the same points — the baseline is a reference level, not an observation at that
-    tier, and the caption must say so.
+    `baseline` holds the zero-agent optima.  They are matched to a panel by the facet
+    groups alone, so a facet on a group the baseline does not vary repeats the same
+    reference points down every column.
     """
-    columns = _tier_groups(df, f"tier_{x_group}")
+    columns = _tiers_present(df, f"tier_{x_group}")
     rows = _tier_groups(df, f"tier_{y_group}")
     if not columns or not rows:
         raise ValueError("no rows for any tier of the faceting groups")
 
-    # Per channel, only the tiers the data actually has: the groups differ in tier count
-    # (`project` and `agent` have four), so a fixed list would print dead legend entries.
+    # Per channel, only the tiers the data has: the groups differ in tier count, so a
+    # fixed list would print dead legend entries.
     size_tiers = _tiers_present(df, f"tier_{size_group}")
     marker_tiers = _tiers_present(df, f"tier_{marker_group}")
     color_tiers = _tiers_present(df, f"tier_{color_group}")
 
     with plt.style.context(_STYLE):
-        # A panel carrying one range on both axes is square, so it needs its width back:
-        # 4.2 × 4.2 rather than the wide 5.0 × 4.2 of an unconstrained pair of columns.
+        # A panel carrying one range on both axes is square and needs its width back.
         panel_w = 4.2 if shared_limits is not None else 5.0
         fig, axes = plt.subplots(
             len(rows), len(columns),
@@ -815,57 +807,39 @@ def _draw_matrix(
         )
         fig.suptitle(title, fontsize=_MATRIX_FONT["suptitle"], y=1.0)
 
+        channel_columns = [f"tier_{g}" for g in (size_group, marker_group, color_group)]
         for r, (y_tier, y_sub) in enumerate(rows):
-            for c, (x_tier, _) in enumerate(columns):
+            for c, x_tier in enumerate(columns):
                 ax = axes[r][c]
                 cell = y_sub[y_sub[f"tier_{x_group}"] == x_tier]
                 scale, alpha = _density_style(len(cell))
-                # Largest markers first, so the small ones are not buried under them.
+                # Grouped once, then visited in tier order rather than in the groupby's
+                # own: the largest markers must be drawn first, or the small ones end up
+                # buried under them.
+                blocks = dict(tuple(cell.groupby(channel_columns, sort=False)))
                 for size_tier in reversed(size_tiers):
                     for marker_tier in marker_tiers:
                         for color_tier in color_tiers:
-                            sub = cell[
-                                (cell[f"tier_{size_group}"] == size_tier)
-                                & (cell[f"tier_{marker_group}"] == marker_tier)
-                                & (cell[f"tier_{color_group}"] == color_tier)
-                            ]
-                            if sub.empty:
+                            sub = blocks.get((size_tier, marker_tier, color_tier))
+                            if sub is None or sub.empty:
                                 continue
-                            x = sub[x_col].to_numpy(dtype=float)
-                            y = sub[y_col].to_numpy(dtype=float)
-                            if x_floor is not None:
-                                x = np.where(x > 0, x, x_floor)
-                            if y_floor is not None:
-                                y = np.where(y > 0, y, y_floor)
-                            area = _TIER_SIZES[size_tier] * scale
+                            area = _TIER_STYLES[size_tier].area * scale
                             ax.scatter(
-                                x, y, s=area, alpha=alpha,
-                                **_marker_kwargs(marker_tier, _TIER_COLORS[color_tier],
+                                *_clipped_xy(sub, x_col, y_col, x_floor, y_floor),
+                                s=area, alpha=alpha,
+                                **_marker_kwargs(marker_tier, _TIER_STYLES[color_tier].color,
                                                  area),
                             )
                 if baseline is not None and not baseline.empty:
-                    # Matched on the facet groups only, and on a group the baseline does
-                    # not vary every tier of it matches — which is what puts the same
-                    # reference points in every agent column of the default layout.
                     b_cell = _baseline_cell(baseline, x_group, x_tier, y_group, y_tier)
-                    # Shape and size come from the tier channels wherever the baseline
-                    # varies that group, so a baseline point is read against the search
-                    # optima on the same two scales; only its colour is fixed.
                     for b_marker, b_size, b_sub in _baseline_style_groups(
                             b_cell, marker_group, size_group):
-                        bx = b_sub[x_col].to_numpy(dtype=float)
-                        by = b_sub[y_col].to_numpy(dtype=float)
-                        if x_floor is not None:
-                            bx = np.where(bx > 0, bx, x_floor)
-                        if y_floor is not None:
-                            by = np.where(by > 0, by, y_floor)
-                        b_area = (_TIER_SIZES[b_size] if b_size else _BASELINE_SIZE) * scale
-                        # Drawn at the panel's alpha, like every other point: the overlay
-                        # sits on top (zorder), and an opaque black marker there would
-                        # mask the optima it is the reference for.  Labelled so it is
-                        # identifiable on the finished axes — the figure legend is built
-                        # from proxies, not from these handles.
-                        ax.scatter(bx, by, s=b_area, zorder=5, alpha=alpha,
+                        b_area = (_TIER_STYLES[b_size].area if b_size else _BASELINE_SIZE) * scale
+                        # At the panel's alpha like every other point, so the overlay does
+                        # not mask the optima it is the reference for.  The label makes it
+                        # identifiable on the axes; the figure legend uses proxies.
+                        ax.scatter(*_clipped_xy(b_sub, x_col, y_col, x_floor, y_floor),
+                                   s=b_area, zorder=5, alpha=alpha,
                                    label=_BASELINE_LABEL,
                                    **_baseline_marker_kwargs(b_marker, b_area))
                 ax.set_xscale(xscale)
@@ -878,13 +852,10 @@ def _draw_matrix(
                     ax.set_aspect("equal", adjustable="box")
                 ax.tick_params(axis="both", which="both",
                                labelsize=_MATRIX_FONT["tick"])
-                # The count goes *inside* the panel rather than onto the title line: on
-                # the top row that line carries the centred facet heading, and at these
-                # font sizes a long heading (`agent = pessimistic`) reaches both ends of
-                # a narrow panel.  Stacking two titles is not available — matplotlib
-                # repositions every title on each draw, and `pad` is an axes-level offset
-                # that moves all of them together.  The corner is chosen for the same
-                # reason the 1:1 diagonal is drawn: nearly every optimum sits above it.
+                # Inside the panel rather than on the title line, which on the top row
+                # already carries the centred facet heading.  Two stacked titles are not
+                # available: matplotlib repositions every title on each draw and `pad`
+                # moves all of them together.
                 ax.text(0.985, 0.015, f"n = {len(cell)}", transform=ax.transAxes,
                         ha="right", va="bottom", fontsize=_MATRIX_FONT["count"],
                         color="0.35", zorder=6)
@@ -902,24 +873,24 @@ def _draw_matrix(
         legend_specs = [
             (color_group, [
                 Line2D([], [], linestyle="none", marker="o", markersize=8,
-                       color=_TIER_COLORS[t], label=t) for t in color_tiers
+                       color=_TIER_STYLES[t].color, label=t) for t in color_tiers
             ]),
             (marker_group, [
-                Line2D([], [], linestyle="none", marker=_TIER_MARKERS[t], markersize=9,
+                Line2D([], [], linestyle="none", marker=_TIER_STYLES[t].marker, markersize=9,
                        color="0.35", markeredgecolor="0.35", label=t,
-                       markerfacecolor="0.35" if _TIER_MARKER_FILLED[t] else "none")
+                       markerfacecolor="0.35" if _TIER_STYLES[t].filled else "none")
                 for t in marker_tiers
             ]),
             (size_group, [
                 Line2D([], [], linestyle="none", marker="o", color="0.35", label=t,
-                       markersize=float(np.sqrt(_TIER_SIZES[t])) * 1.5)
+                       markersize=float(np.sqrt(_TIER_STYLES[t].area)) * 1.5)
                 for t in size_tiers
             ]),
         ]
         if baseline is not None and not baseline.empty:
-            # The baseline belongs in the *colour* legend, not in a block of its own: it
-            # now shares the shape and size channels with the search optima, and black is
-            # the one thing that still separates it from them.
+            # In the colour legend rather than a block of its own: the baseline shares
+            # the shape and size channels with the search optima, so only black separates
+            # it from them.
             legend_specs[0][1].append(
                 Line2D([], [], linestyle="none", marker="o", markersize=8,
                        color=_BASELINE_COLOR, label=_BASELINE_LABEL)
@@ -968,11 +939,9 @@ def _draw_cost_plane(
 ) -> "Figure":
     """A tier grid whose two axes are both dollars per feature.
 
-    Both columns share one log range (over `df` and `baseline` together, so a baseline
-    zero does not drop off the axis) at an equal aspect, and the 1:1 diagonal is drawn:
-    which side of it a point falls on is which of the two costs the optimum spends more
-    on.  Ticks are decades in dollars, with 2 and 5 as unlabelled minor ticks so a point
-    can still be placed inside its decade.
+    Both columns share one log range — taken over `df` and `baseline` together, so a
+    baseline zero does not drop off the axis — at an equal aspect, and the 1:1 diagonal
+    is drawn.  Ticks are decades in dollars, with 2 and 5 as unlabelled minor ticks.
     """
     scaled = _with_baseline(df, baseline)
     x_floor = _log_floor(scaled, x_col)
@@ -986,13 +955,70 @@ def _draw_cost_plane(
     )
     for ax in fig.get_axes():
         for axis in (ax.xaxis, ax.yaxis):
-            axis.set_major_locator(LogLocator(base=10.0))
-            axis.set_major_formatter(FuncFormatter(_dollar_tick))
-            axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
-            axis.set_minor_formatter(NullFormatter())
-        ax.plot(ax.get_xlim(), ax.get_xlim(), color="0.6", linewidth=0.8,
-                linestyle=(0, (4, 3)), zorder=0)
+            _decade_axis(axis, _dollar_tick)
+        ax.plot(ax.get_xlim(), ax.get_xlim(), **_REFERENCE_LINE)
     return fig
+
+
+#: The two cost planes: how each derives its columns, and how it labels them.  Both go
+#: through `_draw_cost_plane`, so they differ only in this.
+class _CostPlane(NamedTuple):
+    x_col: str
+    y_col: str
+    xlabel: str                 # the dollar signs are escaped, or mathtext sees three
+    ylabel: str                 # delimiters in the label and renders it literally
+    title: str
+    derive: object = None       # frame -> frame, for a column no table carries
+
+
+def _add_development_cost(frame: "pd.DataFrame") -> "pd.DataFrame":
+    """A copy of `frame` with the two team cost drivers added together."""
+    return frame.assign(
+        cost_development_mean=frame["cost_human_mean"] + frame["cost_agent_mean"])
+
+
+_HUMAN_AGENT_PLANE = _CostPlane(
+    x_col="cost_agent_mean", y_col="cost_human_mean",
+    xlabel="↓  agent cost   (\\$ / feature)",
+    ylabel="↓  developer cost   (\\$ / feature)",
+    title="Developer vs. agent cost at $c^\\star$",
+)
+
+_QUALITY_DEVELOPMENT_PLANE = _CostPlane(
+    x_col="cost_development_mean", y_col="cost_quality_mean",
+    xlabel="↓  development cost   (\\$ / feature)",
+    ylabel="↓  escaped-bug cost   (\\$ / feature)",
+    title="Escaped-bug vs. development cost (developers + agents) at $c^\\star$",
+    derive=_add_development_cost,
+)
+
+
+def _plot_cost_plane(
+    plane: _CostPlane,
+    df: "pd.DataFrame",
+    required: tuple[str, ...],
+    x_group: str, y_group: str, size_group: str, marker_group: str, color_group: str,
+    title: str,
+    baseline: "pd.DataFrame | None",
+) -> "Figure":
+    """Validate the channels and the columns, derive what is missing, and draw `plane`."""
+    channels = {
+        "x_group": x_group, "y_group": y_group, "size_group": size_group,
+        "marker_group": marker_group, "color_group": color_group,
+    }
+    _check_matrix_groups(df, channels)
+    _require_columns(df, required)
+    if plane.derive is not None:
+        df = plane.derive(df)
+        if baseline is not None and not baseline.empty:
+            baseline = plane.derive(baseline)
+    return _draw_cost_plane(
+        df, channels,
+        x_col=plane.x_col, y_col=plane.y_col,
+        xlabel=plane.xlabel, ylabel=plane.ylabel,
+        title=title or f"{plane.title} — {x_group} × {y_group}",
+        baseline=baseline,
+    )
 
 
 def plot_human_agent_matrix(
@@ -1007,28 +1033,13 @@ def plot_human_agent_matrix(
 ) -> "Figure":
     """The two team cost drivers of each optimum against each other, on a tier grid.
 
-    x is what the agents billed (`cost_agent_mean`), y what the developers cost
-    (`cost_human_mean`), both dollars per feature.  This is the part of the bill the team
-    composition controls; the escaped-bug term is the subject of
-    :func:`plot_quality_development_matrix`.  Same-unit axes, so the panels get the shared
-    range and 1:1 diagonal of :func:`_draw_cost_plane`.
+    x is what the agents billed, y what the developers cost, both dollars per feature —
+    the part of the bill the team composition controls.  The escaped-bug term is the
+    subject of :func:`plot_quality_development_matrix`.
     """
-    channels = {
-        "x_group": x_group, "y_group": y_group, "size_group": size_group,
-        "marker_group": marker_group, "color_group": color_group,
-    }
-    _check_matrix_groups(df, channels)
-    _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
-    return _draw_cost_plane(
-        df, channels,
-        x_col="cost_agent_mean", y_col="cost_human_mean",
-        # The dollar signs are escaped, or mathtext sees three delimiters in the label
-        # and renders the whole thing literally.
-        xlabel="↓  agent cost   (\\$ / feature)",
-        ylabel="↓  developer cost   (\\$ / feature)",
-        title=title or f"Developer vs. agent cost at $c^\\star$ — "
-                       f"{x_group} × {y_group}",
-        baseline=baseline,
+    return _plot_cost_plane(
+        _HUMAN_AGENT_PLANE, df, ("cost_agent_mean", "cost_human_mean"),
+        x_group, y_group, size_group, marker_group, color_group, title, baseline,
     )
 
 
@@ -1044,34 +1055,14 @@ def plot_quality_development_matrix(
 ) -> "Figure":
     """What the escaped bugs cost against what the team cost, on a tier grid.
 
-    The two drivers :func:`plot_human_agent_matrix` separates are added back together here
-    (`cost_development_mean = cost_human_mean + cost_agent_mean`, x) and set against the
-    escaped-bug bill (`cost_quality_mean`, y).  The sum is derived on a copy; it is a
-    column of no table.  Same unit on both axes, so the same treatment as
-    :func:`plot_human_agent_matrix`.
+    The two drivers :func:`plot_human_agent_matrix` separates are added back together on
+    x and set against the escaped-bug bill on y.  The sum is derived on a copy; no table
+    carries it.
     """
-    channels = {
-        "x_group": x_group, "y_group": y_group, "size_group": size_group,
-        "marker_group": marker_group, "color_group": color_group,
-    }
-    _check_matrix_groups(df, channels)
-    _require_columns(df, ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"))
-
-    def _with_development(frame):
-        return frame.assign(
-            cost_development_mean=frame["cost_human_mean"] + frame["cost_agent_mean"])
-
-    df = _with_development(df)
-    if baseline is not None and not baseline.empty:
-        baseline = _with_development(baseline)
-    return _draw_cost_plane(
-        df, channels,
-        x_col="cost_development_mean", y_col="cost_quality_mean",
-        xlabel="↓  development cost   (\\$ / feature)",
-        ylabel="↓  escaped-bug cost   (\\$ / feature)",
-        title=title or f"Escaped-bug vs. development cost (developers + agents) at "
-                       f"$c^\\star$ — {x_group} × {y_group}",
-        baseline=baseline,
+    return _plot_cost_plane(
+        _QUALITY_DEVELOPMENT_PLANE, df,
+        ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"),
+        x_group, y_group, size_group, marker_group, color_group, title, baseline,
     )
 
 
@@ -1084,21 +1075,16 @@ def plot_agent_human_ratio_matrix(
     color_group: str = "debt",
     title: str = "",
 ) -> "Figure":
-    """How lopsided the agent/developer split is at each optimum, against its own percentile.
+    """How lopsided the agent/developer split is at each optimum, against its percentile.
 
-    y is `cost_agent_mean / cost_human_mean`, the same trade-off
-    :func:`plot_human_agent_matrix` draws as a plane, collapsed to the one number that says
-    which side it fell on: above 1 the agents outbilled the developers.  It spans several
-    decades, hence the log axis and the reference line at 1.
+    y is `cost_agent_mean / cost_human_mean`, the trade-off
+    :func:`plot_human_agent_matrix` draws as a plane collapsed to one number: above 1 the
+    agents outbilled the developers.  It spans several decades, hence the log axis and
+    the reference line at 1.
 
-    x is that ratio's **percentile rank within `df`**, so the panels share one empirical
-    distribution and each is a fragment of it: a panel's horizontal position says where
-    its scenarios sit in the campaign-wide ordering.  The rank is taken over the frame as
-    handed in, so filtering it further before calling re-ranks what is left against itself.
-
-    Ranking makes the x axis linear and uniform by construction, so the reading is the
-    vertical spread of a panel and which part of the axis it occupies, not the slope,
-    which every ECDF has.
+    x is that ratio's percentile rank within `df`, so the panels share one empirical
+    distribution and each is a fragment of it.  The rank is taken over the frame as handed
+    in, so filtering it further before calling re-ranks what is left against itself.
     """
     channels = {
         "x_group": x_group, "y_group": y_group, "size_group": size_group,
@@ -1119,10 +1105,9 @@ def plot_agent_human_ratio_matrix(
         x_group=x_group, y_group=y_group, size_group=size_group,
         marker_group=marker_group, color_group=color_group,
         x_col="cost_agent_human_ratio_pct", y_col="cost_agent_human_ratio",
-        # Short enough not to run into the next panel's at `_MATRIX_FONT["axis"]`; what
-        # the rank is taken over is the caption's job, and the docstring's above.
+        # Short enough not to run into the next panel's at `_MATRIX_FONT["axis"]`.
         xlabel="percentile rank of the ratio",
-        # No "↓" here: unlike a cost, neither direction of the ratio is the better one.
+        # No "↓": unlike a cost, neither direction of the ratio is the better one.
         ylabel="agent cost / developer cost",
         title=title or f"Agent-to-developer cost ratio at $c^\\star$ — "
                        f"{x_group} × {y_group}",
@@ -1132,14 +1117,10 @@ def plot_agent_human_ratio_matrix(
     )
     for ax in fig.get_axes():
         # A rank axis is uniform, so it takes the plain percent formatter rather than the
-        # decade-aware `_percent_tick` a log axis of fractions would need.
+        # decade-aware `_percent_tick` a log axis of fractions needs.
         ax.xaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
-        ax.yaxis.set_major_locator(LogLocator(base=10.0))
-        ax.yaxis.set_major_formatter(FuncFormatter(_ratio_tick))
-        ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
-        ax.yaxis.set_minor_formatter(NullFormatter())
-        # Parity: above the line the agents cost more than the developers they work for.
-        ax.axhline(1.0, color="0.6", linewidth=0.8, linestyle=(0, (4, 3)), zorder=0)
+        _decade_axis(ax.yaxis, _ratio_tick)
+        ax.axhline(1.0, **_REFERENCE_LINE)      # parity
     return fig
 
 
@@ -1148,8 +1129,7 @@ def plot_agent_human_ratio_matrix(
 # ---------------------------------------------------------------------------
 
 # The two populations of `src.constellation`, and the colours they keep across both
-# figures — the same red and blue the per-search landscape uses for `c*` and `I*`, which
-# mean the same two things here.
+# figures: the same red and blue the per-search landscape gives `c*` and `I*`.
 _POPULATION_COLORS = {C_STAR: _BEST_COLOR, I_STAR: _KEEP_COLOR}
 _POPULATION_LABELS = {C_STAR: "$c^\\star$", I_STAR: "$\\mathcal{I}^\\star$ (mean per scenario)"}
 
@@ -1166,9 +1146,8 @@ def _check_cell_channels(cells: "pd.DataFrame", groups: tuple[str, ...]) -> tupl
 def _cell_lookup(cells: "pd.DataFrame", row_column: str, col_column: str) -> dict:
     """(population, row tier, col tier, parameter) -> (mean, sd), for O(1) panel lookup.
 
-    Keyed on the two faceting columns by name rather than on whatever `tier_*` columns the
-    frame happens to carry: a caller may hand in a wider table, and a positional key would
-    then silently line up with the wrong group.
+    Keyed on the two faceting columns by name, since a caller may hand in a wider table
+    and a positional key would then line up with the wrong group.
     """
     return dict(zip(
         zip(cells["population"], cells[row_column], cells[col_column],
@@ -1180,21 +1159,16 @@ def _cell_lookup(cells: "pd.DataFrame", row_column: str, col_column: str) -> dic
 def _profile_limits(cells: "pd.DataFrame", parameters: tuple[str, ...]) -> tuple[float, float]:
     """One padded log range covering every bar and whisker of the profile figure.
 
-    Includes `mean + sd`, since the upper whisker is drawn, and floors the low end at the
-    smallest positive mean rather than at zero — a role no optimum staffs has a mean of
-    exactly 0, which a log axis cannot place and which `_zero_marks` annotates instead.
+    Includes `mean + sd`, since the upper whisker is drawn.  A role no optimum staffs has
+    a mean of exactly 0, which a log axis cannot place; `_zero_marks` annotates those.
     """
     sub = cells[cells["parameter"].isin(parameters)]
     upper = (sub["mean"].fillna(0.0) + sub["sd"].fillna(0.0)).to_numpy(dtype=float)
     means = sub["mean"].to_numpy(dtype=float)
-    positive = np.concatenate([means[means > 0], upper[upper > 0]])
-    if positive.size == 0:
-        raise ValueError("no positive parameter mean; cannot scale a log axis")
-    lo, hi = float(positive.min()), float(positive.max())
-    pad = 0.05 * max(np.log10(hi / lo), 0.4)
-    # The bars grow from the left frame, so the low end gets a full extra decade of run-up:
+    # The bars grow from the left frame, so the low end gets an extra decade of run-up:
     # without it the smallest mean is a bar of zero length and reads as an absent role.
-    return 10.0 ** (np.log10(lo) - pad - 1.0), 10.0 ** (np.log10(hi) + pad)
+    return _padded_log_range(np.concatenate([means, upper]), "the parameter means",
+                             extra_decades_below=1.0)
 
 
 def plot_constellation_profile(
@@ -1210,15 +1184,11 @@ def plot_constellation_profile(
     roles with the two populations side by side and the between-scenario standard
     deviation as a whisker.
 
-    The x axis is **logarithmic and shared by every panel**, which is what makes the grid
-    readable: the counts run from 0 to the thousands, so a linear axis would flatten every
-    panel but the extreme-velocity column, and a per-panel axis would make the columns
-    incomparable — which is the one comparison the figure exists for.  A role with a mean
-    of exactly 0 has no bar a log axis can draw and is marked `0` at the left frame.
-
-    The whiskers are clipped at the frame rather than at zero: `sd` exceeds the mean
-    wherever a role is staffed in some scenarios of the cell and not in others, which is a
-    statement about the mean, not a claim that the count can be negative.
+    The x axis is logarithmic and shared by every panel, since the counts span several
+    decades and the panels have to be comparable.  A role with a mean of exactly 0 has no
+    bar a log axis can draw and is marked `0` at the left frame; the whiskers are clipped
+    at the frame, `sd` exceeding the mean wherever a role is staffed in only part of the
+    cell.
     """
     rows_group, cols_group = _check_cell_channels(cells, (rows_group, cols_group))
     parameters, labels = DEV_PARAMETERS, AGENT_ROLE_ABBREV
@@ -1255,8 +1225,7 @@ def plot_constellation_profile(
                         mean = 0.0 if np.isnan(mean) else float(mean)
                         sd = 0.0 if np.isnan(sd) else float(sd)
                         means.append(mean)
-                        # Whiskers are clipped at the frame: mean - sd is routinely
-                        # negative for a role staffed in only part of the cell.
+                        # Clipped at the frame; mean - sd is often negative here.
                         lower.append(max(0.0, mean - max(x_lo, mean - sd)))
                         upper.append(sd)
                         if mean <= 0:
@@ -1283,8 +1252,6 @@ def plot_constellation_profile(
                     ax.set_ylabel(f"{rows_group} = {row_tier}", fontsize=9)
 
         handles, legend_labels = axes[0][0].get_legend_handles_labels()
-        # One legend for the whole figure: the only per-point channel here is the
-        # population, so there is nothing to stack a legend column for.
         fig.legend(handles[:len(populations)], legend_labels[:len(populations)],
                    loc="lower center", ncol=len(populations), frameon=True, fontsize=9,
                    bbox_to_anchor=(0.5, -0.02))
@@ -1296,14 +1263,13 @@ def _normalised_columns(
     cells: "pd.DataFrame",
     parameters: tuple[str, ...],
 ) -> "dict[str, tuple[float, float]]":
-    """Per parameter, the (min, max) of ``log1p(mean)`` over **both** populations.
+    """Per parameter, the (min, max) of ``log1p(mean)`` over both populations.
 
-    Each parameter is normalised to its own colour range because they are not in the same
-    unit and not on the same scale — `a_dev_5` reaches the thousands while `F_freeze` never
-    passes 1, and one shared range would paint every column but one flat.  The range spans
-    both populations, so the two panels of the heatmap can be read against each other.
-    `log1p` rather than a plain min-max because the counts are heavily skewed within a
-    column as well, and it maps an exact zero to an exact zero.
+    Each parameter gets its own colour range: they share no unit and span four decades
+    between them, so one range would paint every column but the largest flat.  The range
+    covers both populations, so the heatmap's two panels stay comparable.  `log1p` rather
+    than a plain min-max, since the counts are skewed within a column too and it maps an
+    exact zero to an exact zero.
     """
     ranges = {}
     for parameter in parameters:
@@ -1333,17 +1299,14 @@ def plot_constellation_heatmap(
 ) -> "Figure":
     """The whole constellation table as a picture, one panel per population.
 
-    Rows are the cells of the tier grid — both faceting groups on one axis, so all twelve
-    are visible at once — and columns are the control variables, grouped into the
-    process triple, the two composition vectors and the derived totals, with a rule between
-    the blocks.
+    Rows are the cells of the tier grid, both faceting groups on one axis so that all of
+    them are visible at once; columns are the control variables, grouped into the process
+    triple, the two composition vectors and the derived totals, with a rule between the
+    blocks.
 
-    Colour is the mean **normalised within its own column and across both populations**:
-    the parameters share no unit and span four decades between them, so a single scale
-    would leave every column but `a_dev_5` unreadable, while a per-panel scale would stop
-    the two populations from being comparable — which is the point of drawing them
-    together.  The raw `mean ± sd` is printed in each cell, so the colour is a reading aid
-    and the number is the result.
+    Colour is the mean normalised within its own column and across both populations (see
+    :func:`_normalised_columns`).  The raw `mean ± sd` is printed in each cell, so the
+    colour is a reading aid and the number is the result.
     """
     rows_group, cols_group = _check_cell_channels(cells, (rows_group, cols_group))
     row_column, col_column = f"tier_{rows_group}", f"tier_{cols_group}"
@@ -1455,32 +1418,21 @@ def visualize_constellation(
 # 7. The two-figure summary of team structure
 # ---------------------------------------------------------------------------
 #
-# `plot_constellation_profile` / `_heatmap` report every control variable and are the
-# backing detail.  These two are the summary, and they exist because the 23 parameters
-# collapse onto two nearly independent facts that no single dense figure states plainly:
-#
-#   shape  — Review and Security are 54-100 % of every optimal team (median 94 %), and the
-#            split between the two is set by `bugimpact` and by essentially nothing else.
-#   scale  — the team size is ~5.6 agents per arriving feature at every project tier, so
-#            `project` fixes the head count mechanically; what the scenarios really move is
-#            the *human* staffing beside it, and `agent` is its strongest driver.
-#
-# One figure per fact.  Both take `optima.csv` rather than the aggregated cell table,
-# because the shares and the per-arrival rate must be formed *within* a scenario before
-# being averaged — a ratio of means is not the mean of the ratios.
+# `plot_constellation_profile` / `_heatmap` report every control variable; these two
+# summarise, one on the composition of the team and one on what moves it.  Both take
+# `optima.csv` rather than the aggregated cell table, because their shares and rates have
+# to be formed within a scenario before being averaged: a ratio of means is not the mean
+# of the ratios.
 
-#: One colour per agent role, k=1..8, for the composition bars.  A qualitative palette
-#: rather than a sequential one: the roles are categories, and the two that dominate must
-#: not read as "more" of the six that do not.
+#: One colour per agent role, k=1..8, for the composition bars.  Qualitative rather than
+#: sequential, since the roles are categories.
 _ROLE_COLORS = tuple(cm.tab10(i) for i in range(8))
 
-#: Segments smaller than this are left unlabelled — at the high project tiers six of the
-#: eight roles are under a per cent and their labels would overprint each other.
+#: Segments smaller than this are left unlabelled; their labels would overprint.
 _SHARE_LABEL_MIN = 0.06
 
-#: The developers' slice in the `team` weighting.  Off the eight-role palette on purpose:
-#: the humans are not a ninth agent, and the one thing the figure must not do is let them
-#: read as one.
+#: The developers' slice in the `team` weighting.  Off the eight-role palette, so that
+#: they do not read as a ninth agent.
 _HUMAN_COLOR = "0.30"
 
 
@@ -1494,23 +1446,21 @@ class _ShareWeight(NamedTuple):
     total_column: "str | None"      # annotated at the bar's end; None = sum the columns
     total_label: str
     total_format: str
-    filename: str                   # figure stem, named for what is split, not for the key
+    filename: str                   # figure stem, naming what is split
 
 
-#: How a contributor's slice is weighed.  Three views of one composition:
+#: Three views of one composition, selected by `plot_team_shape`'s `weight`:
 #:
-#: `agent` (the default) — share of the agent bill.  A share of the head count instead
-#:   systematically overstates the three autonomous roles, which are flat-rate,
-#:   monitoring-free and bounded only by saturation, so the search stacks them freely.
-#: `team` — the same eight roles plus the developers, i.e. the whole bill the composition
-#:   controls.  The agent split is the reported `cost_agent_mean` apportioned by `agent`
-#:   share, so the nine slices add to `cost_team_mean` exactly.  Excludes the escaped-bug
-#:   cost, which is what the team's choices cost elsewhere, not a line item of the team.
-#: `count` — the head count, the control variable the search actually moves; that it
-#:   disagrees with the bill is a result in itself.
+#: `agent` (the default) — each role's share of the agent bill.
+#: `team`  — the same eight roles plus the developers, the whole bill the composition
+#:   controls.  The agent side is `cost_agent_mean` apportioned by the `agent` shares, so
+#:   the nine slices add to `cost_team_mean` exactly.  The escaped-bug cost is annotated
+#:   beside the bar rather than stacked into it.
+#: `count` — each role's share of the head count.  Not written by default; it disagrees
+#:   with the bill, because the flat-rate autonomous roles are cheap and numerous.
 #:
-#: The two cost weightings annotate the *reported* per-feature figure rather than a summed
-#: horizon bill, so the number at the end of a bar is in the unit the tables report.
+#: The two cost weightings annotate the reported per-feature figure rather than a summed
+#: horizon bill, so the number at a bar's end is in the unit the tables report.
 _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
     "agent": _ShareWeight(
         columns=BILL_PARAMETERS, labels=AGENT_ROLE_ABBREV, colors=_ROLE_COLORS,
@@ -1534,25 +1484,21 @@ _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
 }
 
 
-#: The escaped-bug cost, annotated beside every bar but never a slice: the bar describes
-#: the team, and what the escaped bugs cost is what that team's choices cost elsewhere.
-#: Annotated rather than dropped because it is the one number that says whether the bill
-#: beside it matters at all — it spans three decades more than either team column.
+#: The escaped-bug cost, annotated beside every bar but never stacked into it: the bar
+#: describes the team, and this is what the team's choices cost elsewhere.
 _BUG_COST_COLUMN = "cost_quality_mean"
 _BUG_COST_LABEL = "bug \\$ per\nfeature"
 
-#: Points to the right of a bar's end for the two annotated columns.  The first has to
-#: clear the widest team figure ("$3,777", "$986.48"), the second the widest bug one.
+#: Points to the right of a bar's end for the two annotated columns; each has to clear
+#: the widest figure the column before it can print.
 _ANNOTATION_OFFSETS = (4.0, 54.0)
 
 
 def _compact_dollars(value: float) -> str:
-    """`$83`, `$851`, `$26.2k`, `$517k` — five characters, three decades.
+    """`$83`, `$851`, `$26.2k`, `$517k` — at most five characters, whatever the decade.
 
-    The escaped-bug cost spans four orders of magnitude across the cells, so the format
-    that keeps the team column readable ("${:,.0f}") would put a seven-digit number in a
-    margin.  Precision is not the point here: the annotation says which decade the bugs
-    cost in, and the bar beside it is what carries the composition.
+    The escaped-bug cost spans four orders of magnitude across the cells, where the plain
+    format of the team column would print a seven-digit number into a margin.
     """
     if value < 1_000:
         return f"${value:,.0f}"
@@ -1572,11 +1518,9 @@ def _composition_shares(
 ) -> "pd.DataFrame":
     """Mean role share per cell, plus the mean total, over whichever `columns` weigh a role.
 
-    The share is formed per scenario and then averaged, so a cell's eight shares are the
-    mean composition of its optima — not the composition of its mean optimum, which the
-    four-decade spread in team size and bill would let the largest scenario dictate.  A
-    row whose total is zero contributes no share (nothing to divide by) but still counts
-    toward the cell's `n_scenarios`.
+    The share is formed per scenario and then averaged, so a cell's shares are the mean
+    composition of its optima rather than the composition of its mean optimum.  A row
+    whose total is zero contributes no share but still counts toward `n_scenarios`.
     """
     extras = [c for c in (total_column, extra_column) if c]
     missing = [c for c in list(columns) + extras if c not in optima.columns]
@@ -1590,8 +1534,8 @@ def _composition_shares(
     weight_total = frame[columns].sum(axis=1)
     frame["group_total"] = (weight_total if total_column is None
                             else frame[total_column])
-    # The second annotated column is a per-scenario dollar figure like the first, so it is
-    # averaged over the cell the same way; it weighs nothing and enters no share.
+    # A per-scenario dollar figure like the first, averaged the same way; it weighs
+    # nothing and enters no share.
     annotations = ["group_total"]
     if extra_column is not None:
         frame["extra_total"] = frame[extra_column]
@@ -1606,11 +1550,10 @@ def _composition_shares(
 
 
 def _yaxis_note(ax, x: float, y: float, text: str, dx: float, **kwargs):
-    """`text` beside data row `y`, `x` in axes fraction, offset `dx` **points** sideways.
+    """`text` beside data row `y`, `x` in axes fraction, offset `dx` points sideways.
 
-    Offset in points rather than in axes fractions on purpose: these notes sit outside a
-    panel and the panels are narrow, so the same fraction would put a label a different
-    distance out on every layout.
+    Offset in points rather than in axes fractions: these notes sit outside a panel, and
+    a fraction would place them differently on every layout.
     """
     kwargs.setdefault("va", "center")
     return ax.annotate(text, xy=(x, y), xycoords=ax.get_yaxis_transform(),
@@ -1627,21 +1570,16 @@ def plot_team_shape(
 ) -> "Figure":
     """What the optimal team is made of: one hundred-per-cent stacked bar per cell.
 
-    A stacked bar answers the structural question directly — the eight roles are parts of
-    one whole, and the eye compares segment widths without having to hold a log scale in
-    its head.  The absolute total is annotated at the end of each bar instead of being
-    drawn, because it spans four decades and any axis that showed it would flatten the
-    composition into a sliver.
+    The absolute total is annotated at the end of each bar rather than drawn: it spans
+    four decades, and an axis showing it would flatten the composition.
 
     `weight` chooses what a slice measures (see `_SHARE_WEIGHTS`) and brings its own
-    labels and palette; the default `agent` is the role's share of the agent bill.
+    labels and palette.
 
-    Three scenario groups are read off the figure, not two.  The bars are grouped into
-    blocks by `block_group`, so the same `bar_group` ladder repeats in each and whether it
-    is reproduced across the blocks is the "which scenario group causes this" reading —
-    a stacked bar makes an invariance as visible as a change.  `panel_group` repeats that
-    whole block structure once per panel, two panels to a row, extending the same reading
-    to a third group; `panel_group=None` gives the single-panel form and pools it instead.
+    Three scenario groups are laid out at once.  Bars are grouped into blocks by
+    `block_group`, so the same `bar_group` ladder repeats in each; `panel_group` repeats
+    that whole structure once per panel, two panels to a grid row.  `panel_group=None`
+    gives the single-panel form and pools that group instead.
     """
     if weight not in _SHARE_WEIGHTS:
         raise ValueError(f"unknown weight {weight!r}; "
@@ -1664,8 +1602,8 @@ def plot_team_shape(
         raise ValueError("no optima for any tier of the grouping variables")
 
     indexed = cells.set_index([f"tier_{g}" for g in grouping])
-    # The rows are the same in every panel — that is what makes the panels comparable —
-    # so the layout is built once and each panel only looks its own cells up.
+    # Every panel carries the same rows, so the layout is built once and each panel only
+    # looks its own cells up.
     positions, ticks, tick_labels, block_spans = [], [], [], []
     y = 0.0
     for block in blocks:
@@ -1678,10 +1616,9 @@ def plot_team_shape(
         block_spans.append((block, start, y - 1.0))
         y += 0.6                     # a gap, so the blocks read as blocks
 
-    # A panel has to stay wide enough for a segment label to fit inside it, so the width
-    # is per panel and the figure grows with their number rather than splitting one budget.
-    # Two to a row: four side by side is a 19-inch strip, and stacking them keeps the left
-    # column's rows aligned with the right column's, which is what they are compared on.
+    # The width is per panel, so a segment label still fits when panels are added, and
+    # the figure grows rather than splitting one budget.  Two to a grid row keeps the
+    # left column's rows aligned with the right column's.
     n_panels = len(panels)
     ncols = 1 if n_panels == 1 else 2
     nrows = -(-n_panels // ncols)
@@ -1699,12 +1636,11 @@ def plot_team_shape(
             r, c = divmod(p, ncols)
             bar_axes.append(fig.add_subplot(grid[r, c],
                                             sharey=bar_axes[0] if bar_axes else None))
-        # The title is placed by hand rather than left at `suptitle`'s default `y`: the
-        # figure grows with the grid, and a fraction of it would grow the gap with it.
+        # Placed by hand: `suptitle`'s default `y` is a fraction, which would grow the
+        # gap as the figure grows.
         fig.suptitle(title, fontsize=12, y=1.0 - 0.20 / fig.get_figheight())
-        # Below this a segment is drawn but not labelled: at the high project tiers six of
-        # the eight roles are under a per cent and their labels would overprint.  The
-        # threshold is in figure space, so it tightens as panels are added.
+        # Below this a segment is drawn but not labelled.  In figure space, so the
+        # threshold tightens as panels are added and the panels narrow.
         label_min = max(_SHARE_LABEL_MIN, 0.24 / panel_width)
         for p, (panel, ax) in enumerate(zip(panels, bar_axes)):
             # A panel's column of totals overhangs its right edge, into the next panel's
@@ -1737,8 +1673,7 @@ def plot_team_shape(
             ax.set_xlim(0.0, 1.0)
             ax.set_xticks(np.linspace(0.0, 1.0, 6))
             ax.xaxis.set_major_formatter(PercentFormatter(xmax=1.0))
-            # Panelled, the label is drawn once under the whole grid instead: the same
-            # sentence under four panels is the same statement four times.
+            # Panelled, the label is drawn once under the whole grid instead.
             ax.set_xlabel(spec.xlabel if n_panels == 1 else "", fontsize=9)
             ax.grid(axis="y", visible=False)
             if p % ncols:
@@ -1757,9 +1692,8 @@ def plot_team_shape(
         bar_axes[0].set_ylim(y - 0.4, -1.3)        # first block at the top
         bar_axes[0].set_yticks(ticks)
         bar_axes[0].set_yticklabels(tick_labels, fontsize=9)
-        # The block label sits outside the axes, so it does not compete with the bars, and
-        # it goes on every panel of the first column — one per grid row, not one per
-        # figure.  No y *label*: it would land left of these and read as labelling them.
+        # Outside the axes, and on the first panel of every grid row rather than once per
+        # figure.  These take the place of a y label, which would land left of them.
         for ax in bar_axes[::ncols]:
             for block, start, end in block_spans:
                 _yaxis_note(ax, 0.0, (start + end) / 2.0, f"{block_group}\n= {block}",
@@ -1772,18 +1706,16 @@ def plot_team_shape(
         fig.legend(handles, legend_labels, loc="lower center", ncol=len(labels),
                    fontsize=8, frameon=True, columnspacing=0.9, handlelength=1.1)
         panelled = n_panels > 1
-        # The strip the legend and the one x label sit in, and the one the suptitle sits
-        # in, are a fixed number of *inches* — the figure grows with the grid, and a
-        # fraction of it would grow the margins with it.
+        # The legend/x-label strip and the title strip are reserved in inches, not in
+        # figure fractions, which would grow with the grid.
         height = fig.get_figheight()
         bottom = (0.42 if panelled else 0.55) / height
         fig.tight_layout(rect=(1.35 / fig.get_figwidth(), bottom,
                                1.0 - margin / fig.get_figwidth(), 1.0 - 0.32 / height))
         if panelled:
-            # Room for the columns of totals that sit outside each panel's right edge.
-            # `wspace` is a fraction of the *realised* axes width, which `tight_layout`
-            # has just decided, so the gap is solved for rather than guessed: keep the
-            # row's outer edges and give every gap exactly `margin` inches.
+            # Room for the columns of totals that overhang each panel's right edge.
+            # `wspace` is a fraction of the axes width `tight_layout` has just decided, so
+            # solve for the value that makes every gap exactly `margin` inches.
             figure_width = fig.get_figwidth()
             first, last = bar_axes[0].get_position(), bar_axes[ncols - 1].get_position()
             span = (last.x1 - first.x0) * figure_width
@@ -1799,9 +1731,8 @@ class _Quantity(NamedTuple):
     formatter: "object" = None
 
 
-#: The structural quantities the driver figure summarises, one panel each: the three
-#: process controls a team is set up with, how much machine it puts on a unit of work,
-#: and what that machine is pointed at.  All six panels are linear.
+#: The quantities the driver figure summarises, one linear panel each: the three process
+#: controls, the two agent counts per arriving feature, and the detection split.
 _TEAM_QUANTITIES: tuple[_Quantity, ...] = (
     _Quantity("N", "human staffing $N$\n(FTE)"),
     _Quantity("R", "release cycle $R$\n(sprints)"),
@@ -1811,32 +1742,25 @@ _TEAM_QUANTITIES: tuple[_Quantity, ...] = (
     _Quantity("security_share", "Security's share of\nthe detection pair", _percent_tick),
 )
 
-#: The two agent panels keep separate x ranges even though they share a unit: the
-#: autonomous count is ~40x the supervised one, so a shared range puts every autonomous
-#: row on one tick.  Each axis is labelled, so the magnitudes stay readable; what is given
-#: up is reading the split off the positions, which the composition figures show instead.
 
 
 def _team_quantities(optima: "pd.DataFrame") -> "pd.DataFrame":
     """Add the derived structural quantities of `_TEAM_QUANTITIES` to a copy of `optima`.
 
-    All of them are formed **within** a scenario before anything is averaged: the team size
-    spans four decades and the arrival rate three, so a ratio of aggregates would be the
-    largest scenario's ratio rather than the typical one.
+    Each is formed within a scenario before anything is averaged, so that the figure
+    reports a typical ratio rather than the largest scenario's.
     """
     frame = optima.copy()
-    # The two halves of the team are bounded by different things and differ by a factor of
-    # ~40, so they get a column each: the supervised roles are held down by the monitoring
-    # condition and the saturation bounds, while nothing but its own saturation bounds an
-    # autonomous one.  A single "agents per feature" column would be the autonomous count
-    # with a rounding error, and would say nothing about the constraint.
+    # The supervised and autonomous halves get a column each: they are bounded by
+    # different things and differ by more than an order of magnitude, so a combined
+    # column would be the autonomous count with a rounding error.
     supervised = frame[[DEV_PARAMETERS[i] for i in SUPERVISED_ROLE_INDICES]].sum(axis=1)
     autonomous = frame[[DEV_PARAMETERS[i] for i in AUTONOMOUS_ROLE_INDICES]].sum(axis=1)
     detection = frame["a_dev_5"] + frame["a_dev_6"]
     frame["sup_agents_per_feature"] = supervised / frame["r_arrival"]
     frame["aut_agents_per_feature"] = autonomous / frame["r_arrival"]
-    # A team with neither detection service has no split to report; NaN drops out of the
-    # order statistics rather than being charged to either service as a zero.
+    # A team with neither detection service has no split; NaN drops out of the order
+    # statistics rather than being charged to either service as a zero.
     frame["security_share"] = frame["a_dev_6"].where(detection > 0) / detection
     return frame
 
@@ -1863,29 +1787,23 @@ def plot_team_drivers(
 
     One row per (scenario group, tier) and one panel per structural quantity; each row is
     the median over the scenarios at that tier with a bar from the first to the third
-    quartile.  A group whose rows sit on top of each other in a panel does not move that
-    quantity; a group whose rows march across it does, and the direction is read off
-    directly.
+    quartile.  A group whose rows sit on top of each other does not move that quantity;
+    one whose rows march across the panel does.
 
-    The marginals are honest here because the campaign is a **full factorial**: the
-    scenarios at any one tier are perfectly balanced over the other four groups, so a row
-    is not confounded by them.  That is what lets five groups share one axis instead of
-    needing a facet grid apiece.
+    Putting all five groups on one axis assumes the campaign is a full factorial, so that
+    the scenarios at any one tier are balanced over the other four groups and a row is
+    not confounded by them.
 
-    Order statistics rather than a mean and a standard deviation, because several of these
-    quantities pile on a search-range boundary — a third of the optima sit at `N`'s floor
-    and a fifth at its ceiling, and `F_freeze` is 0 in 69 % of them — where a mean reports
-    a value no optimum actually took.  There is no campaign-median rule: with six panels it
-    was six more lines of ink for a reference the axis already carries.
+    Order statistics rather than mean and sd: several of these quantities pile up on a
+    search-range boundary, where a mean reports a value no optimum took.
     """
     frame = _team_quantities(optima)
     rows = _tier_rows(frame, SCENARIO_GROUPS)
     if not rows:
         raise ValueError("no optima for any tier of the scenario groups")
     height = max(r[2] for r in rows) + 1.0
-    # Midway down the gap `_tier_rows` leaves between two groups.  The blocks are already
-    # spaced apart, so the rule is redundant on its own; it earns its ink on six panels
-    # side by side, where the eye has to carry a block boundary across the whole width.
+    # Midway down the gap `_tier_rows` leaves between two groups, so the block boundary
+    # carries across all six panels.
     separators = [(prev[2] + cur[2]) / 2.0
                   for prev, cur in zip(rows, rows[1:]) if prev[0] != cur[0]]
 
@@ -1905,7 +1823,7 @@ def plot_team_drivers(
                 if values.empty:
                     continue
                 q1, median, q3 = values.quantile([0.25, 0.5, 0.75])
-                color = _TIER_COLORS[tier]
+                color = _TIER_STYLES[tier].color
                 ax.plot([q1, q3], [y, y], color=color, linewidth=2.4, alpha=0.45,
                         solid_capstyle="butt", zorder=2)
                 ax.plot([median], [y], marker="o", markersize=6, color=color, zorder=3)
@@ -1927,25 +1845,25 @@ def plot_team_drivers(
             ax.text(-0.62, (min(ys) + max(ys)) / 2.0, group,
                     transform=ax.get_yaxis_transform(), fontsize=9.5, ha="center",
                     va="center", fontweight="bold")
-        # `veryhigh` and `pessimistic` share the fourth colour slot on purpose (no group
-        # holds both), but this figure stacks all five groups on one axis, so the legend
-        # would otherwise print the same purple dot twice.  One entry, both names.
+        # `veryhigh` and `pessimistic` share the fourth colour slot, and this is the one
+        # figure that puts all five groups on one axis, so they get a single merged
+        # legend entry rather than the same dot printed twice.
         present = [t for t in ALL_SCENARIO_TIERS
                    if any(tier == t for _, tier, _, _ in rows)]
         fourth = [t for t in present if t in ("veryhigh", "pessimistic")]
         legend = [Line2D([], [], linestyle="none", marker="o", markersize=6,
-                         color=_TIER_COLORS[t], label=t)
+                         color=_TIER_STYLES[t].color, label=t)
                   for t in present if t not in fourth]
         if fourth:
             legend.append(Line2D([], [], linestyle="none", marker="o", markersize=6,
-                                 color=_TIER_COLORS[fourth[0]],
+                                 color=_TIER_STYLES[fourth[0]].color,
                                  label=" / ".join(fourth)))
         legend.append(Line2D([], [], color="0.45", linewidth=2.4, alpha=0.6,
                              label="median with interquartile range"))
         fig.legend(handles=legend, loc="lower center", ncol=len(legend), fontsize=8,
                    frameon=True, columnspacing=1.2, handlelength=1.6)
-        # The reserve above and below is only what the suptitle and the legend strip
-        # actually occupy; `tight_layout`'s own padding does the rest.
+        # Reserving only what the suptitle and the legend strip occupy; `tight_layout`
+        # adds its own padding on top.
         fig.tight_layout(rect=(0.075, 0.035, 1.0, 0.965))
     return fig
 
@@ -1965,14 +1883,12 @@ def visualize_team_summary(
     it the cost weightings have nothing to draw, so the caller applies it first — the
     prices come from the scenario configs, which this module does not read.
 
-    Two compositions by default, because they answer different questions and disagree:
-    `agent` is what the agent budget is spent on, `team` puts the developers in beside it
-    and says whether the agent budget matters at all.  `count` is available but is not
-    written by default; see `_SHARE_WEIGHTS` for why the bill is the honest unit.
+    Two compositions by default: `agent` is what the agent budget is spent on, and
+    `team` puts the developers in beside it.  `_SHARE_WEIGHTS` has the third.
 
-    The composition figures panel on `panel_group` as well.  A re-cut grid may put that
-    group on one of the other two axes, and a group cannot occupy two channels at once;
-    it is dropped to the pooled single-panel form rather than failing the subcommand.
+    The composition figures also panel on `panel_group`.  A re-cut grid may put that
+    group on one of the other two axes, and a group cannot occupy two channels at once,
+    so it falls back to the pooled single-panel form rather than failing.
     """
     if panel_group in (block_group, bar_group):
         warnings.warn(
@@ -2058,10 +1974,9 @@ def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
     manifest = _load_manifest(result_dir)
     label    = _scenario_label(result_dir, manifest)
 
-    # `objectives` is the whole evaluated pool at K_search replications, i.e. the
-    # landscape the search saw.  The reported candidates are overwritten with their
-    # K_final estimates from the re-simulation, so c*'s CI is drawn at the width it is
-    # actually reported with and the cost split shows the reported numbers.
+    # The whole evaluated pool at K_search, i.e. the landscape the search saw, with the
+    # reported candidates overwritten by their K_final estimates so that c*'s CI is drawn
+    # at the width it is reported with.
     objectives = dict(summary["objectives"])
     objectives.update(summary["final_objectives"])
     best_key   = summary["best"]
@@ -2130,13 +2045,11 @@ def visualize_campaign(
     """The campaign matrices, drawn from a consolidated ``optima.csv``.
 
     The human-only rows are split off first and passed to the matrices as a `baseline`
-    overlay rather than getting figures of their own; everything else is one search
-    optimum per scenario.  `channels` passes `x_group` / `y_group` / `size_group` /
-    `marker_group` / `color_group` through to every matrix.
+    overlay rather than getting figures of their own.  `channels` passes `x_group` /
+    `y_group` / `size_group` / `marker_group` / `color_group` through to every matrix.
 
-    `turnover` is the long-format ``elite_turnover.csv``.  Its search rows drive the
-    convergence figure; the enumeration contributes none, so an all-baseline campaign
-    simply gets no convergence figure.
+    `turnover` is the long-format ``elite_turnover.csv``; only its search rows drive the
+    convergence figure, so an all-baseline campaign gets none.
     """
     if "mode" not in optima.columns:
         raise KeyError("'mode' is not a column of the optima table")
@@ -2169,15 +2082,13 @@ def visualize_campaign(
     )
     save_figure(fig, out_dir, "quality_development_matrix", fmt)
 
-    # No baseline: a team with no agents has no agent/developer ratio, and 0 has no
-    # position on a five-decade log axis.
+    # No baseline: a team with no agents has no agent/developer ratio.
     fig = plot_agent_human_ratio_matrix(
         searches, title=f"Agent-to-developer cost ratio at $c^\\star${suffix}", **channels,
     )
     save_figure(fig, out_dir, "agent_human_ratio_matrix", fmt)
 
-    # Convergence is a property of the search, so this figure has no tier channels and no
-    # baseline; the enumeration contributes no generations and therefore no rows.
+    # An enumeration has no generations, so it contributes no rows here.
     if turnover is not None and not turnover.empty:
         curves = turnover[turnover["mode"] != HUMAN_ONLY_MODE]
         if not curves.empty:

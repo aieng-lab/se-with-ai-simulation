@@ -24,7 +24,7 @@ A campaign is a tree of finished runs, one per (scenario, result mode):
 ``elite_turnover.csv``
     Long format — one row per (scenario, mode, generation) — carrying the per-generation
     turnover and whether the incumbent changed.  Long rather than one column per
-    generation, because a search that exhausts its budget early runs fewer generations.
+    generation, since a search that exhausts its budget early runs fewer of them.
 """
 
 from __future__ import annotations
@@ -97,20 +97,15 @@ def scenario_params_for_id(
 # ----------------------------------------------------------------------------
 
 def is_baseline_scenario(scenario_id: str) -> bool:
-    """True for a human-only baseline scenario, i.e. one carrying the `X` sentinel.
-
-    The baseline varies only `human`, `project` and `bugimpact`; `debt` and `agent` are
-    inert for a zero-agent team and are marked `d-X` / `a-X` rather than pinned to a tier.
-    """
+    """True for a human-only baseline scenario, i.e. one carrying the `X` sentinel."""
     return UNUSED_TIER in tiers_from_scenario_id(scenario_id).values()
 
 
 def expected_modes(scenario_id: str) -> tuple[str, ...]:
-    """The result modes a scenario is supposed to carry.
+    """The result modes a scenario is supposed to carry, for the missing-run report.
 
     A baseline scenario is enumerated once and has no search counterpart; every other
-    scenario is searched once.  `build_tables` reports missing results against this, so a
-    campaign scenario is not counted as missing a baseline nor vice versa.
+    scenario is searched once.
     """
     return ((HUMAN_ONLY_MODE,) if is_baseline_scenario(scenario_id)
             else (SEARCH_MODE,))
@@ -125,6 +120,17 @@ def search_dirs(results_dir: Path) -> list[tuple[str, str, Path]]:
             if (d / "search_summary.json").is_file():
                 found.append((scenario_dir.name, mode, d))
     return found
+
+
+def require_search_dirs(results_dir: "str | Path") -> list[tuple[str, str, Path]]:
+    """`search_dirs`, raising FileNotFoundError on a missing or empty results tree."""
+    results_dir = Path(results_dir)
+    if not results_dir.is_dir():
+        raise FileNotFoundError(f"{results_dir} is not a directory")
+    searches = search_dirs(results_dir)
+    if not searches:
+        raise FileNotFoundError(f"no finished searches found under {results_dir}")
+    return searches
 
 
 def team_config(row: "pd.Series | dict") -> TeamConfiguration:
@@ -163,13 +169,12 @@ def optimum_row(
     """The `optima.csv` row for one run; None when nothing was simulated.
 
     `value_ratio` is the achieved throughput as a fraction of the arrival rate, so the
-    throughput constraint reads `value_ratio >= 1 - eps` directly, whatever the scenario's
-    `r_arrival`.  The three ``cost_*_share`` columns are the cost drivers as fractions of
-    the total and sum to 1 exactly.
+    throughput constraint reads `value_ratio >= 1 - eps` whatever the scenario's
+    `r_arrival`.  The three ``cost_*_share`` columns sum to 1 exactly.
 
-    Every number comes from ``final_objectives``, the `K_final` estimates the two-stage
-    selection reports from.  `n_indistinguishable` is likewise the *final* size of `I*`,
-    after both tie-breaks and the re-simulation; ``convergence.csv`` has the earlier ones.
+    Every number is read from ``final_objectives``, the `K_final` block, and
+    `n_indistinguishable` is the final size of `I*`; ``convergence.csv`` has the sizes at
+    the earlier stages.
     """
     best = summary.get("best")
     if best is None:
@@ -317,12 +322,7 @@ def build_tables(
 
     Returns ``(optima, scenarios, convergence, turnover)``.
     """
-    results_dir = Path(results_dir)
-    if not results_dir.is_dir():
-        raise FileNotFoundError(f"{results_dir} is not a directory")
-    searches = search_dirs(results_dir)
-    if not searches:
-        raise FileNotFoundError(f"no finished searches found under {results_dir}")
+    searches = require_search_dirs(results_dir)
 
     o_rows: list[dict] = []
     s_rows: list[dict] = []
@@ -342,9 +342,8 @@ def build_tables(
             pd.DataFrame(c_rows), pd.DataFrame(t_rows))
 
 
-#: The scenario groups a human-only baseline actually varies.  `debt` and `agent` are
-#: excluded because they are inert for a zero-agent team, which is what lets one baseline
-#: row serve as the reference for every (debt, agent) combination at the same tiers.
+#: The scenario groups a human-only baseline varies; `debt` and `agent` are inert for a
+#: zero-agent team, so one baseline row is the reference for every combination of those.
 BASELINE_JOIN_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
 
 
@@ -353,12 +352,7 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
 
     One row per (campaign scenario, search mode) that has a baseline sharing its
     `human` / `project` / `bugimpact` tiers.  `cost_ratio = cost_mean(baseline) /
-    cost_mean(c*)` is the factor by which the agent-supported optimum changes the cost per
-    feature: above 1 the agents are cheaper per feature than the human-only team.
-
-    Since the baseline is inert in `debt` and `agent`, each baseline row is the reference
-    for every combination of those two — with the full campaign that is 36 baselines
-    against 432 searched scenarios.
+    cost_mean(c*)`, so above 1 the agent-supported optimum is the cheaper of the two.
     """
     if optima.empty or "mode" not in optima.columns:
         return pd.DataFrame()
@@ -389,10 +383,9 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
 # ----------------------------------------------------------------------------
 
 def _median_iqr_max(values: "pd.Series") -> str:
-    """`median [q1, q3], max = …`.
+    """Render a column as `median [q1, q3], max = …`.
 
-    Order statistics rather than a mean and a standard deviation: the sizes of `I*` and
-    the relative half-widths are strongly skewed.
+    Order statistics rather than mean and sd, because these distributions are skewed.
     """
     v = pd.to_numeric(values, errors="coerce").dropna()
     if v.empty:
@@ -402,14 +395,10 @@ def _median_iqr_max(values: "pd.Series") -> str:
 
 
 def convergence_summary(convergence: "pd.DataFrame") -> str:
-    """Render `convergence.csv` as a text block, one section per group of measures.
-
-    Everything here is a re-reading of the table; nothing is computed that it does not
-    already hold.
-    """
+    """Render `convergence.csv` as a text block, one section per group of measures."""
     if convergence.empty:
-        return "Search convergence (§5.1): no search carries a convergence record.\n"
-    lines = [f"Search convergence (§5.1) over {len(convergence)} search(es)", "=" * 64]
+        return "Search convergence: no search carries a convergence record.\n"
+    lines = [f"Search convergence over {len(convergence)} search(es)", "=" * 64]
 
     searched = convergence[convergence["n_generations_run"] > 0]
     lines.append("")
@@ -424,7 +413,7 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
         lines.append(f"  incumbent turnover               {_median_iqr_max(searched['incumbent_turnover'])}")
 
     lines.append("")
-    lines.append("Size of I* at the four stages of §3.10")
+    lines.append("Size of I* at the four stages of the selection")
     lines.append(f"  preliminary, at K'              {_median_iqr_max(convergence['n_prelim'])}")
     lines.append(f"  after the parsimony tie-break   {_median_iqr_max(convergence['n_resimulated'])}")
     lines.append(f"  after the re-simulation at K    {_median_iqr_max(convergence['n_after_resim'])}")
@@ -441,8 +430,8 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
     after = convergence["n_after_resim"].sum()
     lines.append("")
     lines.append("What the three reduction steps did")
-    # The first tie-break is the one that saves effort: every member it removes is a
-    # configuration the re-simulation does not have to run at K replications.
+    # The first tie-break is the one that saves effort: a member removed there is one
+    # fewer configuration to re-simulate at K replications.
     if prelim:
         lines.append(f"  parsimony removed at K'         {removed_prelim:.0f}/{prelim:.0f} members "
                      f"({removed_prelim / prelim:.1%} of the preliminary set)")
@@ -468,7 +457,7 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
         lines.append(f"  {row['scenario_id']:<24} {row['mode']:<12} value = {ratio_txt}")
 
     lines.append("")
-    lines.append("Relative CI half-width rho after the re-simulation (Eq. rel_halfwidth)")
+    lines.append("Relative CI half-width rho after the re-simulation")
     lines.append(f"  mean over the final I*          {_median_iqr_max(convergence['rho_mean'])}")
     lines.append(f"  at c*                           {_median_iqr_max(convergence['rho_best'])}")
     lines.append("")
