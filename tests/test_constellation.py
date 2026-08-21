@@ -1,0 +1,411 @@
+"""Tests for src/constellation.py — what the optimal teams are made of.
+
+The campaign tree these build is the same shape `tests/test_campaign.py` uses; what
+differs is which block of ``search_summary.json`` is read, so the fixtures deliberately
+make ``indistinguishable`` and ``final_objectives`` disagree.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from src.campaign import scenario_params_for_id
+from src.config import AGENT_ROLE_COUNT, HUMAN_ONLY_MODE, supervised_agent_count
+from src.constellation import (
+    AGENT_COST_PARAMETERS,
+    BILL_PARAMETERS,
+    C_STAR,
+    CELL_GROUPS,
+    CONSTELLATION_PARAMETERS,
+    DEV_PARAMETERS,
+    I_STAR,
+    QA_PARAMETERS,
+    build_constellation,
+    build_indistinguishable,
+    cell_statistics,
+    constellation_summary,
+    derive_totals,
+    indistinguishable_rows,
+    role_bill,
+    scenario_means,
+    search_optima,
+)
+
+_SID = "h-m_p-m_d-m_a-m_b-m"
+_OTHER = "h-l_p-m_d-h_a-l_b-m"       # same project/bugimpact cell, different free tiers
+_BASELINE_SID = "h-m_p-m_d-X_a-X_b-m"
+
+
+def _objective(A_dev, A_qa=(0,) * AGENT_ROLE_COUNT, N=2.0, R=4, F_freeze=1,
+               cost=1000.0) -> dict:
+    return {
+        "N": N, "R": R, "F_freeze": F_freeze,
+        "A_dev": list(A_dev), "A_qa": list(A_qa),
+        "cost_mean": cost, "cost_ci": [cost * 0.9, cost * 1.1],
+        "value_mean": 12.0, "value_ci": [11.9, 12.1],
+        "feasible_throughput": True,
+        "cost_quality_mean": cost * 0.5,
+        "cost_human_mean": cost * 0.3,
+        "cost_agent_mean": cost * 0.2,
+        "actions_mean": [10.0] * AGENT_ROLE_COUNT,
+        "impl_human_mean": 4.0, "impl_agents_mean": 6.0,
+        "fixes_human_mean": 1.0, "fixes_agent_mean": 2.0,
+    }
+
+
+def _summary(best: str, keep: list[str], final: dict, objectives: dict | None = None):
+    return {
+        "best": best,
+        "indistinguishable": keep,
+        "throughput_floor": 11.76,
+        "K_search": 100, "K_final": 1000,
+        "objectives": objectives if objectives is not None else final,
+        "final_objectives": final,
+    }
+
+
+#: Three configurations re-simulated, but only two of them survive to the final `I*`.
+#: `k3` is the member the stage-2 filter dropped and that must never reach the tables.
+_FINAL = {
+    "k1": _objective([1, 0, 1, 0, 4, 2, 1, 0], N=1.0),
+    "k2": _objective([3, 0, 1, 0, 8, 2, 1, 0], N=3.0),
+    "k3": _objective([9, 9, 9, 9, 9, 9, 9, 9], N=9.0),
+}
+
+
+def _write(root: Path, scenario_id: str, mode: str, summary: dict) -> Path:
+    d = root / scenario_id / mode
+    d.mkdir(parents=True)
+    (d / "search_summary.json").write_text(json.dumps(summary))
+    (d / "manifest.json").write_text(json.dumps({
+        "scenario_id": scenario_id, "strategy": mode,
+        "horizon": {"T": 104, "K_search": 100, "K_final": 1000, "master_seed": 42},
+        "n_evaluated": 100, "n_simulated": 85, "best_admissible": True,
+    }))
+    return d
+
+
+@pytest.fixture
+def campaign(tmp_path) -> Path:
+    _write(tmp_path, _SID, "evolutionary", _summary("k1", ["k1", "k2"], _FINAL))
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Extracting I*
+# ---------------------------------------------------------------------------
+
+class TestIndistinguishableRows:
+    def test_the_key_list_drives_the_extraction_not_final_objectives(self):
+        """`final_objectives` is the *preliminary* set; `indistinguishable` is `I*`."""
+        summary = _summary("k1", ["k1", "k2"], _FINAL)
+        rows = indistinguishable_rows(_SID, "evolutionary", summary)
+        assert len(rows) == 2
+        assert {r["config_key"] for r in rows} == {"k1", "k2"}
+        assert len(summary["final_objectives"]) == 3       # the set it was reduced from
+
+    def test_the_count_is_what_optima_csv_reports(self, campaign):
+        from src.campaign import optimum_row
+        d = campaign / _SID / "evolutionary"
+        summary = json.loads((d / "search_summary.json").read_text())
+        manifest = json.loads((d / "manifest.json").read_text())
+        row = optimum_row(_SID, "evolutionary", manifest, summary)
+        assert len(indistinguishable_rows(_SID, "evolutionary", summary)) == \
+            row["n_indistinguishable"]
+
+    def test_c_star_is_a_member_and_is_flagged(self):
+        rows = indistinguishable_rows(_SID, "evolutionary",
+                                      _summary("k2", ["k1", "k2"], _FINAL))
+        assert [r["config_key"] for r in rows if r["is_best"]] == ["k2"]
+
+    def test_an_inadmissible_search_contributes_nothing(self):
+        assert indistinguishable_rows(_SID, "evolutionary",
+                                      _summary("k1", [], _FINAL)) == []
+
+    def test_the_tiers_come_from_the_scenario_id(self):
+        row = indistinguishable_rows(_SID, "evolutionary",
+                                     _summary("k1", ["k1"], _FINAL))[0]
+        assert row["tier_project"] == "medium"
+        assert row["tier_human"] == "medium"
+
+    def test_the_composition_columns_are_one_per_role_and_1_based(self):
+        row = indistinguishable_rows(_SID, "evolutionary",
+                                     _summary("k1", ["k1"], _FINAL))[0]
+        assert [row[c] for c in DEV_PARAMETERS] == [1, 0, 1, 0, 4, 2, 1, 0]
+        assert [row[c] for c in QA_PARAMETERS] == [0] * AGENT_ROLE_COUNT
+        assert row["n_sup_dev"] == supervised_agent_count((1, 0, 1, 0, 4, 2, 1, 0))
+
+    def test_a_pre_resimulation_result_falls_back_to_the_search_estimates(self):
+        summary = _summary("k1", ["k1"], _FINAL)
+        summary["objectives"] = {"k1": _objective([5, 0, 1, 0, 1, 1, 1, 0])}
+        del summary["final_objectives"]
+        row = indistinguishable_rows(_SID, "evolutionary", summary)[0]
+        assert row["a_dev_1"] == 5
+
+    def test_a_key_with_no_objective_is_an_error_not_a_silent_drop(self):
+        with pytest.raises(KeyError, match="ghost"):
+            indistinguishable_rows(_SID, "evolutionary",
+                                   _summary("k1", ["k1", "ghost"], _FINAL))
+
+
+class TestBuildIndistinguishable:
+    def test_reads_the_tree(self, campaign):
+        df = build_indistinguishable(campaign)
+        assert len(df) == 2
+        assert set(df["strategy"]) == {"evolutionary"}
+
+    def test_skips_a_directory_without_a_summary(self, campaign):
+        (campaign / _SID / HUMAN_ONLY_MODE).mkdir()
+        assert len(build_indistinguishable(campaign)) == 2
+
+    def test_a_missing_tree_is_an_error(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            build_indistinguishable(tmp_path / "nope")
+
+    def test_an_empty_tree_is_an_error(self, tmp_path):
+        (tmp_path / "empty").mkdir()
+        with pytest.raises(FileNotFoundError):
+            build_indistinguishable(tmp_path / "empty")
+
+
+# ---------------------------------------------------------------------------
+# Derived columns and cell statistics
+# ---------------------------------------------------------------------------
+
+def _member_frame(records: list[dict]) -> pd.DataFrame:
+    """A minimal `I*` member table: one dict per member, defaults filled in."""
+    rows = []
+    for i, record in enumerate(records):
+        row = {"scenario_id": record.get("scenario_id", _SID),
+               "strategy": "evolutionary", "config_key": f"k{i}", "is_best": i == 0,
+               "N": 1.0, "R": 4, "F_freeze": 1,
+               "tier_human": "medium", "tier_project": "medium", "tier_debt": "medium",
+               "tier_agent": "medium", "tier_bugimpact": "medium"}
+        for k in range(AGENT_ROLE_COUNT):
+            row[f"a_dev_{k + 1}"] = 0
+            row[f"a_qa_{k + 1}"] = 0
+        row.update(record)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+class TestDeriveTotals:
+    def test_team_size_is_the_row_sum(self):
+        df = derive_totals(_member_frame([{"a_dev_1": 2, "a_dev_5": 7, "a_qa_3": 4}]))
+        assert df["n_agents_dev"].iloc[0] == 9
+        assert df["n_agents_qa"].iloc[0] == 4
+
+    def test_supervised_counts_match_the_model(self):
+        A = (2, 1, 3, 40, 50, 60, 1, 1)
+        record = {f"a_dev_{k + 1}": A[k] for k in range(AGENT_ROLE_COUNT)}
+        df = derive_totals(_member_frame([record]))
+        assert df["n_sup_dev"].iloc[0] == supervised_agent_count(A)
+
+    def test_an_existing_column_is_left_alone(self):
+        frame = _member_frame([{"a_dev_1": 2}])
+        frame["n_sup_dev"] = 99      # as optima.csv already carries it
+        assert derive_totals(frame)["n_sup_dev"].iloc[0] == 99
+
+
+class TestScenarioMeans:
+    def test_one_row_per_scenario(self):
+        frame = _member_frame([{"a_dev_1": 1}, {"a_dev_1": 3},
+                               {"scenario_id": _OTHER, "a_dev_1": 8}])
+        means = scenario_means(derive_totals(frame))
+        assert len(means) == 2
+        assert set(means["scenario_id"]) == {_SID, _OTHER}
+        assert means.set_index("scenario_id").loc[_SID, "a_dev_1"] == 2.0
+
+    def test_the_member_count_is_kept(self):
+        frame = _member_frame([{"a_dev_1": 1}, {"a_dev_1": 3}])
+        assert scenario_means(derive_totals(frame))["n_members"].iloc[0] == 2
+
+    def test_the_tiers_survive(self):
+        means = scenario_means(derive_totals(_member_frame([{"a_dev_1": 1}])))
+        assert means["tier_project"].iloc[0] == "medium"
+
+
+class TestCellStatistics:
+    def _cells(self, frame, population=C_STAR):
+        return cell_statistics(derive_totals(frame), population)
+
+    def test_mean_and_sd_over_the_scenarios_in_the_cell(self):
+        cells = self._cells(_member_frame([
+            {"a_dev_5": 2}, {"scenario_id": _OTHER, "a_dev_5": 4}]))
+        row = cells[cells["parameter"] == "a_dev_5"].iloc[0]
+        assert row["mean"] == 3.0
+        assert row["sd"] == pytest.approx(pd.Series([2.0, 4.0]).std())  # ddof = 1
+        assert row["n_scenarios"] == 2
+
+    def test_a_single_scenario_has_no_spread_to_report(self):
+        cells = self._cells(_member_frame([{"a_dev_5": 2}]))
+        assert pd.isna(cells[cells["parameter"] == "a_dev_5"]["sd"].iloc[0])
+
+    def test_every_parameter_appears_once_per_cell(self):
+        cells = self._cells(_member_frame([{"a_dev_5": 2}]))
+        assert list(cells["parameter"]) == list(CONSTELLATION_PARAMETERS)
+
+    def test_the_faceting_groups_must_be_two_distinct_known_groups(self):
+        frame = derive_totals(_member_frame([{"a_dev_5": 2}]))
+        with pytest.raises(ValueError):
+            cell_statistics(frame, C_STAR, ("project", "project"))
+        with pytest.raises(ValueError):
+            cell_statistics(frame, C_STAR, ("project", "nonsense"))
+        with pytest.raises(ValueError):
+            cell_statistics(frame, C_STAR, ("project",))
+
+    def test_the_grid_can_be_re_cut(self):
+        cells = cell_statistics(derive_totals(_member_frame([{"a_dev_5": 2}])),
+                                C_STAR, ("human", "agent"))
+        assert "tier_human" in cells.columns and "tier_agent" in cells.columns
+        assert "tier_project" not in cells.columns
+
+    def test_an_empty_frame_yields_the_schema(self):
+        cells = cell_statistics(pd.DataFrame(), C_STAR)
+        assert list(cells.columns) == ["population", "tier_project", "tier_bugimpact",
+                                       "parameter", "mean", "sd", "n_scenarios",
+                                       "n_members"]
+
+
+class TestScenarioBalance:
+    def test_a_wide_tie_does_not_outweigh_a_narrow_one(self):
+        """Two scenarios in one cell weigh the same however large their `I*` is."""
+        members = ([{"a_dev_5": 10}] * 2
+                   + [{"scenario_id": _OTHER, "a_dev_5": 20}] * 200)
+        cells = cell_statistics(
+            scenario_means(derive_totals(_member_frame(members))), I_STAR)
+        row = cells[cells["parameter"] == "a_dev_5"].iloc[0]
+        assert row["mean"] == 15.0            # not the pooled 19.9
+        assert row["n_scenarios"] == 2
+        assert row["n_members"] == 202
+
+
+# ---------------------------------------------------------------------------
+# The whole table
+# ---------------------------------------------------------------------------
+
+def _optima_frame(strategies=("evolutionary",)) -> pd.DataFrame:
+    rows = []
+    for strategy in strategies:
+        record = {"strategy": strategy, "a_dev_5": 5}
+        rows.append(_member_frame([record]).assign(strategy=strategy).iloc[0])
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
+class TestBuildConstellation:
+    def test_both_populations_appear(self, campaign):
+        istar = build_indistinguishable(campaign)
+        cells = build_constellation(_optima_frame(), istar)
+        assert set(cells["population"]) == {C_STAR, I_STAR}
+
+    def test_the_human_only_baseline_is_excluded(self):
+        frame = _optima_frame(("evolutionary", HUMAN_ONLY_MODE))
+        assert len(search_optima(frame)) == 1
+        cells = build_constellation(frame, pd.DataFrame())
+        assert set(cells["population"]) == {C_STAR}
+        assert cells["n_scenarios"].max() == 1
+
+    def test_nothing_to_describe_yields_the_schema(self):
+        cells = build_constellation(pd.DataFrame(), pd.DataFrame())
+        assert cells.empty
+        assert "population" in cells.columns
+
+
+class TestConstellationSummary:
+    def test_it_names_both_populations_and_the_grid(self, campaign):
+        istar = build_indistinguishable(campaign)
+        text = constellation_summary(build_constellation(_optima_frame(), istar))
+        assert f"{CELL_GROUPS[0]} × {CELL_GROUPS[1]}" in text
+        assert C_STAR in text and I_STAR in text
+
+    def test_it_warns_about_the_structural_a_qa_zeros(self, campaign):
+        istar = build_indistinguishable(campaign)
+        text = constellation_summary(build_constellation(_optima_frame(), istar))
+        assert "F_freeze = 0" in text
+
+    def test_the_columns_line_up(self, campaign):
+        istar = build_indistinguishable(campaign)
+        text = constellation_summary(build_constellation(_optima_frame(), istar))
+        # No two cells may run together: every printed value keeps a leading space.
+        assert "  " in text
+        assert not any(line.rstrip().endswith("±") for line in text.split("\n"))
+
+    def test_an_empty_table_says_so(self):
+        assert "no optimum" in constellation_summary(pd.DataFrame())
+
+
+# ---------------------------------------------------------------------------
+# What each role costs
+# ---------------------------------------------------------------------------
+
+class TestRoleBill:
+    """`actions_k · c_token,k` is the exact per-role split of Eq. (cost_agents)."""
+
+    def _frame(self, scenario_id=_SID, actions=None) -> pd.DataFrame:
+        actions = actions if actions is not None else [10.0] * AGENT_ROLE_COUNT
+        row = {"scenario_id": scenario_id, "strategy": "evolutionary",
+               "cost_agent_mean": 20.0, "cost_human_mean": 80.0}
+        row.update({f"actions_{k + 1}": actions[k] for k in range(AGENT_ROLE_COUNT)})
+        return pd.DataFrame([row])
+
+    def test_one_bill_column_per_role(self):
+        billed = role_bill(self._frame())
+        assert list(BILL_PARAMETERS) == [f"bill_{k}" for k in range(1, 9)]
+        assert all(c in billed.columns for c in BILL_PARAMETERS)
+
+    def test_the_bill_is_the_work_times_the_price(self):
+        prices = scenario_params_for_id(_SID).c_token
+        billed = role_bill(self._frame())
+        for k, column in enumerate(BILL_PARAMETERS):
+            assert billed[column].iloc[0] == pytest.approx(10.0 * prices[k])
+
+    def test_the_price_follows_the_scenario_s_agent_tier(self):
+        """The `pessimistic` tier is the low tier's capability at 10x the high price."""
+        cheap = role_bill(self._frame("h-m_p-m_d-m_a-h_b-m"))["bill_1"].iloc[0]
+        dear = role_bill(self._frame("h-m_p-m_d-m_a-p_b-m"))["bill_1"].iloc[0]
+        assert dear == pytest.approx(10.0 * cheap)
+
+    def test_a_role_that_did_no_work_bills_nothing(self):
+        """A demand-driven agent no work reaches costs nothing (§3.7)."""
+        actions = [0.0] * AGENT_ROLE_COUNT
+        billed = role_bill(self._frame(actions=actions))
+        assert (billed[list(BILL_PARAMETERS)].iloc[0] == 0.0).all()
+
+    def test_the_input_frame_is_not_mutated(self):
+        frame = self._frame()
+        role_bill(frame)
+        assert not any(c in frame.columns for c in BILL_PARAMETERS)
+
+    def test_the_per_feature_split_adds_to_the_reported_agent_cost(self):
+        """`AGENT_COST_PARAMETERS` is an apportionment, so it closes exactly."""
+        billed = role_bill(self._frame())
+        assert billed[list(AGENT_COST_PARAMETERS)].sum(axis=1).iloc[0] == pytest.approx(
+            billed["cost_agent_mean"].iloc[0])
+
+    def test_a_team_that_bills_nothing_has_no_split_to_apportion(self):
+        billed = role_bill(self._frame(actions=[0.0] * AGENT_ROLE_COUNT))
+        assert (billed[list(AGENT_COST_PARAMETERS)].iloc[0] == 0.0).all()
+
+    def test_the_team_cost_is_the_two_drivers_the_composition_controls(self):
+        """Not the third: escaped-bug cost is a consequence, not a line item."""
+        billed = role_bill(self._frame())
+        assert billed["cost_team_mean"].iloc[0] == pytest.approx(100.0)
+
+    def test_it_reproduces_the_reported_agent_cost(self):
+        """Against the real campaign: the split must add back up to what §5 reports."""
+        path = Path("results/analysis/optima.csv")
+        if not path.is_file():
+            pytest.skip("no consolidated campaign on disk")
+        optima = pd.read_csv(path).query("strategy == 'evolutionary'")
+        billed = role_bill(optima)
+        features = billed["value_mean"] * 104
+        recovered = billed[list(BILL_PARAMETERS)].sum(axis=1) / features
+        # Not exact: `cost_agent_mean` is a mean of per-replication ratios, this is a
+        # ratio of means.  Within a fraction of a per cent, and a *share* — what the
+        # figure draws — has no such gap at all, being formed inside one row.
+        error = ((recovered - billed["cost_agent_mean"]) / billed["cost_agent_mean"]).abs()
+        assert error.max() < 0.01

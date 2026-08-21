@@ -1487,9 +1487,9 @@ The evolutionary search receives a budget of $E = 10\,000$ candidate evaluations
 \caption{Experiment constants and search range.}
 \label{tab:setup:experiment}
 \footnotesize
-\begin{tabularx}{\linewidth}{p{2.2cm}rX}
+\begin{tabularx}{\linewidth}{p{2.2cm}>{\raggedleft\arraybackslash}p{3.9cm}X}
 \toprule
-Symbol & Value & Rationale \\
+Symbol & \multicolumn{1}{c}{Value} & Rationale \\
 \midrule
 \multicolumn{3}{l}{\emph{Monte Carlo protocol and horizon}} \\[2pt]
 $S(0)$                          & $\mathbf{0}$        & Green-field project; no legacy state to justify \\[2pt]
@@ -1500,7 +1500,7 @@ $B$                             & 1{,}000             & Bootstrap resamples for 
 $s_0$                           & 42            & Master seed \\[2pt]
 \midrule
 \multicolumn{3}{l}{\emph{Search range}} \\[2pt]
-$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00\}$     & Quarter-FTE to a two-pizza team \\[2pt]
+$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50,$ \newline $2.00, 3.00, 4.00, 5.00, 7.00, 10.00\}$ & Quarter-FTE to a two-pizza team \\[2pt]
 $\mathcal{R}$                   & $\{1,2,4,13\}$      & Continuous, biweekly, monthly, quarterly releases \\[2pt]
 $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No freeze, one-week, two-week freeze; capped at $R-1$ \\[2pt]
 $\sigma$                        & 2                   & Allows up to twice the agents required for their steady-state workload \\[2pt]
@@ -1528,24 +1528,208 @@ For the simulation of the human baseline, we only need to consider $(N, R, F_\ma
 \subsection{Search convergence}
 \label{sec:results:convergence}
 
-General idea:
-\begin{itemize}
-  \item For each search, monitor the change of the elite set over generations. We measure this as the \emph{elite turnover}
-        \begin{equation}
-          \tau_g \;=\; \frac{\bigl|\mathcal{E}_g \setminus \mathcal{E}_{g-1}\bigr|}{n_\mathrm{elite}},
-          \qquad g = 1, \ldots, G,
-          \label{eq:elite_turnover}
-        \end{equation}
-        i.e., the share of the elite of generation $g$ that was not already in the elite of the preceding generation. Since the population is an archive, $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$, and the elite consists of the $n_\mathrm{elite}$ best configurations under the preference relation $\prec$, the elite can never get worse; $\tau_g$ therefore decreases as improvements become rarer and is a direct measure of convergence. We visualize the median of $\tau_g$ over the 432 searches together with the 5\%--95\% band, since one curve per search would not be readable. We additionally report the turnover of the incumbent alone, i.e., the share of generations in which the best configuration of $\mathcal{P}_g$ changed. This is required because $\tau_g$ has a noise floor: configurations whose costs are statistically indistinguishable at $K'$ replications swap ranks within the elite without any actual improvement taking place.
-  \item Report the size of $\mathcal{I}^\star$ at the four stages it passes through in Section~\ref{sec:model:selection}: the preliminary set determined with $K'$ replications, the preliminary set after the parsimony tie-break, the set after the re-simulation of that reduced set with $K$ replications, and the final set after the second application of the tie-break. We report median, interquartile range, and maximum over the 432 searches instead of the mean, since we expect these sizes to be strongly skewed. For the re-simulation, we additionally report how often it changed $\mathbf{c}^\star$, i.e., how often the cost minimiser at $K$ replications differs from the one at $K'$ replications, and how often a member of the preliminary set was discarded because it violated the throughput constraint of Eq.~\eqref{eq:throughput_constraint} at $K$ replications. For the parsimony tie-break, we report the share of configurations that it removes in each of its two applications, i.e., both how much re-simulation effort the first application saves and how much it still removes from the final set.
-  \item Report how many of the 432 searches ended inadmissible, i.e., found no configuration at all that satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} and therefore have an empty $\mathcal{I}^\star$ (Section~\ref{sec:model:selection}). For these searches, we report which scenarios they belong to and the value that the least-violating configuration achieved, expressed as a share of the required $(1-\epsilon)\,r_\mathrm{arrival}$, so that the distance to the admissible region is visible. We further discuss whether inadmissibility is a property of the model or a failure of the search, i.e., whether the searched region $\mathcal{S}$ of Eq.~\eqref{eq:searched_region} contains an admissible configuration at all: the saturation bounds of Eq.~\eqref{eq:sat_bound} together with the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} bound the throughput any configuration in $\mathcal{S}$ can reach. This mirrors the reporting we already announced for the human-only baseline in Section~\ref{sec:setup:sweep}.
-  \item Report the width of the confidence intervals after the re-simulation, relative to the total costs, as the relative half-width
-        \begin{equation}
-          \rho_\mathbf{c} \;=\; \frac{C^+_\mathbf{c} - C^-_\mathbf{c}}{2\,C_\mathbf{c}},
-          \label{eq:rel_halfwidth}
-        \end{equation}
-        averaged over all configurations $\mathbf{c}$ of the final $\mathcal{I}^\star$ of a search. We report the distribution of this per-search average over the 432 searches.
-\end{itemize}
+Before we interpret the optimal configurations, we establish how much confidence the results deserve, i.e., whether the searches converged within their budget, how much the two-stage selection of Section~\ref{sec:model:selection} still changed what is reported, and how precise the reported costs are. All numbers are aggregated over the 432 searches of the scenario grid and reported as the median with the interquartile range and, where relevant, the maximum, since the distributions are strongly skewed. The 36 enumerations of the human-only baseline of Section~\ref{sec:setup:baseline} are reported separately.
+
+\paragraph{Search effort.}
+Every search ran all $G = 90$ generations, and 232 of them also exhausted the evaluation budget of $E = 10\,000$ exactly. The others stopped short of it (minimum $6\,560$ evaluations) because the mutation operator kept producing configurations that had already been evaluated and that are not charged a second time. A median of 17 evaluations per search (maximum $1\,667$) were spent on candidates that the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} rejected, which are charged against the budget but not simulated. The grid took 233 core-hours, plus 55 core-hours for the re-simulation; the baseline enumerations are negligible in comparison at ten seconds per scenario.
+
+\paragraph{Elite turnover.}
+We measure convergence by the change of the elite set over the generations, i.e., by the \emph{elite turnover}
+\begin{equation}
+  \tau_g \;=\; \frac{\bigl|\mathcal{E}_g \setminus \mathcal{E}_{g-1}\bigr|}{n_\mathrm{elite}},
+  \qquad g = 1, \ldots, G,
+  \label{eq:elite_turnover}
+\end{equation}
+i.e., the share of the elite $\mathcal{E}_g$ of generation $g$ that was not already in the elite of the preceding generation. Since the population is an archive, $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,\mathrm{child}}$, and the elite consists of the $n_\mathrm{elite}$ best configurations under the preference relation $\prec$, the elite can never get worse, so $\tau_g$ decreases as improvements become rarer. Figure~\ref{fig:results:turnover} shows it as the mean and the median over the searches, since one curve per search would not be readable at 432 of them. The decrease is steep over the first twenty generations and flattens afterwards, from $\tau_1 = 0.38$ $[0.35, 0.40]$ to $\tau_{90} = 0.03$ $[0.01, 0.07]$.
+
+The turnover does not reach zero, but this does not mean that the search was still improving at the end of its budget, because $\tau_g$ has a noise floor: configurations whose costs are statistically indistinguishable at $K'$ replications swap ranks within the elite without any actual improvement taking place. The second curve in Figure~\ref{fig:results:turnover} separates the two effects by showing how much the incumbent's cost improved from one generation to the next. This improvement decays from about 1\% to 0.03\% per generation, i.e., by a factor of thirty, while $\tau_g$ only falls by a factor of seven, so the residual turnover is mostly rank churn among tied configurations. Measured against the cost that the search finally reports, the incumbent is within 5\% of it after a median of 26 generations and within 1\% after 58, i.e., the last third of the budget contributes improvements below one per cent.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/elite_turnover_evolutionary.png}
+  \caption{Elite turnover $\tau_g$ of Eq.~\eqref{eq:elite_turnover} (blue, left axis) and the mean relative improvement of the incumbent's cost per generation (green, logarithmic right axis), aggregated over the 432 evolutionary searches. The turnover is shown as the mean (solid) and the median (dotted) over the searches; the improvement is shown as the mean only, since its median is exactly zero in every generation.}
+  \label{fig:results:turnover}
+\end{figure}
+
+\paragraph{The indistinguishable set.}
+Table~\ref{tab:results:topset} reports the size of $\mathcal{I}^\star$ at the four stages it passes through in Section~\ref{sec:model:selection}, restricted to the searches that ended admissible. The preliminary sets are large: a median of $1\,068$ of the roughly $10\,000$ evaluated configurations have a cost confidence interval that overlaps the one of $\mathbf{c}^\star$ at $K' = 100$ replications, so reporting a single optimal team on the basis of $K'$ replications alone would be misleading. Both reduction steps are effective. The parsimony tie-break removes 80.9\% of the preliminary members over the whole grid, i.e., in four out of five cases the search has found a configuration that is statistically tied with a smaller team that also measured cheaper, which reduces the re-simulation effort from $516\,329$ to $98\,636$ configurations at $K = 1\,000$ replications each. The re-simulation removes another 70\% of those and its subsequent tie-break a further 29.9\%, which leaves a median of 37 configurations that we cannot distinguish from the reported optimum. For the human-only baseline the tie-break is vacuous, since two baseline configurations that share $(N, R, F_\mathrm{freeze})$ are the same configuration; only the re-simulation reduces its sets.
+
+\begin{table}[t]
+\caption{Size of the indistinguishable set $\mathcal{I}^\star$ at the four stages of Section~\ref{sec:model:selection}, as median [interquartile range] and maximum over the searches that ended admissible.}
+\label{tab:results:topset}
+\footnotesize
+\begin{tabularx}{\linewidth}{Xrrrr}
+\toprule
+ & \multicolumn{2}{c}{Evolutionary (431)} & \multicolumn{2}{c}{Human-only (19)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Stage & Median [IQR] & Max & Median [IQR] & Max \\
+\midrule
+Preliminary, at $K'$              & $1\,068$ $[656, 1\,674]$ & $4\,005$ & 17 $[6, 38]$ & 79 \\[2pt]
+After the parsimony tie-break     & 194 $[111, 311]$         & 830      & 17 $[6, 38]$ & 79 \\[2pt]
+After the re-simulation at $K$    & 53 $[30, 95]$            & 470      & 7 $[5, 31]$  & 68 \\[2pt]
+After the second tie-break        & 37 $[19, 67]$            & 338      & 7 $[5, 31]$  & 68 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{What the re-simulation changes.}
+The re-simulation does not only narrow $\mathcal{I}^\star$, it also moves the reported optimum: in 410 of the 431 admissible searches (95.1\%), the cost minimiser at $K$ replications differs from the one at $K'$ replications. This is unsurprising, since the latter is by construction the configuration whose noisy estimate came out lowest among thousands of tied candidates, and it is the reason why we do not report it. The throughput constraint of Eq.~\eqref{eq:throughput_constraint} is re-checked as well and does fire, although rarely: $1\,440$ configurations spread over 144 searches are discarded because they no longer satisfy it at $K$ replications. These are the marginal members of $\mathcal{I}^\star$, for which the tolerance $\epsilon$ and the Monte Carlo noise of the value estimate are of comparable size. The reported optima are usually not of that kind, as they deliver a median of 99.98\% $[99.1\%, 100.0\%]$ of the arrival rate $r_\mathrm{arrival}$, i.e., essentially all arriving features rather than just the required 98\% of them.
+
+\paragraph{Inadmissible searches.}
+Exactly one of the 432 searches ended inadmissible, i.e., found no configuration at all that satisfies the throughput constraint: the scenario with senior developers, medium project dynamics, high debt, the medium agent tier, and medium bug impact, whose best candidate delivers 97.2\% of the arrival rate. This is a failure of the search and not a property of the model, which the design of the scenario grid lets us show constructively: the bug impact parameters affect the cost of an escaped bug and not the sprint transition, and the random streams depend only on the configuration and the replication index, so the same team produces literally the same trajectories in all three bug impact tiers. The two sibling scenarios that differ only in the bug impact both end admissible, at 99.95\% and 98.2\% of the arrival rate, so an admissible configuration demonstrably exists in the searched region $\mathcal{S}$ of Eq.~\eqref{eq:searched_region} and the search did not sample it. Once in 432 searches we consider acceptable, but it is a reminder that the search offers no admissibility guarantee.
+
+The human-only baseline is the opposite case: 17 of its 36 enumerations end inadmissible, and for 15 of them this is a property of the model, since the exhaustive enumeration proves that no human-only team within the range of Table~\ref{tab:setup:experiment} can keep up with the incoming work. These are all nine very-high-velocity scenarios, where the best human-only team delivers between 3.5\% (junior developers) and 12.2\% (senior developers) of the arriving features, and the six high-velocity scenarios with junior and mid-level developers, at 46.7\% and 89.3\%. Only the senior developers keep up at the high velocity tier, and even they only just, at 98.0\% in two of the three bug impact tiers. The remaining two cases, both at medium velocity with low bug impact, are instead caused by the two-stage selection: the teams that are cheapest at $K'$ replications sit exactly on the constraint boundary, deliver $11.75$ instead of the required $11.76$ features per sprint at $K$ replications, and are discarded, which empties $\mathcal{I}^\star$ even though the enumeration did evaluate admissible teams --- their siblings at the other two bug impact tiers, which have identical dynamics, report optima between 98.9\% and 100.3\% of the arrival rate. A re-simulation that empties $\mathcal{I}^\star$ should arguably fall back to the candidates that were admissible at $K'$ instead of reporting the scenario as inadmissible.
+
+\paragraph{Precision of the reported costs.}
+Finally, we consider how precise the costs are that we report in the following sections. We express this as the relative half-width of the cost confidence interval of a configuration $\mathbf{c}$,
+\begin{equation}
+  \rho_\mathbf{c} \;=\; \frac{C^+_\mathbf{c} - C^-_\mathbf{c}}{2\,C_\mathbf{c}}.
+  \label{eq:rel_halfwidth}
+\end{equation}
+Averaged over the final $\mathcal{I}^\star$ of a search, $\rho_\mathbf{c}$ after the re-simulation has a median of 1.3\% $[0.4\%, 2.7\%]$ and a maximum of 19.0\%; at $\mathbf{c}^\star$ itself the values are practically the same. The reported costs are thus precise to about one per cent for a typical scenario, which is far below the differences between scenarios that we discuss in the following sections. The tail is systematic, though: the median $\rho_\mathbf{c}$ grows from 0.8\% at the low bug impact tier over 1.3\% at the medium tier to 2.7\% at the high tier, and the widest intervals occur at the high bug impact tier combined with a low project velocity, where the cost is dominated by rare escaped major and security bugs whose dollar weights are three to five orders of magnitude above that of a minor bug (Table~\ref{tab:scenario:bugimpact}). The baseline enumerations are slightly less precise, at a median of 2.0\%.
+
+% ------------------------------------------------------------
+% Original outline of this section, kept for reference:
+% ------------------------------------------------------------
+% General idea:
+% \begin{itemize}
+%   \item For each search, monitor the change of the elite set over generations. We measure this as the \emph{elite turnover}
+%         \begin{equation}
+%           \tau_g \;=\; \frac{\bigl|\mathcal{E}_g \setminus \mathcal{E}_{g-1}\bigr|}{n_\mathrm{elite}},
+%           \qquad g = 1, \ldots, G,
+%           \label{eq:elite_turnover}
+%         \end{equation}
+%         i.e., the share of the elite of generation $g$ that was not already in the elite of the preceding generation. Since the population is an archive, $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$, and the elite consists of the $n_\mathrm{elite}$ best configurations under the preference relation $\prec$, the elite can never get worse; $\tau_g$ therefore decreases as improvements become rarer and is a direct measure of convergence. We visualize the median of $\tau_g$ over the 432 searches together with the 5\%--95\% band, since one curve per search would not be readable. We additionally report the turnover of the incumbent alone, i.e., the share of generations in which the best configuration of $\mathcal{P}_g$ changed. This is required because $\tau_g$ has a noise floor: configurations whose costs are statistically indistinguishable at $K'$ replications swap ranks within the elite without any actual improvement taking place.
+%   \item Report the size of $\mathcal{I}^\star$ at the four stages it passes through in Section~\ref{sec:model:selection}: the preliminary set determined with $K'$ replications, the preliminary set after the parsimony tie-break, the set after the re-simulation of that reduced set with $K$ replications, and the final set after the second application of the tie-break. We report median, interquartile range, and maximum over the 432 searches instead of the mean, since we expect these sizes to be strongly skewed. For the re-simulation, we additionally report how often it changed $\mathbf{c}^\star$, i.e., how often the cost minimiser at $K$ replications differs from the one at $K'$ replications, and how often a member of the preliminary set was discarded because it violated the throughput constraint of Eq.~\eqref{eq:throughput_constraint} at $K$ replications. For the parsimony tie-break, we report the share of configurations that it removes in each of its two applications, i.e., both how much re-simulation effort the first application saves and how much it still removes from the final set.
+%   \item Report how many of the 432 searches ended inadmissible, i.e., found no configuration at all that satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} and therefore have an empty $\mathcal{I}^\star$ (Section~\ref{sec:model:selection}). For these searches, we report which scenarios they belong to and the value that the least-violating configuration achieved, expressed as a share of the required $(1-\epsilon)\,r_\mathrm{arrival}$, so that the distance to the admissible region is visible. We further discuss whether inadmissibility is a property of the model or a failure of the search, i.e., whether the searched region $\mathcal{S}$ of Eq.~\eqref{eq:searched_region} contains an admissible configuration at all: the saturation bounds of Eq.~\eqref{eq:sat_bound} together with the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} bound the throughput any configuration in $\mathcal{S}$ can reach. This mirrors the reporting we already announced for the human-only baseline in Section~\ref{sec:setup:sweep}.
+%   \item Report the width of the confidence intervals after the re-simulation, relative to the total costs, as the relative half-width
+%         \begin{equation}
+%           \rho_\mathbf{c} \;=\; \frac{C^+_\mathbf{c} - C^-_\mathbf{c}}{2\,C_\mathbf{c}},
+%           \label{eq:rel_halfwidth}
+%         \end{equation}
+%         averaged over all configurations $\mathbf{c}$ of the final $\mathcal{I}^\star$ of a search. We report the distribution of this per-search average over the 432 searches.
+% \end{itemize}
+
+\subsection{Cost trade-offs}
+\label{sec:results:tradeoffs}
+
+We now turn to what the reported optima cost and where that money goes; Section~\ref{sec:results:composition} then describes the same optima structurally. All numbers in this section are the $K$-replication estimates of $\mathbf{c}^\star$ of the 431 admissible searches; the one inadmissible search of Section~\ref{sec:results:convergence} is excluded throughout. We report trends over the scenario grid rather than individual configurations, both because a single scenario is one point of a five-dimensional design and because the indistinguishable set $\mathcal{I}^\star$ means that the individual configuration we report is one of many that we cannot tell apart. Three figures support the discussion, all of them drawn as the same grid: one point per scenario, the agent tier on the columns and the human developer tier on the rows, and the remaining three scenario groups encoded as marker colour (debt), shape (project dynamics) and size (bug impact). Figure~\ref{fig:results:humanagent} splits the two cost drivers that the team composition directly controls, Figure~\ref{fig:results:qualitydev} contrasts their sum with the escaped-defect cost, and Figure~\ref{fig:results:ratio} collapses the human/agent trade-off into a single ratio. The human-only baseline of Section~\ref{sec:setup:baseline} is drawn into the first two figures in black as a reference level; since it is inert in the debt and agent groups, the same baseline points repeat across all four columns.
+
+\paragraph{The cost of an optimal team spans four orders of magnitude.}
+The reported optima cost between \$55.73 and \$847{,}656 per feature, with a median of \$3{,}658. This spread is a property of the scenario grid and not of the optimisation: within one scenario the searches are precise to about one per cent (Section~\ref{sec:results:convergence}), so the four decades separate operating contexts rather than measurements. What the optima have in common is that they deliver essentially all of the arriving work, at a median of 99.98\% of $r_\mathrm{arrival}$ against the 98\% that Eq.~\eqref{eq:throughput_constraint} demands, so the cost differences are not bought by delivering less.
+
+\paragraph{The scenario groups act multiplicatively and almost independently.}
+An additive model on $\log_{10}$ of the total cost with one dummy per tier and no interactions explains 98.3\% of the variance across the grid, with a residual standard deviation of $0.14$ decades, i.e., a typical scenario deviates from the purely multiplicative prediction by less than $\pm40\%$. The five groups therefore combine as independent multipliers on the cost per feature, which is what makes the trends below transferable: they can be read off one group at a time. Table~\ref{tab:results:multipliers} gives these multipliers relative to the cheapest tier of each group, and their order is the main result of this section. The dollar cost of an escaped bug dominates everything else by a wide margin: moving from the low to the high bug impact tier multiplies the cost of the optimal team by 260, and it alone accounts for 84\% of the variance of the log cost. Agent capability is second at a factor of 7.2 and 12\% of the variance, debt dynamics third at a factor of 2.4, and the two remaining groups each contribute less than half a per cent of the variance. In particular, the human developer tier changes the cost of the optimal team by only a third, even though its salaries differ by a factor of 2.5: the lower bug injection rate of the more senior developers very nearly pays for their salary. The direction is nevertheless consistent, i.e., senior developers are the cheapest tier despite being the most expensive to employ.
+
+\begin{table}[t]
+\caption{Multiplicative effect of each scenario group on the cost per feature of the optimal team, relative to the cheapest tier of that group, estimated by a linear model on $\log_{10}$ of the cost with one dummy per tier ($R^2 = 0.983$). $\eta^2$ is the share of the variance of the log cost that the group explains on its own.}
+\label{tab:results:multipliers}
+\footnotesize
+\begin{tabularx}{\linewidth}{Xrrrrr}
+\toprule
+Group & Low & Medium & High & Fourth tier & $\eta^2$ \\
+\midrule
+Bug impact         & 1.0 & 7.7 & \textbf{259.5} & ---           & 0.84 \\[2pt]
+Agent capability   & 7.2 & 2.0 & 1.0            & 7.8 (pess.)   & 0.12 \\[2pt]
+Debt dynamics      & 1.0 & 1.7 & 2.4            & ---           & 0.02 \\[2pt]
+Project dynamics   & 1.5 & 1.2 & 1.0            & 1.5 (v.\ high)& 0.00 \\[2pt]
+Human developers   & 1.3 & 1.2 & 1.0            & ---           & 0.00 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Escaped defects, not the team, are what an optimal team pays for.}
+The reason that the bug impact tier dominates is visible in Figure~\ref{fig:results:qualitydev}, which plots the escaped-defect cost against the sum of the developer and agent cost on a common scale. Almost every optimum lies above the diagonal, i.e., the defects that reach production cost more than the entire team that built the features: this holds for 93\% of the optima overall, and for every single one at the high bug impact tier. Over the whole grid the escaped-defect term accounts for a median of 94.5\% of the total cost, rising from 72\% at the low bug impact tier over 93\% at the medium tier to 99.6\% at the high tier. The consequence is that the total-cost picture is largely a picture of the quality term, and that the optimal team is not the cheapest team: the search consistently buys team capacity in order to avoid a much larger quality bill.
+
+\paragraph{Developers remain the larger of the two team costs.}
+Figure~\ref{fig:results:humanagent} separates the two drivers that the composition actually controls. Both are small relative to the quality term --- the agents account for a median of 1.1\% of the total cost and never for more than 25.6\% of it --- but they are not small relative to each other, and the agent bill is the smaller one in most scenarios. The median ratio of agent to developer cost is $0.28$, and it exceeds parity in only 32\% of the optima (Figure~\ref{fig:results:ratio}). Two groups move it systematically. It rises with agent capability, from $0.035$ at the low tier over $0.23$ at the medium tier to $0.50$ at the high tier, i.e., the better the agents are, the larger the share of the team budget that the optimum is willing to spend on them, even though they are also more expensive per unit of work. It rises far more steeply with project velocity, from $0.09$ at the low tier to $5.88$ at the very-high tier, because the developer cost is a headcount term that is amortised over the delivered features: the developer cost per feature falls by a factor of 55 from the low to the very-high velocity tier, which is by a wide margin the largest single effect on that driver. Extreme velocity is therefore the only regime in the grid in which the team is predominantly an agent cost.
+
+\paragraph{Capability matters, token prices barely do.}
+The pessimistic agent tier isolates the price of agent work from its capability, since it combines the low tier's capability with a token price ten times that of the high tier, i.e., 33 times that of the low tier. The effect on the total cost of the optimal team is an increase of 8\% over the low tier (Table~\ref{tab:results:multipliers}), i.e., a 33-fold price increase is almost entirely absorbed --- partly because the agent bill is a small share of the total to begin with, and partly because the optimum adapts its composition: the agent cost per feature rises by a factor of only 16.7, not 33, so the optimal team buys roughly half as much agent work as it would at the low price. Conversely, the two tiers that share the low capability --- the low and the pessimistic tier --- are the two most expensive tiers overall, and they are within 8\% of each other despite the price gap. For the cost of a software team, how good the agents are matters, and what they charge does not, at least within the range that the current price spread makes plausible.
+
+\paragraph{Agents pay off, but only if they are good enough.}
+Finally, we compare the optima against the human-only baseline of Section~\ref{sec:setup:baseline}, restricted to the 227 scenario pairs in which both the search and the enumeration ended admissible. The agent-supported optimum is cheaper than the best human-only team in 74\% of them, by a median factor of $1.76$. This overall number, however, hides the strongest interaction in the whole comparison, which is with the agent tier: the median cost advantage is a factor of $5.19$ at the high agent tier and $2.77$ at the medium tier, but only $1.09$ at the low tier and $0.96$ at the pessimistic tier. At the two low-capability tiers, in other words, agent adoption is on average cost-neutral to slightly harmful. This has to be read against the fact that the searched region always contains at least one feature implementation agent (Section~\ref{sec:model:search}), so these scenarios are ones in which a team is required to use agents rather than choosing to; the human-only enumeration is the configuration that the search cannot reach. The debt tier interacts in the same direction, with the advantage falling from a factor of $1.98$ at the low tier to $1.06$ at the high tier, i.e., agents lose most of their benefit in a code base whose debt dynamics amplify the defects they inject.
+
+The comparison changes character entirely at high project velocity, where it stops being about cost. No human-only team within the range of Table~\ref{tab:setup:experiment} is admissible at the very-high velocity tier, and only three of the nine at the high tier are, so for 15 of the 36 baseline scenarios the question is not whether agents are cheaper but whether the work can be delivered at all. Where a human-only team can keep up, its cost structure resembles that of the mixed teams --- escaped defects account for a median of 92\% of its cost as well --- so the advantage that agents provide, where they provide one, comes from detecting more defects before release and not from being a cheaper way to write code.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/human_agent_matrix_evolutionary.png}
+  \caption{The two cost drivers that the team composition controls, at $\mathbf{c}^\star$: developer cost against agent cost, both in dollars per feature and on a common logarithmic scale, with the 1:1 diagonal drawn. Points above the diagonal spend more on developers than on agents. One point per scenario; columns are the agent tier, rows the human developer tier, and colour, shape and size encode the debt, project dynamics and bug impact tiers respectively. Black markers are the human-only baselines, which vary only in the human, project and bug impact groups and are therefore repeated across all four columns as a reference level; the baseline has no agent cost and is drawn at the left edge of the axis.}
+  \label{fig:results:humanagent}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/quality_development_matrix_evolutionary.png}
+  \caption{Escaped-defect cost against the cost of the team that produced the features (developers and agents combined), at $\mathbf{c}^\star$, both in dollars per feature on a common logarithmic scale with the 1:1 diagonal. Points above the diagonal are optima whose escaped defects cost more than the entire team. Channels as in Figure~\ref{fig:results:humanagent}.}
+  \label{fig:results:qualitydev}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/agent_human_ratio_matrix_evolutionary.png}
+  \caption{Ratio of agent to developer cost at $\mathbf{c}^\star$ (logarithmic) against its percentile rank within all 432 scenarios. The panels share one empirical distribution, so the reading is which part of the horizontal axis a panel occupies, not the slope. Channels as in Figure~\ref{fig:results:humanagent}; the baseline has no agent cost and is therefore not shown.}
+  \label{fig:results:ratio}
+\end{figure}
+
+% ---- 5.3 ----
+
+\subsection{The composition of the optimal teams}
+\label{sec:results:composition}
+
+Section~\ref{sec:results:tradeoffs} describes what the reported optima cost; we now describe what they are made of, i.e., how the search sets the staffing level $N$, the release process $(R, F_\mathrm{freeze})$ and the two composition vectors $A_\mathrm{dev}$ and $A_\mathrm{qa}$. The population is again the 431 admissible $\mathbf{c}^\star$, but the human-only baseline is now excluded entirely, since a team without agents has no composition to describe. Every share and every rate below is formed \emph{within} a scenario before anything is averaged: the optimal team size spans four orders of magnitude across the grid, so a ratio of aggregates would describe the largest scenario rather than the typical one.
+
+Because the reported optimum is one member of a statistical tie, we repeated every statistic of this section over the whole indistinguishable set $\mathcal{I}^\star$, reducing each search's set to one mean vector first so that both populations weight the scenarios equally rather than weighting a scenario by how wide its tie happened to be. The two agree closely: over the twelve cells of the project $\times$ bug impact grid, the mean staffing level of $\mathcal{I}^\star$ differs from that of $\mathbf{c}^\star$ by a median of 2\% and at most 14\%, and the per-role agent counts by a median of 5\%. The exceptions are the roles that are staffed in only part of a cell, where a mean of well below one agent moves by up to a half. What follows therefore describes the tie as a whole and not the particular member that the selection rule happened to report.
+
+\paragraph{Two scenario groups shape the team, and they are not the two that dominate the cost.}
+Figure~\ref{fig:results:drivers} puts all five scenario groups on one shared row axis against six structural quantities. The marginals are honest because the campaign is a full factorial: the scenarios at any one tier are perfectly balanced over the other four groups, so a row is not confounded by them. Project dynamics and bug impact move the team; the human developer and debt tiers barely do, moving the median staffing level from $0.75$ to $1.00$ FTE and from $0.50$ to $1.50$ FTE respectively, against $0.25$ to $4.00$ FTE over the project tiers. Note that this is not the order of Table~\ref{tab:results:multipliers}: the debt tier is the third-largest cost multiplier but is close to inert structurally, i.e., a code base with worse debt dynamics is more expensive without being managed by a noticeably different team.
+
+The two agent panels are the reason the composition is reported as two halves rather than as one team size. The autonomous roles of Section~\ref{sec:model:roles} scale one-for-one with the incoming work: their count per arriving feature stays between $3.4$ and $6.5$ in every tier of every group, i.e., the optimum simply buys detection and refactoring capacity in proportion to the features it has to deliver. The supervised roles do the opposite. Their count per arriving feature collapses from $1.00$ at the low velocity tier over $0.25$ and $0.053$ to $0.015$ at the very-high tier, a factor of 67, which is the human-capacity condition of Eq.~\eqref{eq:feas_monitoring} and the saturation bounds of Eq.~\eqref{eq:sat_bound} binding: a supervised agent has to be monitored by a human and is capped at the work that actually reaches its role, while an autonomous one is bounded by neither. The two halves consequently differ by a factor of 37 in a typical scenario, which is why they keep separate axes in the figure.
+
+The last panel is the one quantity that the bug impact tier moves cleanly. Security's share of the detection pair rises from 6.6\% at the low bug impact tier over 20.2\% at the medium tier to 41.0\% at the high tier, i.e., the optimum responds to a more expensive defect by shifting the detection mix towards the service that is specific to the most expensive severity, rather than by implementing more or faster.
+
+\paragraph{Staffing follows velocity and agent capability, and the two interact.}
+The median optimum uses $0.25$, $0.50$, $4.00$ and $3.00$ FTE across the four project tiers, and the distribution piles on the boundaries of the search range: a third of the optima sit at the floor of $0.25$ FTE and a fifth at the ceiling of $10$ FTE, which is why Figure~\ref{fig:results:drivers} reports medians and quartiles rather than means. The agent tier moves the staffing level just as strongly, and by capability rather than by price: the median optimum uses $0.25$ FTE at both the medium and the high agent tier and $4.00$ FTE at the low and the pessimistic tier, which share a capability and differ only in what they charge. The two effects compound. At the two high-capability tiers the staffing level stays at $0.25$ to $1.00$ FTE at every project tier, while at the two low-capability tiers it rises to the ceiling of $10$ FTE at both the high and the very-high velocity tier.
+
+What the humans are needed \emph{for} differs between the two regimes. The split of the implemented features between humans and agents is close to bimodal and is decided by agent capability alone: at the medium and high tiers the agents implement a median of 100\% of the features, at the low and pessimistic tiers a median of 16\% and 14\%. At the low-capability tiers the humans are therefore staffed to write code, which is what drives the staffing level to its ceiling once the arrival rate is high. At the high-capability tiers they are staffed to supervise, since these optima carry a median of 146 agents of which only five are supervised and therefore consume monitoring capacity. The one place where this breaks down is the very-high velocity tier, where even the low-capability agents implement a median of 95\% of the features: at $1\,000$ arriving issues per week there is no human capacity left to write code with, whatever the agents are worth.
+
+\paragraph{What the team is mostly doing depends on how you count it.}
+Figure~\ref{fig:results:agentbill} splits the agent bill of Eq.~\eqref{eq:cost_agents} by role. It is drawn on the bill rather than on the head count because the two disagree sharply, and the disagreement is systematic: the three autonomous roles are billed at a flat rate per sprint, consume no monitoring capacity and are bounded by nothing but their own saturation, so the search stacks them freely. The code review agent is 69\% of the mean optimal team but 20\% of its bill; the security audit agent is 22\% of the team and 46\% of the bill, its token price being ten times the review agent's; and feature implementation is 2\% of the team and 21\% of the bill, i.e., invisible by head count and a fifth of the budget. The head counts themselves are large and dominated by detection: the median optimum staffs 67 code review and 24 security audit agents against one feature implementation, one bug fixing, one test development and one refactoring agent, and the detection counts are also the ones that scale, to a median of $4\,000$ code review and $1\,098$ security audit agents at the very-high velocity tier against $9.5$ and $3$ at the low tier. Eq.~\eqref{eq:cost_rep} charges for the bill and not for the head count, so the bill is what the figure and the following reading use.
+
+Read on the bill, the optimal team is mostly a security audit, and the bug impact tier sets how much of it. Security's share of the agent bill runs 48\%, 69\%, 75\% across the bug impact ladder at the low agent tier and 12\%, 37\%, 52\% at the high tier, paid for out of feature implementation and code review, and the ladder repeats near-identically in all four project blocks of every panel. The panels separate two effects that a pooled figure multiplies together: the \emph{ladder} belongs to the bug impact tier, its \emph{level} to the agent tier. Feature implementation moves the other way across the panels, from 9\% of the agent bill at the low agent tier to 33\% at the high tier --- cheaper and better implementers are worth pointing at the work --- and the two supporting roles are used sparingly throughout, with the architecture agent staffed in 39\% of the optima and the documentation agent in 34\%. The architecture agent is again a capability effect: it appears in 52\% and 61\% of the optima at the high and medium agent tiers but in only 22\% and 21\% at the two low-capability tiers, i.e., a design proposal is only worth its five features of capacity if the agent that writes it is good.
+
+\paragraph{Whether the agents matter at all is decided by velocity.}
+Figure~\ref{fig:results:teambill} adds the developers to the same stack as a ninth slice, so that the bars split the entire bill that the team composition controls, in dollars per feature. The developer share of it falls monotonically down the project tiers and across the agent tiers, from 97\% at the low velocity tier with low-capability agents to 9\% at the very-high tier with pessimistic ones: 97/93/89/79\% at low velocity, 96/81/73/70\% at medium, 87/62/48/53\% at high and 56/19/13/9\% at very high, reading the agent tiers low, medium, high, pessimistic. At realistic velocities the optimal team's bill is therefore overwhelmingly salary, and only the extreme-velocity stress tier flips it to the agents. How overwhelmingly is the agent tier's doing: better agents buy head count down. The pessimistic tier is not a return to the low tier, even though the two share a capability --- at ten times the price, its agents take a \emph{larger} share of the bill than the high tier's do at every project tier but the high one.
+
+The absolute figures move the other way. The team bill per feature has a median of \$428 at the low velocity tier and \$44 at the very-high tier, since the staffing level is an overhead that is amortised over more features, while the agent bill per feature has a median of \$13.83 at the low agent tier, \$20.50 at the medium tier, \$33.79 at the high tier and \$221.39 at the pessimistic tier. Both are dwarfed by the escaped-defect cost annotated beside each bar, which runs from \$83 to \$517\,000 per feature across the same cells. That column is deliberately not a slice of the bar: what the escaped bugs cost is what the team's choices cost elsewhere, not a line item of the team --- but it is the number that says whether the bill beside it matters, and Section~\ref{sec:results:tradeoffs}'s result is visible here from the team's side, in that the two are one to four decades apart.
+
+\paragraph{The release process is largely indifferent.}
+The release cycle length $R$ and the feature freeze $F_\mathrm{freeze}$ are the two panels of Figure~\ref{fig:results:drivers} in which the rows barely move: the median release cycle is two sprints in thirteen of the seventeen tier rows and the median feature freeze is zero in sixteen of them, while the interquartile range of $R$ reaches the top of the search range in half the rows. Every value of $R$ occurs among the optima --- 38.3\% use $R = 1$, 26.2\% $R = 2$, 10.7\% $R = 4$ and 24.8\% $R = 13$ --- and after controlling for the five scenario groups the residual cost differs by about 10\% between them; 68\% of the optima use no feature freeze at all, which is also why the whole $A_\mathrm{qa}$ vector is zero in those cases. This is best read together with the size of the indistinguishable set: within a typical $\mathcal{I}^\star$ the release cycle is unique in 56\% of the searches and the staffing level in 53\%, but the set still spans a median of four distinct $(N, R, F_\mathrm{freeze})$ triples out of the 99 that the range of Table~\ref{tab:setup:experiment} allows. The process variables are therefore not what distinguishes a good team from a bad one in this model; the composition is.
+
+\begin{figure}[tp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/team_drivers.png}
+  \caption{Which scenario setting moves which part of the optimal team. One row per (scenario group, tier) on a shared axis, one panel per structural quantity; each row is the median over the 431 admissible $\mathbf{c}^\star$ at that tier, with a bar from the first to the third quartile. A group whose rows sit on top of each other does not move that quantity. The agent counts are the supervised and the autonomous roles of Section~\ref{sec:model:roles} separately, each normalised by the arrival rate $r_\mathrm{arrival}$ within the scenario; the two panels keep separate ranges, since the two halves differ by a factor of about 40. The rows are unconfounded marginals because the scenario grid is a full factorial.}
+  \label{fig:results:drivers}
+\end{figure}
+
+\begin{figure}[tp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/composition_agent_bill.png}
+  \caption{How the agent bill of Eq.~\eqref{eq:cost_agents} is split between the eight roles at $\mathbf{c}^\star$, as a hundred-per-cent stacked bar per (project dynamics, bug impact) cell, one panel per agent tier. Each bar is the mean over the 36 scenarios of its cell, formed within a scenario first. The two columns at the right are the reported agent cost and escaped-defect cost per feature; the latter is annotated rather than drawn as a slice, because it is what the team's choices cost elsewhere rather than a line item of the team.}
+  \label{fig:results:agentbill}
+\end{figure}
+
+\begin{figure}[tp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/composition_team_bill.png}
+  \caption{The same split with the developers added as a ninth slice, so that the bar covers the entire bill that the team composition controls, i.e., $C_\mathrm{human} + C_\mathrm{agents}$ of Eq.~\eqref{eq:cost_rep} in dollars per feature. Cells, panels and annotated columns as in Figure~\ref{fig:results:agentbill}. The escaped-defect cost is again annotated but not stacked, since it is a consequence of the team rather than a part of it.}
+  \label{fig:results:teambill}
+\end{figure}
+
+
+
 
 % ============================================================
 \section{Discussion}

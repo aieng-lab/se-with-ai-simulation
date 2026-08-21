@@ -34,7 +34,7 @@ Generate visualizations from optimization results:
 
 Consolidate a finished campaign into its tables and the five-dimension optima figures:
     python -m src.main campaign [results/experiments] [--out results/analysis]
-    python -m src.main campaign --share human --x debt --color agent
+    python -m src.main campaign --x debt --color agent
     python -m src.main campaign --figures-only    (redraw from an existing optima.csv)
 """
 
@@ -77,8 +77,12 @@ from .selection import (
 )
 from .campaign import (baseline_uplift, build_tables, convergence_summary,
                        expected_modes, search_dirs)
+from .constellation import (CELL_GROUPS, build_constellation,
+                            build_indistinguishable, constellation_summary,
+                            role_bill)
 from .simulation import ConfigResult, ConfigTrace, run_configuration
-from .visualization import COST_SHARES, visualize_campaign, visualize_multi, visualize_single
+from .visualization import (visualize_campaign, visualize_constellation,
+                            visualize_multi, visualize_single, visualize_team_summary)
 
 
 #: Default file per scenario group; every group defaults to its medium tier.
@@ -614,10 +618,86 @@ def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
     mapping lives here rather than being repeated at both call sites.
     """
     visualize_campaign(
-        optima, out_dir, args.format, share=args.share, turnover=turnover,
+        optima, out_dir, args.format, turnover=turnover,
         x_group=args.x, y_group=args.y, color_group=args.color,
         marker_group=args.marker, size_group=args.size,
     )
+
+
+def _cmd_constellation(args: argparse.Namespace) -> None:
+    """What the optimal teams are made of, cut along two scenario groups.
+
+    Separate from `campaign` rather than folded into it: the campaign's four CSVs are the
+    §5.1/§5.2 reporting and are already written, while this is a second pass over the same
+    tree that reads a different block of each ``search_summary.json`` — the final `I*`, not
+    just `c*` — and must not force a re-consolidation to be re-cut on a different grid.
+    """
+    out_dir = Path(args.out)
+    cells_path = out_dir / "constellation_cells.csv"
+    # `--rows`/`--cols` name the *figure* axes; the tables are keyed in
+    # `CELL_GROUPS` order, i.e. the column group first, so the default matches
+    # the module default and the summary blocks read one per column-group tier.
+    groups = (args.cols, args.rows)
+
+    if args.figures_only:
+        if not cells_path.is_file():
+            print(f"Error: {cells_path} does not exist; run the constellation "
+                  f"analysis without --figures-only first.", file=sys.stderr)
+            sys.exit(1)
+        cells = pd.read_csv(cells_path)
+        print(f"Loaded {len(cells)} cell statistic(s) from {cells_path}")
+        visualize_constellation(cells, out_dir, args.format,
+                                rows_group=args.rows, cols_group=args.cols)
+        # The two summary figures read the per-scenario table, not the cell statistics:
+        # their shares and rates are formed inside a scenario, which an aggregate cannot
+        # undo.  Redrawn here too, since a plotting change is why --figures-only is used.
+        optima_path = out_dir / "optima.csv"
+        if optima_path.is_file():
+            visualize_team_summary(
+                role_bill(pd.read_csv(optima_path), args.config_dir), out_dir,
+                args.format, block_group=args.cols, bar_group=args.rows)
+        print("\nDone.")
+        return
+
+    optima_path = out_dir / "optima.csv"
+    if not optima_path.is_file():
+        print(f"Error: {optima_path} does not exist; run "
+              f"`python -m src.main campaign` first.", file=sys.stderr)
+        sys.exit(1)
+    results_dir = Path(args.results_dir)
+    if not results_dir.is_dir():
+        print(f"Error: {results_dir} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    optima = pd.read_csv(optima_path)
+    print(f"Loaded {len(optima)} reported optima from {optima_path}")
+    print(f"Reading the indistinguishable sets under {results_dir} ...")
+    istar = build_indistinguishable(results_dir)
+    print(f"  {len(istar)} I* member(s) over "
+          f"{istar[['scenario_id', 'strategy']].drop_duplicates().shape[0]} search(es)")
+
+    cells = build_constellation(optima, istar, groups)
+    if cells.empty:
+        print("\nNo searched optimum to describe; nothing written.")
+        return
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    istar_path = out_dir / "indistinguishable.csv"
+    istar.to_csv(istar_path, index=False)
+    cells.to_csv(cells_path, index=False)
+    print(f"  {istar_path}   {len(istar)} I* members")
+    print(f"  {cells_path}   {len(cells)} (population, cell, parameter) rows")
+
+    summary = constellation_summary(cells, groups)
+    summary_path = out_dir / "constellation_summary.txt"
+    summary_path.write_text(summary, encoding="utf-8")
+    print(f"  {summary_path}")
+
+    visualize_constellation(cells, out_dir, args.format,
+                            rows_group=args.rows, cols_group=args.cols)
+    visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
+                           block_group=args.cols, bar_group=args.rows)
+    print("\nDone.")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -709,9 +789,6 @@ def main(argv: list[str] | None = None) -> None:
                              "(default: config)")
     p_camp.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
                         help="Output image format (default: png)")
-    p_camp.add_argument("--share", default="agent", choices=list(COST_SHARES),
-                        help="Which cost driver's share of the total goes on the x axis "
-                             "(default: agent)")
     p_camp.add_argument("--figures-only", action="store_true",
                         help="Redraw the figures from an existing OUT/optima.csv instead "
                              "of re-reading the campaign and rewriting the CSVs")
@@ -720,6 +797,33 @@ def main(argv: list[str] | None = None) -> None:
             f"--{channel}", default=default, choices=list(SCENARIO_GROUPS),
             help=f"Scenario group on the {channel} channel (default: {default})",
         )
+
+    # -- constellation --
+    p_const = sub.add_parser(
+        "constellation",
+        help="Describe what the optimal teams are made of, per cell of a two-group "
+             "tier grid: mean and sd of every control variable, for c* and for I*.",
+    )
+    p_const.add_argument("results_dir", nargs="?", default="results/experiments",
+                         metavar="RESULTS_DIR",
+                         help="Campaign output root (default: results/experiments)")
+    p_const.add_argument("--out", default="results/analysis", metavar="DIR",
+                         help="Where OUT/optima.csv is read and the tables and figures "
+                              "are written (default: results/analysis)")
+    p_const.add_argument("--config-dir", default="config", metavar="DIR",
+                         help="Where the scenario JSONs live, for the per-role token "
+                              "prices (default: config)")
+    p_const.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
+                         help="Output image format (default: png)")
+    p_const.add_argument("--rows", default=CELL_GROUPS[1], choices=list(SCENARIO_GROUPS),
+                         help=f"Scenario group down the profile figure's rows "
+                              f"(default: {CELL_GROUPS[1]})")
+    p_const.add_argument("--cols", default=CELL_GROUPS[0], choices=list(SCENARIO_GROUPS),
+                         help=f"Scenario group across the profile figure's columns "
+                              f"(default: {CELL_GROUPS[0]})")
+    p_const.add_argument("--figures-only", action="store_true",
+                         help="Redraw from an existing OUT/constellation_cells.csv "
+                              "instead of re-reading the campaign")
 
     args = parser.parse_args(argv)
 
@@ -744,6 +848,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_visualize(args)
     elif args.cmd == "campaign":
         _cmd_campaign(args)
+    elif args.cmd == "constellation":
+        _cmd_constellation(args)
     else:
         parser.print_help()
         sys.exit(1)

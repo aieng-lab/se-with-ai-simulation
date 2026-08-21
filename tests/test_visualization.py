@@ -2,8 +2,9 @@
 
 The per-search figures are exercised only indirectly (they take the raw `objectives`
 dicts and have no branching worth pinning); what needs guarding is the channel
-assignment of `plot_optima_matrix`, since a duplicated or missing group silently
-collapses two scenario dimensions into one.
+assignment the campaign matrices share, since a duplicated or missing group silently
+collapses two scenario dimensions into one.  `plot_human_agent_matrix` stands in for
+all of them there: they differ only in the pair of columns on the axes.
 
 Rendering the full 432-scenario grid costs a few seconds — one `ax.scatter` per
 (size, shape, colour) subgroup per panel — so the tests that only inspect a figure's
@@ -15,30 +16,56 @@ from __future__ import annotations
 import inspect
 import itertools
 
+import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pytest
 from matplotlib.figure import Figure
 
 from src.config import (
+    AGENT_ROLE_ABBREV,
     SCENARIO_GROUPS,
     UNUSED_TIER,
     scenario_id,
     scenario_tier_combinations,
+    scenario_tiers,
+)
+from src.constellation import (
+    AGENT_COST_PARAMETERS,
+    BILL_PARAMETERS,
+    C_STAR,
+    CONSTELLATION_PARAMETERS,
+    DEV_PARAMETERS,
+    I_STAR,
+    PARAMETER_BLOCKS,
+    role_bill,
 )
 from src.visualization import (
-    COST_SHARES,
+    _BUG_COST_LABEL,
+    _compact_dollars,
+    _BASELINE_COLOR,
     _BASELINE_LABEL,
+    _TIER_SIZES,
     _baseline_cell,
+    _baseline_style_groups,
     _log_floor,
     _tiers_present,
     plot_agent_human_ratio_matrix,
     plot_human_agent_matrix,
     plot_elite_turnover,
-    plot_optima_matrix,
+    _SHARE_WEIGHTS,
+    _TEAM_QUANTITIES,
+    _team_quantities,
+    plot_constellation_heatmap,
+    plot_constellation_profile,
+    plot_team_drivers,
+    plot_team_shape,
     plot_quality_development_matrix,
     save_figure,
     visualize_campaign,
+    visualize_constellation,
+    visualize_team_summary,
 )
 
 
@@ -78,7 +105,7 @@ def full_grid() -> pd.DataFrame:
 @pytest.fixture(scope="module")
 def default_fig(full_grid) -> Figure:
     """The default channel assignment over the whole grid; read-only, shared."""
-    return plot_optima_matrix(full_grid)
+    return plot_human_agent_matrix(full_grid)
 
 
 class TestTierHelpers:
@@ -102,7 +129,13 @@ class TestTierHelpers:
         assert _log_floor(pd.DataFrame({"x": [0.004, 0.02]}), "x") is None
 
 
-class TestOptimaMatrix:
+class TestMatrixChannels:
+    """The five-channel tier grid `_draw_matrix` owns, exercised through one figure.
+
+    Every campaign matrix goes through it and differs only in the pair of columns on
+    the axes, so the channel assignment is pinned once here rather than per figure.
+    """
+
     def test_grid_is_the_two_facet_groups(self, default_fig):
         # agent (four tiers) x human (three).
         assert isinstance(default_fig, Figure)
@@ -111,7 +144,7 @@ class TestOptimaMatrix:
     def test_a_three_tier_group_on_the_x_facet_narrows_the_grid(self, full_grid):
         # Swapping the four-tier `agent` off the column axis for the three-tier `debt`
         # gives the 3x3 grid; the facet count follows the data, not a fixed layout.
-        fig = plot_optima_matrix(full_grid, x_group="debt", color_group="agent")
+        fig = plot_human_agent_matrix(full_grid, x_group="debt", color_group="agent")
         assert len(fig.axes) == 9
 
     def test_every_point_is_drawn_exactly_once(self, full_grid, default_fig):
@@ -128,49 +161,33 @@ class TestOptimaMatrix:
     def test_the_pessimistic_agent_tier_draws_on_a_per_point_channel(self, full_grid):
         # `agent` is a facet by default, so its fourth tier never reaches the colour /
         # shape / size dicts there.  Moving it onto one exercises that entry.
-        fig = plot_optima_matrix(full_grid, x_group="debt", color_group="agent")
+        fig = plot_human_agent_matrix(full_grid, x_group="debt", color_group="agent")
         colour_legend = fig.legends[0]
         assert colour_legend.get_title().get_text() == "agent (colour)"
         assert [t.get_text() for t in colour_legend.get_texts()] == \
             ["low", "medium", "high", "pessimistic"]
 
-    def test_both_axes_are_logarithmic(self, default_fig):
-        assert default_fig.axes[0].get_xscale() == "log"
-        assert default_fig.axes[0].get_yscale() == "log"
-
-    def test_a_zero_share_is_clipped_onto_the_log_axis(self, full_grid, default_fig):
-        assert (full_grid["cost_agent_share"] == 0.0).any()
+    def test_a_zero_value_is_clipped_onto_the_log_axis(self, full_grid, default_fig):
+        assert (full_grid["cost_agent_mean"] == 0.0).any()
         drawn_x = [x for ax in default_fig.axes for coll in ax.collections
                    for x, _ in coll.get_offsets()]
         assert min(drawn_x) > 0.0
 
-    @pytest.mark.parametrize("share", list(COST_SHARES))
-    def test_every_cost_driver_can_go_on_x(self, share):
-        assert isinstance(plot_optima_matrix(_few(), share=share), Figure)
-
-    def test_unknown_share_rejected(self):
-        with pytest.raises(ValueError, match="unknown cost share"):
-            plot_optima_matrix(_few(), share="tokens")
-
     def test_a_group_may_drive_only_one_channel(self):
         with pytest.raises(ValueError, match="only one visual channel"):
-            plot_optima_matrix(_few(), x_group="agent", color_group="agent")
+            plot_human_agent_matrix(_few(), x_group="agent", color_group="agent")
 
     def test_unknown_group_rejected(self):
         with pytest.raises(ValueError, match="unknown scenario group"):
-            plot_optima_matrix(_few(), color_group="weather")
+            plot_human_agent_matrix(_few(), color_group="weather")
 
     def test_missing_tier_column_rejected(self):
         with pytest.raises(KeyError, match="tier_debt"):
-            plot_optima_matrix(_few().drop(columns=["tier_debt"]))
-
-    def test_missing_share_column_rejected(self):
-        with pytest.raises(KeyError, match="cost_agent_share"):
-            plot_optima_matrix(_few().drop(columns=["cost_agent_share"]))
+            plot_human_agent_matrix(_few().drop(columns=["tier_debt"]))
 
 
 class TestHumanAgentMatrix:
-    """The variant shares `_draw_matrix`, so only what it owns needs its own tests."""
+    """`_draw_matrix` is pinned by `TestMatrixChannels`; only what this figure owns."""
 
     def test_puts_the_two_team_cost_drivers_on_the_axes(self, full_grid):
         fig = plot_human_agent_matrix(full_grid)
@@ -178,16 +195,6 @@ class TestHumanAgentMatrix:
         assert "agent cost" in fig.axes[-1].get_xlabel()
         assert "developer cost" in fig.axes[0].get_ylabel()
         assert (fig.axes[0].get_xscale(), fig.axes[0].get_yscale()) == ("log", "log")
-
-    def test_same_facets_and_point_count_as_the_optima_matrix(self, full_grid):
-        fig = plot_human_agent_matrix(full_grid)
-        assert len(fig.axes) == 12
-        drawn = sum(len(coll.get_offsets()) for ax in fig.axes for coll in ax.collections)
-        assert drawn == len(full_grid)
-
-    def test_channel_validation_is_shared(self):
-        with pytest.raises(ValueError, match="only one visual channel"):
-            plot_human_agent_matrix(_few(), x_group="agent", size_group="agent")
 
     def test_both_axes_carry_the_same_range(self, full_grid):
         """Same unit on both axes, so a point's side of the 1:1 line is the reading."""
@@ -284,13 +291,12 @@ class TestAgentHumanRatioMatrix:
 
 
 class TestVisualizeCampaign:
-    def test_all_four_matrices_are_written(self, tmp_path):
-        """One search (§3.11), so the per-mode loop runs once and writes four figures."""
+    def test_all_three_matrices_are_written(self, tmp_path):
+        """One search (§3.11), so the per-mode loop runs once and writes three figures."""
         visualize_campaign(_few(("evolutionary",)), tmp_path)
         assert sorted(p.name for p in tmp_path.glob("*.png")) == [
             "agent_human_ratio_matrix_evolutionary.png",
             "human_agent_matrix_evolutionary.png",
-            "optima_matrix_evolutionary.png",
             "quality_development_matrix_evolutionary.png",
         ]
 
@@ -304,7 +310,7 @@ class TestVisualizeCampaign:
         visualize_campaign(_few(("evolutionary",)), tmp_path,
                            turnover=_turnover(("human_only",)))
         assert not (tmp_path / "elite_turnover_evolutionary.png").is_file()
-        assert (tmp_path / "optima_matrix_evolutionary.png").is_file()
+        assert (tmp_path / "human_agent_matrix_evolutionary.png").is_file()
 
     def test_channels_are_passed_through(self, tmp_path):
         # A duplicated channel must surface, not be swallowed by the loop.
@@ -327,21 +333,72 @@ def _turnover(strategies=("evolutionary",), n_searches=3, n_generations=5):
     ])
 
 
+def _curve(fig, label_prefix):
+    """The one curve, on either axis, whose legend label starts with `label_prefix`."""
+    lines = [line for ax in fig.axes for line in ax.lines
+             if line.get_label().startswith(label_prefix)]
+    assert len(lines) == 1, f"{label_prefix!r} matched {len(lines)} curves"
+    return lines[0]
+
+
 class TestEliteTurnover:
-    """The §5.1 convergence figure: median tau_g with the 5 %–95 % band."""
+    """The §5.1 convergence figure: mean and median of tau_g and of `c*`'s cost drop."""
 
     def test_draws_a_figure(self):
         fig = plot_elite_turnover(_turnover(), title="turnover")
         assert isinstance(fig, Figure)
-        ax = fig.axes[0]
-        # One median line, one incumbent line, and the band as a filled collection.
-        assert len(ax.lines) == 2
-        assert len(ax.collections) == 1
+        # Three curves: mean and median tau_g on the left axis, the mean drop on the
+        # right one.  No shading, and no median drop — it is zero almost everywhere.
+        assert [len(ax.lines) for ax in fig.axes] == [2, 1]
+        assert all(len(ax.collections) == 0 for ax in fig.axes)
+        assert not [line for ax in fig.axes for line in ax.lines
+                    if line.get_label().startswith("median drop")]
+        plt.close(fig)
+
+    def test_the_drop_gets_a_logarithmic_axis_of_its_own(self):
+        """It is a rate like tau_g, but decades below it — a shared linear axis buries it."""
+        fig = plot_elite_turnover(_turnover())
+        turnover_ax, drop_ax = fig.axes
+        assert turnover_ax.get_yscale() == "linear"
+        assert drop_ax.get_yscale() == "log"
+        assert _curve(fig, "mean drop") in drop_ax.lines
+        plt.close(fig)
+
+    def test_the_mean_is_solid_and_the_median_dotted(self):
+        """The two statistics are told apart by line style, the quantities by colour."""
+        fig = plot_elite_turnover(_turnover())
+        assert _curve(fig, r"mean $\tau_g$").get_linestyle() == "-"
+        assert _curve(fig, "mean drop").get_linestyle() == "-"
+        assert _curve(fig, r"median $\tau_g$").get_linestyle() == ":"
+        assert (_curve(fig, "mean drop").get_color()
+                != _curve(fig, r"mean $\tau").get_color())
         plt.close(fig)
 
     def test_the_x_axis_covers_every_generation(self):
         fig = plot_elite_turnover(_turnover(n_generations=7))
         assert fig.axes[0].get_xlim() == (1.0, 7.0)
+        plt.close(fig)
+
+    def test_the_cost_drop_is_relative_to_the_previous_generation(self):
+        """And unsigned, which is what makes it the same kind of rate as tau_g."""
+        fig = plot_elite_turnover(_turnover(n_generations=4))
+        # 1000 - g, so the drop is 1/(1000-g+1) of the previous generation's cost.
+        expected = [1.0 / (1000.0 - g + 1) for g in range(2, 5)]
+        drawn = np.asarray(_curve(fig, "mean drop").get_ydata(), dtype=float)
+        assert np.isnan(drawn[0])              # generation 1 has no predecessor
+        assert drawn[1:] == pytest.approx(expected)
+        plt.close(fig)
+
+    def test_each_search_is_normalised_by_its_own_cost(self):
+        """Costs span decades across scenarios; only the relative drop is comparable."""
+        rows = [
+            {"scenario_id": name, "strategy": "evolutionary", "generation": g,
+             "tau": 0.5, "incumbent_changed": False, "best_cost": cost}
+            for name, costs in [("cheap", [10.0, 5.0]), ("dear", [1000.0, 500.0])]
+            for g, cost in enumerate(costs, start=1)
+        ]
+        fig = plot_elite_turnover(pd.DataFrame(rows))
+        assert _curve(fig, "mean drop").get_ydata()[1] == pytest.approx(0.5)
         plt.close(fig)
 
     def test_an_empty_table_is_rejected(self):
@@ -352,12 +409,50 @@ class TestEliteTurnover:
         with pytest.raises(KeyError, match="tau"):
             plot_elite_turnover(_turnover().drop(columns=["tau"]))
 
+    def test_a_table_without_best_cost_keeps_the_turnover_curves(self):
+        """An `elite_turnover.csv` written before the column existed still plots."""
+        fig = plot_elite_turnover(_turnover().drop(columns=["best_cost"]))
+        assert len(fig.axes) == 1                    # and no empty second axis
+        assert len(fig.axes[0].lines) == 2
+        plt.close(fig)
+
+    def test_a_curve_a_log_axis_cannot_show_says_so_in_its_label(self):
+        """An incumbent that never moves gives a drop of 0, which a log axis omits."""
+        rows = [
+            {"scenario_id": "flat", "strategy": "evolutionary", "generation": g,
+             "tau": 0.5, "best_cost": 100.0}
+            for g in (1, 2, 3)
+        ]
+        fig = plot_elite_turnover(pd.DataFrame(rows))
+        assert "zero throughout" in _curve(fig, "mean drop").get_label()
+        assert "zero throughout" not in _curve(fig, r"mean $\tau_g$").get_label()
+        plt.close(fig)
+
+    def test_the_mean_and_median_differ_on_a_skewed_sample(self):
+        """One search improving while the others stand still must move only the mean."""
+        rows = [
+            {"scenario_id": name, "strategy": "evolutionary", "generation": g,
+             "tau": tau, "best_cost": cost}
+            for name, taus, costs in [
+                ("a", [0.5, 0.1], [100.0, 100.0]),
+                ("b", [0.5, 0.1], [100.0, 100.0]),
+                ("c", [0.5, 0.7], [100.0, 10.0]),
+            ]
+            for g, (tau, cost) in enumerate(zip(taus, costs), start=1)
+        ]
+        fig = plot_elite_turnover(pd.DataFrame(rows))
+        assert _curve(fig, r"median $\tau_g$").get_ydata() == pytest.approx([0.5, 0.1])
+        assert _curve(fig, r"mean $\tau_g$").get_ydata() == pytest.approx([0.5, 0.3])
+        assert _curve(fig, "mean drop").get_ydata()[1] == pytest.approx(0.3)
+        plt.close(fig)
+
 
 class TestSaveFigure:
     @pytest.mark.parametrize("fmt", ["png", "pdf"])
     def test_writes_the_requested_format(self, tmp_path, fmt):
-        save_figure(plot_optima_matrix(_few()), tmp_path / "plots", "optima_matrix", fmt)
-        assert (tmp_path / "plots" / f"optima_matrix.{fmt}").is_file()
+        save_figure(plot_human_agent_matrix(_few()), tmp_path / "plots",
+                    "human_agent_matrix", fmt)
+        assert (tmp_path / "plots" / f"human_agent_matrix.{fmt}").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -423,10 +518,10 @@ class TestBaselineCellMatching:
 
 
 class TestBaselineOverlay:
-    def test_optima_matrix_draws_the_baseline_in_every_agent_column(self):
+    def test_a_matrix_draws_the_baseline_only_when_it_is_given_one(self):
         df, base = _few(), _baseline(3)
-        without = plot_optima_matrix(df, baseline=None)
-        with_base = plot_optima_matrix(df, baseline=base)
+        without = plot_human_agent_matrix(df, baseline=None)
+        with_base = plot_human_agent_matrix(df, baseline=base)
         assert _baseline_points(without) == 0
         assert _baseline_points(with_base) > 0
         plt.close(without), plt.close(with_base)
@@ -435,7 +530,7 @@ class TestBaselineOverlay:
         # `agent` is a facet the baseline does not vary, so every column carries the same
         # reference points: 4 agent tiers x whatever each (human) row selects.
         base = _baseline(6)
-        fig = plot_optima_matrix(full_grid, baseline=base)
+        fig = plot_human_agent_matrix(full_grid, baseline=base)
         # 4 agent columns, so each baseline row is drawn once per column.
         assert _baseline_points(fig) == 4 * len(base)
         plt.close(fig)
@@ -456,6 +551,60 @@ class TestBaselineOverlay:
         assert _baseline_points(fig) > 0
         plt.close(fig)
 
+    def test_baseline_takes_the_shape_and_size_of_the_groups_it_varies(self, full_grid):
+        # `project` on the shape channel and `bugimpact` on the size channel are both
+        # groups the baseline varies, so its points carry the tier styles rather than the
+        # one fixed style — one collection per (project, bugimpact) pair present.
+        base = _baseline(6)
+        fig = plot_human_agent_matrix(full_grid, baseline=base)
+        styles = {
+            (coll.get_paths()[0].vertices.tobytes(), float(coll.get_sizes()[0]))
+            for ax in fig.get_axes()
+            for coll in ax.collections
+            if coll.get_label() == _BASELINE_LABEL
+        }
+        pairs = {(r.tier_project, r.tier_bugimpact) for r in base.itertuples()}
+        assert len(styles) == len(pairs) > 1
+        plt.close(fig)
+
+    def test_the_baseline_is_black_on_every_style(self, full_grid):
+        # Colour is the one channel that stays fixed: with shape and size now shared with
+        # the search optima it is what still separates the baseline from them.
+        fig = plot_human_agent_matrix(full_grid, baseline=_baseline(6))
+        black = matplotlib.colors.to_rgb(_BASELINE_COLOR)
+        for ax in fig.get_axes():
+            for coll in ax.collections:
+                if coll.get_label() != _BASELINE_LABEL:
+                    continue
+                # The open shapes carry the colour on the edge, the filled ones on the
+                # face; compared on RGB alone, since the overlay is drawn transparent.
+                drawn = [tuple(c) for c in coll.get_edgecolors()] or \
+                        [tuple(c) for c in coll.get_facecolors()]
+                assert all(c[:3] == black for c in drawn)
+        plt.close(fig)
+
+    def test_the_baseline_is_drawn_transparent(self, full_grid):
+        # It sits on top of the search optima, so an opaque marker would mask them.
+        fig = plot_human_agent_matrix(full_grid, baseline=_baseline(6))
+        drawn = [coll for ax in fig.get_axes() for coll in ax.collections
+                 if coll.get_label() == _BASELINE_LABEL]
+        assert drawn and all(coll.get_alpha() < 1.0 for coll in drawn)
+        plt.close(fig)
+
+    def test_a_group_the_baseline_does_not_vary_falls_back_to_the_fixed_style(self):
+        # `debt` on the shape channel: the baseline holds it at UNUSED_TIER, so there is
+        # no tier to encode and the star stands in.
+        base = _baseline(6)
+        blocks = _baseline_style_groups(base, "debt", "bugimpact")
+        assert [marker for marker, _, _ in blocks] == [None] * len(blocks)
+        assert all(size is not None for _, size, _ in blocks)
+
+    def test_style_blocks_are_drawn_largest_first(self):
+        base = _baseline(6)
+        areas = [_TIER_SIZES[size] for _, size, _ in
+                 _baseline_style_groups(base, "project", "bugimpact")]
+        assert areas == sorted(areas, reverse=True)
+
     def test_ratio_matrix_takes_no_baseline(self):
         # A team with no agents has no agent/developer ratio.
         assert "baseline" not in inspect.signature(
@@ -468,9 +617,560 @@ class TestVisualizeCampaignWithBaseline:
         visualize_campaign(df, tmp_path, fmt="png")
         written = {p.name for p in tmp_path.glob("*.png")}
         assert not any("human_only" in name for name in written)
-        assert "optima_matrix_evolutionary.png" in written
+        assert "human_agent_matrix_evolutionary.png" in written
         assert "agent_human_ratio_matrix_evolutionary.png" in written
 
     def test_a_campaign_without_a_baseline_still_works(self, tmp_path):
         visualize_campaign(_few(("evolutionary",)), tmp_path, fmt="png")
-        assert (tmp_path / "optima_matrix_evolutionary.png").is_file()
+        assert (tmp_path / "human_agent_matrix_evolutionary.png").is_file()
+
+
+# ---------------------------------------------------------------------------
+# The constellation figures (src/constellation.py's cell table)
+# ---------------------------------------------------------------------------
+
+def _cells(
+    populations: tuple[str, ...] = (C_STAR, I_STAR),
+    row_tiers: tuple[str, ...] = ("low", "medium", "high"),
+    col_tiers: tuple[str, ...] = ("low", "medium", "high", "veryhigh"),
+    overrides: "dict | None" = None,
+) -> pd.DataFrame:
+    """A synthetic `constellation_cells.csv`, keyed (project, bugimpact)."""
+    overrides = overrides or {}
+    rows = []
+    for p, population in enumerate(populations):
+        for i, col_tier in enumerate(col_tiers):
+            for j, row_tier in enumerate(row_tiers):
+                for k, parameter in enumerate(CONSTELLATION_PARAMETERS):
+                    mean = overrides.get(
+                        parameter, float((k + 1) * (i + 1) * (j + 1) + p))
+                    rows.append({
+                        "population": population,
+                        "tier_project": col_tier, "tier_bugimpact": row_tier,
+                        "parameter": parameter,
+                        "mean": mean,
+                        "sd": mean * 0.3,
+                        "n_scenarios": 36, "n_members": 36 * (p + 1),
+                    })
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture(scope="module")
+def profile_fig() -> Figure:
+    """One shared profile render: twelve panels and a laid-out legend cost ~1.5 s."""
+    return plot_constellation_profile(_cells())
+
+
+@pytest.fixture(scope="module")
+def heatmap_fig() -> Figure:
+    """One shared heatmap render; it lays out 552 annotations per panel."""
+    return plot_constellation_heatmap(_cells())
+
+
+class TestConstellationProfile:
+    def test_one_panel_per_cell(self, profile_fig):
+        assert len(profile_fig.axes) == 3 * 4
+
+    def test_the_x_axis_is_logarithmic_and_shared(self, profile_fig):
+        """The counts span four decades, so a per-panel axis would hide the comparison."""
+        assert len({ax.get_xlim() for ax in profile_fig.axes}) == 1
+        assert all(ax.get_xscale() == "log" for ax in profile_fig.axes)
+
+    def test_one_bar_group_per_role_and_population(self, profile_fig):
+        # One BarContainer per population, each holding the eight roles.
+        bars = [c for c in profile_fig.axes[0].containers if hasattr(c, "patches")]
+        assert len(bars) == 2
+        assert all(len(c.patches) == len(DEV_PARAMETERS) for c in bars)
+
+    def test_both_populations_are_in_the_legend(self, profile_fig):
+        labels = {t.get_text()
+                  for legend in profile_fig.legends for t in legend.get_texts()}
+        assert len(labels) == 2
+
+    def test_one_population_still_draws(self):
+        fig = plot_constellation_profile(_cells(populations=(C_STAR,)))
+        bars = [c for c in fig.axes[0].containers if hasattr(c, "patches")]
+        assert len(bars) == 1
+        plt.close(fig)
+
+    def test_a_role_no_optimum_staffs_is_marked_not_dropped(self):
+        """A mean of exactly 0 has no bar on a log axis; it gets a `0` at the frame."""
+        fig = plot_constellation_profile(_cells(overrides={"a_dev_2": 0.0}))
+        texts = [t.get_text().strip() for t in fig.axes[0].texts]
+        assert texts.count("0") == 2         # one per population
+        plt.close(fig)
+
+    def test_an_all_zero_table_cannot_be_scaled(self):
+        zeros = {p: 0.0 for p in CONSTELLATION_PARAMETERS}
+        with pytest.raises(ValueError, match="log axis"):
+            plot_constellation_profile(_cells(overrides=zeros))
+
+    def test_the_role_labels_are_the_short_forms(self, profile_fig):
+        labels = [t.get_text() for t in profile_fig.axes[0].get_yticklabels()]
+        assert labels == list(AGENT_ROLE_ABBREV)
+
+    def test_role_one_is_at_the_top(self, profile_fig):
+        lo, hi = profile_fig.axes[0].get_ylim()
+        assert lo > hi          # inverted, so index 0 sits at the top
+
+    @pytest.mark.parametrize("groups", [
+        ("project", "project"),          # one group on both axes
+        ("project", "nonsense"),         # not a scenario group
+    ])
+    def test_the_faceting_groups_are_validated(self, groups):
+        with pytest.raises(ValueError):
+            plot_constellation_profile(_cells(), rows_group=groups[0],
+                                       cols_group=groups[1])
+
+    def test_a_group_the_table_does_not_carry_is_a_key_error(self):
+        with pytest.raises(KeyError):
+            plot_constellation_profile(_cells(), rows_group="debt")
+
+    def test_a_mismatched_label_list_is_rejected(self):
+        with pytest.raises(ValueError, match="labels"):
+            plot_constellation_profile(_cells(), labels=("only", "two"))
+
+
+class TestConstellationHeatmap:
+    def test_one_panel_per_population(self, heatmap_fig):
+        assert len(heatmap_fig.axes) == 2
+
+    def test_every_cell_of_the_grid_is_a_row(self, heatmap_fig):
+        assert len(heatmap_fig.axes[0].get_yticklabels()) == 3 * 4
+
+    def test_every_parameter_is_a_column(self, heatmap_fig):
+        image = heatmap_fig.axes[0].get_images()[0]
+        assert image.get_array().shape == (3 * 4, len(CONSTELLATION_PARAMETERS))
+
+    def test_the_colour_scale_is_per_column_and_spans_both_populations(self, heatmap_fig):
+        """A parameter's darkest cell is its own maximum, wherever that maximum sits."""
+        first, second = (ax.get_images()[0].get_array() for ax in heatmap_fig.axes)
+        column = list(CONSTELLATION_PARAMETERS).index("a_dev_5")
+        # `i_star` means are the `c_star` ones plus one, so its column tops out at 1.0
+        # and `c_star`'s does not — which only holds if the two share one range.
+        assert second[:, column].max() == pytest.approx(1.0)
+        assert first[:, column].max() < 1.0
+
+    def test_the_annotations_carry_the_raw_numbers(self, heatmap_fig):
+        texts = [t.get_text() for t in heatmap_fig.axes[0].texts]
+        assert len(texts) == 3 * 4 * len(CONSTELLATION_PARAMETERS)
+        assert all("±" in t for t in texts)
+
+    def test_a_block_rule_separates_the_parameter_groups(self, heatmap_fig):
+        # Three rules for four blocks; the last block needs none.
+        assert len(heatmap_fig.axes[0].lines) == len(PARAMETER_BLOCKS) - 1
+
+    def test_an_all_zero_column_does_not_break_the_scale(self):
+        """`a_qa_1` is 0 by construction, so its column has no range to normalise."""
+        fig = plot_constellation_heatmap(_cells(overrides={"a_qa_1": 0.0}))
+        column = list(CONSTELLATION_PARAMETERS).index("a_qa_1")
+        assert np.all(fig.axes[0].get_images()[0].get_array()[:, column] == 0.0)
+        plt.close(fig)
+
+    def test_the_faceting_groups_are_validated(self):
+        with pytest.raises(ValueError):
+            plot_constellation_heatmap(_cells(), rows_group="project",
+                                       cols_group="project")
+
+
+class TestVisualizeConstellation:
+    def test_both_figures_are_written_named_by_the_grid(self, tmp_path):
+        visualize_constellation(_cells(), tmp_path, fmt="png")
+        assert sorted(p.name for p in tmp_path.glob("*.png")) == [
+            "constellation_heatmap_project_bugimpact.png",
+            "constellation_profile_project_bugimpact.png",
+        ]
+
+    def test_a_re_cut_grid_does_not_overwrite_the_default_one(self, tmp_path):
+        cells = _cells()
+        cells = cells.rename(columns={"tier_project": "tier_agent",
+                                      "tier_bugimpact": "tier_human"})
+        visualize_constellation(cells, tmp_path, fmt="png",
+                                rows_group="human", cols_group="agent")
+        assert (tmp_path / "constellation_profile_agent_human.png").is_file()
+
+    def test_an_empty_table_warns_and_writes_nothing(self, tmp_path):
+        with pytest.warns(UserWarning, match="empty"):
+            visualize_constellation(pd.DataFrame(), tmp_path, fmt="png")
+        assert not list(tmp_path.glob("*.png"))
+
+
+# ---------------------------------------------------------------------------
+# The two-figure team-structure summary
+# ---------------------------------------------------------------------------
+
+def _summary_optima(strategies: tuple[str, ...] = ("evolutionary",)) -> pd.DataFrame:
+    """A synthetic `optima.csv` with compositions the summary figures can compress."""
+    df = _optima(strategies=strategies)
+    rng = np.random.default_rng(0)
+    for k in range(1, 9):
+        df[f"a_dev_{k}"] = rng.integers(0, 4, len(df))
+        df[f"a_qa_{k}"] = 0
+    # The two detection services carry the team, as they do on the real campaign, and
+    # Security scales with bugimpact so the figures have a signal to show.
+    df["a_dev_5"] = 40
+    df["a_dev_6"] = df["tier_bugimpact"].map({"low": 4, "medium": 12, "high": 30})
+    df["a_dev_1"] = 1
+    df["N"] = df["tier_agent"].map(
+        {"low": 6.0, "medium": 1.0, "high": 0.5, "pessimistic": 7.0})
+    # The two process controls the driver figure reports beside `N`.  `F_freeze` reaches 0,
+    # as it does in 69 % of the real optima, so its panel must stay off a log axis.
+    df["R"] = df["tier_debt"].map({"low": 1, "medium": 4, "high": 13})
+    df["F_freeze"] = df["tier_human"].map({"low": 0, "medium": 1, "high": 2})
+    df["r_arrival"] = df["tier_project"].map(
+        {"low": 3.0, "medium": 12.0, "high": 75.0, "veryhigh": 1000.0})
+    df["value_mean"] = df["r_arrival"] * 0.99
+    for k in range(1, 9):
+        df[f"actions_{k}"] = 100.0 * df[f"a_dev_{k}"]
+    df["cost_agent_mean"] = 12.34
+    df["cost_human_mean"] = df["N"] * 40.0
+    # The real prices, from the scenario configs the ids name — `role_bill` is what the
+    # cost weighting depends on, so the fixture goes through it rather than faking it.
+    return role_bill(df)
+
+
+def _share_widths(fig) -> list[float]:
+    """Every stacked segment's width, in draw order; closes the figure."""
+    widths = [p.get_width() for p in fig.axes[0].patches]
+    plt.close(fig)
+    return widths
+
+
+class TestTeamShape:
+    def test_one_stacked_bar_per_cell_with_one_segment_per_role(self):
+        fig = plot_team_shape(_summary_optima())
+        # 4 project tiers x 3 bugimpact tiers, eight segments each.
+        assert len(fig.axes[0].patches) == 4 * 3 * 8
+        plt.close(fig)
+
+    def test_every_bar_sums_to_one(self):
+        """A share figure that does not close to 100 % is lying about the parts."""
+        fig = plot_team_shape(_summary_optima())
+        widths = {}
+        for patch in fig.axes[0].patches:
+            widths.setdefault(round(patch.get_y(), 3), 0.0)
+            widths[round(patch.get_y(), 3)] += patch.get_width()
+        assert all(total == pytest.approx(1.0) for total in widths.values())
+        plt.close(fig)
+
+    def test_the_share_is_the_mean_of_the_ratios_not_the_ratio_of_the_means(self):
+        """A cell's largest scenario must not dictate the composition it reports."""
+        df = _summary_optima()
+        cell = df[(df["tier_project"] == "low") & (df["tier_bugimpact"] == "low")]
+        dev = [f"a_dev_{k}" for k in range(1, 9)]
+        expected = (cell[dev].div(cell[dev].sum(axis=1), axis=0)).mean()["a_dev_5"]
+        fig = plot_team_shape(df, weight="count", panel_group=None)
+        first_bar = [p for p in fig.axes[0].patches
+                     if round(p.get_y(), 3) == round(fig.axes[0].patches[0].get_y(), 3)]
+        assert first_bar[4].get_width() == pytest.approx(expected)
+        plt.close(fig)
+
+    def test_the_absolute_team_size_is_annotated(self):
+        fig = plot_team_shape(_summary_optima(), weight="count")
+        # One size annotation per bar, plus the two column headers.
+        annotations = [t.get_text() for t in fig.axes[0].texts]
+        assert sum(t.replace(",", "").isdigit() for t in annotations) == 4 * 3
+        plt.close(fig)
+
+    def test_a_tiny_segment_is_drawn_but_not_labelled(self):
+        fig = plot_team_shape(_summary_optima())
+        labels = [t.get_text() for t in fig.axes[0].texts if t.get_text().endswith("%")]
+        assert 0 < len(labels) < 4 * 3 * 8
+        plt.close(fig)
+
+    def test_the_x_axis_is_the_full_share_range(self):
+        fig = plot_team_shape(_summary_optima())
+        assert fig.axes[0].get_xlim() == (0.0, 1.0)
+        plt.close(fig)
+
+    @pytest.mark.parametrize("kwargs", [
+        {"block_group": "project", "bar_group": "project"},
+        {"block_group": "nonsense"},
+    ])
+    def test_the_grouping_variables_are_validated(self, kwargs):
+        with pytest.raises(ValueError):
+            plot_team_shape(_summary_optima(), **kwargs)
+
+    def test_a_mismatched_label_list_is_rejected(self):
+        with pytest.raises(ValueError, match="labels"):
+            plot_team_shape(_summary_optima(), labels=("only", "two"))
+
+
+class TestTeamShapeWeighting:
+    """The default weighs a role by what it bills, not by how many of it there are."""
+
+    def test_the_default_is_the_agent_bill(self):
+        """The default weighs a role by what it bills, and heads the column accordingly."""
+        fig = plot_team_shape(_summary_optima())
+        assert _SHARE_WEIGHTS["agent"].total_label in [
+            t.get_text() for t in fig.axes[0].texts]
+        plt.close(fig)
+
+    def test_the_panelled_form_carries_no_x_label(self):
+        """Percent ticks and the figure title say what the axis is; four copies would not."""
+        fig = plot_team_shape(_summary_optima(), title="Share of agent costs")
+        assert all(ax.get_xlabel() == "" for ax in fig.axes)
+        # The suptitle is the only figure-level text left.
+        assert [t.get_text() for t in fig.texts] == ["Share of agent costs"]
+        plt.close(fig)
+
+    def test_the_bill_share_differs_from_the_head_count_share(self):
+        """The whole reason for the default: the three autonomous roles are flat-rate."""
+        df = _summary_optima()
+        by_cost = _share_widths(plot_team_shape(df))
+        by_count = _share_widths(plot_team_shape(df, weight="count"))
+        assert by_cost != pytest.approx(by_count, abs=1e-6)
+
+    def test_an_unknown_weight_is_rejected(self):
+        with pytest.raises(ValueError, match="unknown weight"):
+            plot_team_shape(_summary_optima(), weight="headcount")
+
+    def test_the_cost_weighting_needs_the_bill_columns(self):
+        df = _summary_optima().drop(columns=list(BILL_PARAMETERS))
+        with pytest.raises(KeyError, match="role_bill"):
+            plot_team_shape(df)
+
+
+
+class TestTeamBillWeighting:
+    """The `team` weighting puts the developers in beside the eight agent roles."""
+
+    def test_the_developers_are_a_ninth_slice(self):
+        fig = plot_team_shape(_summary_optima(), weight="team")
+        assert len(fig.axes[0].patches) == 4 * 3 * (len(AGENT_ROLE_ABBREV) + 1)
+        labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
+        assert labels[0] == "Developers"
+        plt.close(fig)
+
+    def test_the_developers_are_off_the_agent_palette(self):
+        """A human slice that reads as a ninth agent would be the one real mistake here."""
+        fig = plot_team_shape(_summary_optima(), weight="team")
+        first_bar = sorted({round(p.get_y(), 3) for p in fig.axes[0].patches})[0]
+        segments = [p for p in fig.axes[0].patches if round(p.get_y(), 3) == first_bar]
+        human = matplotlib.colors.to_rgba(segments[0].get_facecolor())
+        agents = {matplotlib.colors.to_rgba(p.get_facecolor()) for p in segments[1:]}
+        assert human not in agents
+        plt.close(fig)
+
+    def test_the_nine_slices_close_to_the_reported_team_cost(self):
+        """`cost_human_mean + cost_agent_mean`, exactly — the split is an apportionment."""
+        df = _summary_optima()
+        assert df["cost_team_mean"].to_numpy() == pytest.approx(
+            (df["cost_human_mean"] + df["cost_agent_mean"]).to_numpy())
+        assert df[list(AGENT_COST_PARAMETERS)].sum(axis=1).to_numpy() == pytest.approx(
+            df["cost_agent_mean"].to_numpy())
+
+    def test_escaped_bug_cost_is_not_a_line_item_of_the_team(self):
+        """It is what the team's choices cost elsewhere, not what the team bills."""
+        assert "cost_quality_mean" not in _SHARE_WEIGHTS["team"].columns
+
+
+class TestCompositionAnnotations:
+    """Two dollar figures per bar: what the team costs, and what its bugs cost."""
+
+    def test_both_columns_are_annotated_on_every_bar(self):
+        fig = plot_team_shape(_summary_optima(), weight="team")
+        dollars = [t.get_text() for t in fig.axes[0].texts if t.get_text().startswith("$")]
+        # 4 project x 3 bugimpact rows, two columns; the headers carry no leading "$".
+        assert len(dollars) == 4 * 3 * 2
+        plt.close(fig)
+
+    def test_the_bug_column_is_the_third_driver_of_the_cost_equation(self):
+        df = _summary_optima()
+        cell = df[(df["tier_agent"] == "low") & (df["tier_project"] == "low")
+                  & (df["tier_bugimpact"] == "low")]
+        fig = plot_team_shape(df, weight="team")
+        expected = _compact_dollars(cell["cost_quality_mean"].mean())
+        assert expected in [t.get_text() for t in fig.axes[0].texts]
+        plt.close(fig)
+
+    def test_it_is_skipped_when_the_table_has_no_bug_cost(self):
+        """The bar still describes the team; only the annotation needs the column."""
+        df = _summary_optima().drop(columns=["cost_quality_mean"])
+        fig = plot_team_shape(df, weight="team")
+        assert _BUG_COST_LABEL not in [t.get_text() for t in fig.axes[0].texts]
+        plt.close(fig)
+        fig = plot_team_shape(_summary_optima(), weight="team")
+        assert _BUG_COST_LABEL in [t.get_text() for t in fig.axes[0].texts]
+        plt.close(fig)
+
+    @pytest.mark.parametrize("value, expected", [
+        (83.4, "$83"), (999.4, "$999"), (1_000.0, "$1.0k"), (6_749.0, "$6.7k"),
+        (26_209.0, "$26k"), (516_645.0, "$517k"), (2_400_000.0, "$2.4M"),
+    ])
+    def test_the_bug_column_is_compact(self, value, expected):
+        """Four orders of magnitude have to fit in a margin, so it says the decade."""
+        assert _compact_dollars(value) == expected
+
+    def test_each_weighting_writes_its_own_file(self):
+        stems = {name: spec.filename for name, spec in _SHARE_WEIGHTS.items()}
+        assert len(set(stems.values())) == len(stems)
+
+
+class TestTeamShapePanels:
+    """A third scenario group, read off the panels rather than off the rows."""
+
+    def test_one_panel_per_tier_of_the_panel_group(self):
+        fig = plot_team_shape(_summary_optima())
+        titles = [ax.get_title() for ax in fig.axes]
+        assert titles == [f"agent = {t}" for t in scenario_tiers("agent")]
+        plt.close(fig)
+
+    def test_every_panel_carries_the_same_rows(self):
+        """The panels are only comparable if a row means the same thing in each."""
+        fig = plot_team_shape(_summary_optima())
+        rows = [sorted({round(p.get_y(), 3) for p in ax.patches}) for ax in fig.axes]
+        assert all(r == rows[0] for r in rows[1:])
+        assert all(ax.get_ylim() == fig.axes[0].get_ylim() for ax in fig.axes)
+        plt.close(fig)
+
+    def test_the_row_labels_are_written_once_per_grid_row(self):
+        """`sharey` aligns the columns, so the right one is read off the left one's labels."""
+        fig = plot_team_shape(_summary_optima())
+        left, right = fig.axes[::2], fig.axes[1::2]
+        assert all(any(t.get_visible() for t in ax.get_yticklabels()) for ax in left)
+        assert not any(t.get_visible() for ax in right for t in ax.get_yticklabels())
+        plt.close(fig)
+
+    def test_the_panels_are_two_to_a_grid_row(self):
+        """Four side by side is a 19-inch strip; stacked, the rows stay aligned."""
+        fig = plot_team_shape(_summary_optima())
+        assert len({round(ax.get_position().x0, 3) for ax in fig.axes}) == 2
+        assert len({round(ax.get_position().y0, 3) for ax in fig.axes}) == 2
+        plt.close(fig)
+
+    def test_a_panel_holds_only_its_own_tier(self):
+        """Otherwise it is the pooled figure drawn four times."""
+        fig = plot_team_shape(_summary_optima(), weight="count")
+        widths = [tuple(round(p.get_width(), 6) for p in ax.patches) for ax in fig.axes]
+        assert len({widths[0], widths[1]}) == 2
+        plt.close(fig)
+
+    def test_pooling_gives_back_the_single_panel_form(self):
+        fig = plot_team_shape(_summary_optima(), panel_group=None)
+        assert len(fig.axes) == 1
+        assert fig.axes[0].get_title() == ""
+        plt.close(fig)
+
+    def test_a_group_cannot_hold_two_channels(self):
+        with pytest.raises(ValueError, match="must differ"):
+            plot_team_shape(_summary_optima(), block_group="agent")
+
+    def test_the_summary_pools_rather_than_failing_on_a_re_cut_grid(self, tmp_path):
+        """A re-cut grid must not take the whole subcommand down with it."""
+        with pytest.warns(UserWarning, match="already a composition axis"):
+            visualize_team_summary(_summary_optima(), tmp_path, fmt="png",
+                                   block_group="agent", bar_group="human",
+                                   weights=("count",))
+        assert (tmp_path / "composition_head_count.png").is_file()
+
+
+class TestTeamDrivers:
+    def test_one_panel_per_quantity(self):
+        fig = plot_team_drivers(_summary_optima())
+        assert len(fig.axes) == len(_TEAM_QUANTITIES)
+        plt.close(fig)
+
+    def test_one_row_per_group_and_tier(self):
+        fig = plot_team_drivers(_summary_optima())
+        expected = sum(len(scenario_tiers(g)) for g in SCENARIO_GROUPS)
+        assert len(fig.axes[0].get_yticklabels()) == expected
+        plt.close(fig)
+
+    def test_each_row_gets_a_median_marker_and_an_iqr_bar(self):
+        fig = plot_team_drivers(_summary_optima())
+        expected = sum(len(scenario_tiers(g)) for g in SCENARIO_GROUPS)
+        # Two Line2D per row plus one rule per block boundary, and nothing else: there
+        # is no campaign-median rule.
+        assert len(fig.axes[0].lines) == 2 * expected + len(SCENARIO_GROUPS) - 1
+        plt.close(fig)
+
+    def test_the_groups_are_separated_by_a_rule_in_every_panel(self):
+        """Six panels wide, the eye has to carry a block boundary across the figure."""
+        fig = plot_team_drivers(_summary_optima())
+        rules = {tuple(line.get_ydata()) for line in fig.axes[0].lines
+                 if len(set(line.get_ydata())) == 1 and len(line.get_ydata()) == 2
+                 and tuple(line.get_xdata()) == (0.0, 1.0)}
+        assert len(rules) == len(SCENARIO_GROUPS) - 1
+        for ax in fig.axes[1:]:
+            assert len(ax.lines) == len(fig.axes[0].lines)
+        plt.close(fig)
+
+    def test_there_is_no_campaign_median_rule(self):
+        fig = plot_team_drivers(_summary_optima())
+        labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
+        assert "median with interquartile range" in labels
+        assert "campaign median" not in labels
+        plt.close(fig)
+
+    def test_the_two_halves_of_the_team_get_a_panel_each(self):
+        """Supervised and autonomous counts are bounded by different things (§3.3)."""
+        frame = _team_quantities(_summary_optima())
+        supervised = frame[[f"a_dev_{k}" for k in (1, 2, 3, 7, 8)]].sum(axis=1)
+        autonomous = frame[[f"a_dev_{k}" for k in (4, 5, 6)]].sum(axis=1)
+        assert np.allclose(frame["sup_agents_per_feature"],
+                           supervised / frame["r_arrival"])
+        assert np.allclose(frame["aut_agents_per_feature"],
+                           autonomous / frame["r_arrival"])
+
+    def test_the_two_agent_panels_are_not_forced_onto_one_range(self):
+        """A shared range puts every autonomous row on one tick; see `_TEAM_QUANTITIES`."""
+        fig = plot_team_drivers(_summary_optima())
+        columns = [q.column for q in _TEAM_QUANTITIES]
+        sup = fig.axes[columns.index("sup_agents_per_feature")]
+        aut = fig.axes[columns.index("aut_agents_per_feature")]
+        assert sup.get_xlim() != aut.get_xlim()
+        plt.close(fig)
+
+    def test_every_panel_is_linear(self):
+        """Chosen deliberately: a log axis reads the small tiers as far apart as they are."""
+        fig = plot_team_drivers(_summary_optima())
+        assert {ax.get_xscale() for ax in fig.axes} == {"linear"}
+        plt.close(fig)
+
+    def test_the_fourth_tier_gets_one_legend_entry_not_two(self):
+        """`veryhigh` and `pessimistic` share a colour slot; five groups share one axis."""
+        fig = plot_team_drivers(_summary_optima())
+        labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
+        assert "veryhigh / pessimistic" in labels
+        assert "veryhigh" not in labels and "pessimistic" not in labels
+        plt.close(fig)
+
+    def test_a_team_with_no_detection_service_reports_no_split(self):
+        """0/0 is not a Security share of zero; it drops out of the order statistics."""
+        df = _summary_optima()
+        df.loc[:, "a_dev_5"] = 0
+        df.loc[:, "a_dev_6"] = 0
+        assert _team_quantities(df)["security_share"].isna().all()
+
+    def test_the_groups_are_validated(self):
+        with pytest.raises(ValueError, match="unknown"):
+            plot_team_drivers(_summary_optima(), groups=("project", "nonsense"))
+
+    def test_a_subset_of_groups_shortens_the_axis(self):
+        fig = plot_team_drivers(_summary_optima(), groups=("bugimpact",))
+        assert len(fig.axes[0].get_yticklabels()) == len(scenario_tiers("bugimpact"))
+        plt.close(fig)
+
+
+class TestVisualizeTeamSummary:
+    def test_both_figures_are_written(self, tmp_path):
+        visualize_team_summary(_summary_optima(), tmp_path, fmt="png")
+        assert sorted(p.name for p in tmp_path.glob("*.png")) == [
+            "composition_agent_bill.png", "composition_team_bill.png",
+            "team_drivers.png",
+        ]
+
+    def test_the_human_only_baseline_is_excluded(self, tmp_path):
+        """A zero-agent team has no composition; it would divide the shares by zero."""
+        df = _summary_optima(("evolutionary", "human_only"))
+        df.loc[df["strategy"] == "human_only",
+               [f"a_dev_{k}" for k in range(1, 9)]] = 0
+        visualize_team_summary(df, tmp_path, fmt="png")
+        assert (tmp_path / "composition_agent_bill.png").is_file()
+
+    def test_nothing_to_summarise_warns(self, tmp_path):
+        df = _summary_optima(("human_only",))
+        with pytest.warns(UserWarning, match="summarise"):
+            visualize_team_summary(df, tmp_path, fmt="png")
+        assert not list(tmp_path.glob("*.png"))
