@@ -1,10 +1,10 @@
 """Tests for src/selection.py — the objective, the constraint, and what gets reported.
 
-Three things are under test.  The bootstrap aggregation of §3.8: means over K replications
+Three things are under test.  The bootstrap aggregation: means over K replications
 with 95 % percentile CIs on the objective and the constrained quantity.  The preference
-relation of §3.11.3 (Deb's feasibility rule): a total preorder over (constraint violation,
+relation (Deb's feasibility rule): a total preorder over (constraint violation,
 cost), which is what makes `rank` a sort and `c*` its first element.  And the reporting
-rule of §3.10: `c*` plus the set of admissible configurations whose cost CI overlaps its
+reporting rule: `c*` plus the set of admissible configurations whose cost CI overlaps its
 own, reduced by the parsimony tie-break — which removes a team only when another one at the
 same process is no larger anywhere *and* measured cheaper.
 """
@@ -23,7 +23,7 @@ from src.selection import (
     indistinguishable_set,
     parsimony_dominates,
     parsimony_key,
-    prefers,
+    preference_key,
     rank,
     report_optimum,
     satisfies_throughput,
@@ -43,7 +43,7 @@ def _agg(value=10.0, cost=100.0, ci=None, **extra) -> AggregatedObjectives:
 
 
 # ---------------------------------------------------------------------------
-# Throughput constraint (§3.9)
+# Throughput constraint
 # ---------------------------------------------------------------------------
 
 class TestThroughputConstraint:
@@ -64,13 +64,13 @@ class TestThroughputConstraint:
         assert violation(_agg(value=12.0), floor=10.0) == pytest.approx(0.0)
 
     def test_the_floor_itself_is_admissible(self):
-        """Eq. (throughput_constraint) is a weak inequality."""
+        """The throughput constraint is a weak inequality."""
         assert satisfies_throughput(_agg(value=10.0), floor=10.0)
         assert not satisfies_throughput(_agg(value=9.999), floor=10.0)
 
 
 # ---------------------------------------------------------------------------
-# Preference relation (§3.11.3, Deb's feasibility rule)
+# Preference relation (Deb's feasibility rule)
 # ---------------------------------------------------------------------------
 
 class TestPreferenceRelation:
@@ -78,34 +78,34 @@ class TestPreferenceRelation:
         """Rule 2: satisfying the constraint always wins, even at a far higher cost."""
         admissible = _agg(value=10.0, cost=1e9)
         cheap_but_short = _agg(value=9.0, cost=1.0)
-        assert prefers(admissible, cheap_but_short, floor=10.0)
-        assert not prefers(cheap_but_short, admissible, floor=10.0)
+        assert (preference_key(admissible, 10.0) < preference_key(cheap_but_short, 10.0))
+        assert not (preference_key(cheap_but_short, 10.0) < preference_key(admissible, 10.0))
 
     def test_two_admissible_are_separated_by_cost(self):
         """Rule 3: among admissible configurations, only cost matters."""
         cheap = _agg(value=10.0, cost=50.0)
         pricey = _agg(value=99.0, cost=60.0)   # far more value, but dearer
-        assert prefers(cheap, pricey, floor=10.0)
-        assert not prefers(pricey, cheap, floor=10.0)
+        assert (preference_key(cheap, 10.0) < preference_key(pricey, 10.0))
+        assert not (preference_key(pricey, 10.0) < preference_key(cheap, 10.0))
 
     def test_two_violators_are_separated_by_the_smaller_violation(self):
         """Rule 1: the closer to admissibility (equivalently, the higher value) wins."""
         closer = _agg(value=9.0, cost=1e6)
         further = _agg(value=1.0, cost=1.0)    # much cheaper, but far short
-        assert prefers(closer, further, floor=10.0)
-        assert not prefers(further, closer, floor=10.0)
+        assert (preference_key(closer, 10.0) < preference_key(further, 10.0))
+        assert not (preference_key(further, 10.0) < preference_key(closer, 10.0))
 
     def test_cost_never_separates_two_violators_with_equal_shortfall(self):
         """The lexicographic key falls through to cost only at equal violation."""
         a = _agg(value=9.0, cost=10.0)
         b = _agg(value=9.0, cost=20.0)
-        assert prefers(a, b, floor=10.0)
-        assert not prefers(b, a, floor=10.0)
+        assert (preference_key(a, 10.0) < preference_key(b, 10.0))
+        assert not (preference_key(b, 10.0) < preference_key(a, 10.0))
 
     def test_the_relation_is_strict(self):
         identical = _agg()
-        assert not prefers(identical, _agg(), floor=10.0)
-        assert not prefers(_agg(), identical, floor=10.0)
+        assert not (preference_key(identical, 10.0) < preference_key(_agg(), 10.0))
+        assert not (preference_key(_agg(), 10.0) < preference_key(identical, 10.0))
 
     def test_relation_is_transitive_over_a_random_pool(self):
         """A total preorder, unlike the CI-aware multi-objective rule it replaced."""
@@ -116,8 +116,9 @@ class TestPreferenceRelation:
         for a in pool:
             for b in pool:
                 for c in pool:
-                    if prefers(a, b, 10.0) and prefers(b, c, 10.0):
-                        assert prefers(a, c, 10.0)
+                    if (preference_key(a, 10.0) < preference_key(b, 10.0)
+                            and preference_key(b, 10.0) < preference_key(c, 10.0)):
+                        assert (preference_key(a, 10.0) < preference_key(c, 10.0))
 
     def test_rank_orders_best_first_and_is_stable(self):
         pool = [_agg(value=10.0, cost=30.0),   # 0: admissible, dearest
@@ -145,18 +146,18 @@ class TestPreferenceRelation:
         assert not satisfies_throughput(pool[best], 10.0)
 
     def test_the_reported_means_never_affect_the_relation(self):
-        """The cost drivers and contribution counts are reporting only (§3.8)."""
+        """The cost drivers and contribution counts are reporting only."""
         plain = _agg(value=10.0, cost=100.0)
         loaded = _agg(value=10.0, cost=100.0, cost_quality_mean=99.0,
                       cost_human_mean=1.0, cost_agent_mean=0.0,
                       actions_mean=(1.0,) * 8, impl_human_mean=7.0,
                       fixes_agent_mean=3.0)
-        assert not prefers(plain, loaded, 10.0)
-        assert not prefers(loaded, plain, 10.0)
+        assert not (preference_key(plain, 10.0) < preference_key(loaded, 10.0))
+        assert not (preference_key(loaded, 10.0) < preference_key(plain, 10.0))
 
 
 # ---------------------------------------------------------------------------
-# Indistinguishable set (§3.10, Eq. topset)
+# Indistinguishable set
 # ---------------------------------------------------------------------------
 
 class TestIndistinguishableSet:
@@ -171,13 +172,13 @@ class TestIndistinguishableSet:
         assert indistinguishable_set(pool, 10.0) == [0]
 
     def test_inadmissible_configurations_are_excluded_even_when_tied(self):
-        """I* is defined over admissible candidates only (Eq. topset)."""
+        """I* is defined over admissible candidates only."""
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # 0: c*
                 _agg(value=5.0, cost=100.0, ci=(90.0, 110.0))]    # 1: same cost, short
         assert indistinguishable_set(pool, floor=10.0) == [0]
 
     def test_an_inadmissible_pool_yields_an_empty_set(self):
-        """§3.10: with nothing admissible there is no c*, so I* is empty.
+        """With nothing admissible there is no c*, so I* is empty.
 
         `report_optimum` still hands back the least-violating candidate beside it — see
         TestReportOptimum — but the set itself has no members to speak of.
@@ -207,7 +208,7 @@ class TestIndistinguishableSet:
 
 
 # ---------------------------------------------------------------------------
-# Parsimony tie-break (§3.10)
+# Parsimony tie-break
 # ---------------------------------------------------------------------------
 
 def _cfg(N=2.0, R=4, F_freeze=1, A_dev=None, A_qa=None) -> TeamConfiguration:
@@ -236,7 +237,7 @@ class TestParsimonyRelation:
         assert not parsimony_dominates(large, small, 101.0, 100.0)
 
     def test_a_smaller_but_dearer_team_does_not_dominate(self):
-        """§3.10: the rule only removes the larger team in favour of a cheaper one.
+        """The rule only removes the larger team in favour of a cheaper one.
 
         This is what makes the tie-break unable to touch c*: no member of I* has a strictly
         lower mean cost than the minimiser.
@@ -306,7 +307,7 @@ class TestIndistinguishableSetParsimony:
         assert indistinguishable_set(pool, 10.0, keys=keys)
 
     def test_the_tie_break_never_removes_the_raw_minimiser(self):
-        """§3.10: a smaller tied team cannot displace c*, because it is not cheaper.
+        """A smaller tied team cannot displace c*, because it is not cheaper.
 
         Both survive here, and neither needs an exemption: the smaller team does not
         dominate c* because its mean cost is higher, and c* does not dominate the smaller
@@ -370,7 +371,7 @@ class TestReportOptimum:
                                                A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
             best, members = report_optimum(pool, 10.0, keys=keys)
             assert best is not None
-            # I* is empty exactly when nothing in the pool is admissible (§3.10); whenever
+            # I* is empty exactly when nothing in the pool is admissible; whenever
             # it is not, c* is one of its members.
             if satisfies_throughput(pool[best], 10.0):
                 assert best in members
@@ -378,7 +379,7 @@ class TestReportOptimum:
                 assert members == []
 
     def test_the_tie_break_never_displaces_the_optimum(self):
-        """§3.10: c* is the raw minimiser; a smaller tied team is dearer, so it cannot remove it."""
+        """c* is the raw minimiser; a smaller tied team is dearer, so it cannot remove it."""
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # cheapest, but larger
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]   # dearer, but smaller
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0))),
@@ -387,7 +388,7 @@ class TestReportOptimum:
         assert (best, members) == (0, [0, 1])
 
     def test_an_inadmissible_pool_reports_the_least_violating_with_an_empty_set(self):
-        """§3.10: no c* exists, so I* is empty, but the result is still reported."""
+        """No c* exists, so I* is empty, but the result is still reported."""
         pool = [_agg(value=1.0, cost=10.0, ci=(9.0, 11.0)),      # cheapest, but far short
                 _agg(value=9.0, cost=100.0, ci=(90.0, 110.0))]   # least-violating
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
@@ -409,7 +410,7 @@ class TestReportOptimum:
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap aggregation (§3.8)
+# Bootstrap aggregation
 # ---------------------------------------------------------------------------
 
 def _result(config, values, costs) -> ConfigResult:
@@ -477,7 +478,7 @@ class TestAggregateConfigResult:
         assert agg.actions_mean == ()
 
     def test_the_three_cost_drivers_sum_to_the_objective(self, base_config, base_params):
-        """Over a real simulation, not a hand-built fixture (§3.8)."""
+        """Over a real simulation, not a hand-built fixture."""
         from src.config import SimulationHorizon
         s = SimulationHorizon(T=6, K_search=4, K_final=4, master_seed=0)
         agg = aggregate_config_result(

@@ -19,27 +19,24 @@ from .state import SystemState
 
 @dataclass(frozen=True, slots=True)
 class ReplicationResult:
-    value: float    # F_completed(T) / T — features/sprint, Eq. (obj_V)
-    # The single objective of §3.9, Eq. (cost_rep):
-    #   (C_quality + C_human + C_agents) / F_completed(T)
-    # formed *within* this replication, so it is charged for the bugs it let through and
-    # the agent work it consumed, and credited with the features it delivered.
+    value: float    # F_completed(T) / T, in features per sprint
+    # The objective: (C_quality + C_human + C_agents) / F_completed(T), formed *within*
+    # this replication, so it is charged for the bugs it let through and the agent work it
+    # consumed, and credited with the features it delivered.
     cost: float
-    # The three cost drivers of §3.8, sharing `cost`'s denominator, so
-    # cost_quality + cost_human + cost_agent == cost.  They are persisted rather than
-    # reconstructed: C_quality and C_agents both depend on the realised trajectory, so no
-    # fixed ratio recovers them from `cost` alone.
+    # The three cost drivers, sharing `cost`'s denominator, so they sum to `cost`.  Stored
+    # rather than reconstructed: the quality and agent terms depend on the realised
+    # trajectory, so no fixed ratio recovers them from `cost` alone.
     cost_quality: float = 0.0
     cost_human: float = 0.0
     cost_agent: float = 0.0
-    # Work completed per role over the horizon, in each role's own throughput unit.
-    # Kept so the analysis can tell a role that worked from one that was merely
-    # deployed; `cost_agent` is its inner product with c_token.
+    # Work completed per role over the horizon, in each role's own throughput unit, so the
+    # analysis can tell a role that worked from one that was merely deployed.
+    # `cost_agent` is its inner product with c_token.
     actions: tuple[float, ...] = ()
     # Who did the work, summed over the horizon: features delivered and bugs repaired,
-    # split by human developers and agents (see SprintActions for the paper symbols).
-    # Reporting only — not billable, and invisible to the selection rule of §3.10.
-    # `impl_human + impl_agents == F_completed(T)` exactly, by Eq. (impl).
+    # split by human developers and agents.  Reporting only — not billable, and invisible
+    # to the selection rule.  `impl_human + impl_agents == F_completed(T)` exactly.
     impl_human: float = 0.0
     impl_agents: float = 0.0
     fixes_human: float = 0.0
@@ -85,8 +82,7 @@ class ReplicationTrace:
     """Full per-sprint history for one replication."""
 
     k: int
-    result: ReplicationResult
-    snapshots: tuple[SprintSnapshot, ...]   # length T (production sprints only)
+    snapshots: tuple[SprintSnapshot, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,13 +108,11 @@ def phase_sprint_counts(config: TeamConfiguration, T: int) -> tuple[int, int]:
 
 
 def escaped_bug_cost(params: ScenarioParameters, B_min: int, B_maj: int, B_sec: int) -> float:
-    """C_quality of Eq. (obj_Q): what the bugs that reached production cost.
+    """What the bugs that reached production cost.
 
-    The severity weights are absolute expected costs in dollars of a single escaped minor,
-    major, or security bug (§4.1), not relative quality weights, which is what makes poor
-    quality a cost driver of Eq. (cost_rep) rather than a separate objective.  The counts
-    cover everything that shipped: bugs never detected and bugs detected but not fixed
-    before their release deadline.
+    The severity weights are absolute expected dollar costs of a single escaped minor,
+    major or security bug, not relative quality weights.  The counts cover everything that
+    shipped: bugs never detected, and bugs detected but not fixed before their release.
     """
     return (params.omega_min * B_min
             + params.omega_maj * B_maj
@@ -131,13 +125,13 @@ def cost_components(
     T: int,
     actions: Sequence[float],
 ) -> tuple[float, float]:
-    """(C_human, C_agents) over a T-sprint horizon — Eqs. (cost_human), (cost_agents).
+    """(C_human, C_agents) over a T-sprint horizon.
 
-    `actions` is the per-role work completed over the whole horizon, accumulated from
-    the `SprintActions` that `step_sprint` returns.  Agents are billed for the work they
-    actually performed, so an agent that no work reaches costs nothing; `c_token[k]` is
-    the cost of one unit of role k's throughput, which is exactly the unit `actions[k]`
-    is counted in.  C_human remains deterministic given `(config, T)`.
+    `actions` is the per-role work completed over the whole horizon, accumulated from the
+    `SprintActions` that `step_sprint` returns.  Agents are billed for the work they
+    performed, so one that no work reaches costs nothing; `c_token[k]` prices one unit of
+    role k's throughput, which is exactly the unit `actions[k]` is counted in.  C_human is
+    deterministic given `(config, T)`.
     """
     if len(actions) != AGENT_ROLE_COUNT:
         raise ValueError(
@@ -164,16 +158,10 @@ def run_configuration(
     With `capture_traces=True` returns a `ConfigTrace` with full per-sprint history.
     `initial_state` sets the starting system state; defaults to all-zero if not provided.
 
-    `K` overrides the replication count, which otherwise is `settings.K_search` — the
-    paper's `K'`, what the search scores a candidate with.  `k_offset` shifts the block of
-    replication indices the run uses, from `[0, K)` to `[k_offset, k_offset + K)`.
-
-    Both exist for the two-stage selection of §3.10, which re-simulates the preliminary
-    `I*` with `K = settings.K_final` replications at `k_offset = settings.K_search`.  The
-    offset makes that a **disjoint** sample: the candidates entered the preliminary set by
-    being the minimum of thousands of noisy `K'`-replication estimates, so those estimates
-    are biased low by the selection itself, and reusing them would carry a fraction of that
-    winner's curse into the reported figure.  A fresh block of indices does not.
+    `K` overrides the replication count, which otherwise is `settings.K_search`.
+    `k_offset` shifts the block of replication indices used, from `[0, K)` to
+    `[k_offset, k_offset + K)`.  Both exist for the re-simulation stage of
+    `search.two_stage_selection`, which runs a block disjoint from the search's.
     """
     rep_results: list[ReplicationResult] = []
     rep_traces: list[ReplicationTrace] = []
@@ -223,15 +211,13 @@ def _run_replication(
     # Sprint loop
     # ------------------------------------------------------------------
     # Work completed per role over the horizon; the agent bill is its inner product
-    # with c_token (Eq. cost_agents).
+    # with c_token.
     actions = [0.0] * AGENT_ROLE_COUNT
     # The human/agent contribution split over the same horizon (reporting only).
     impl_human = impl_agents = fixes_human = fixes_agent = 0.0
 
     for t in range(settings.T):
         sprint_actions = step_sprint(t, state, config, params, rng)
-        # NB: not `k` — that is the replication index, and shadowing it here used to
-        # label every ReplicationTrace with the last role index instead.
         for role in range(AGENT_ROLE_COUNT):
             actions[role] += sprint_actions.units[role]
         impl_human  += sprint_actions.impl_human
@@ -279,9 +265,8 @@ def _run_replication(
     # Compute the objective and the constraint quantity
     # ------------------------------------------------------------------
     F_done = state.F_completed
-    # Eq. (cost_rep) writes a bare F_completed(T).  A horizon that completes no feature at
-    # all is reachable (a tiny r_arrival whose Poisson draws all come up zero), so the
-    # denominator is floored at one rather than dividing by zero.
+    # A horizon that completes no feature at all is reachable (a tiny r_arrival whose
+    # Poisson draws all come up zero), so the denominator is floored at one.
     denom = max(1, F_done)
     result = ReplicationResult(
         value=F_done / settings.T,
@@ -296,5 +281,5 @@ def _run_replication(
         fixes_agent=fixes_agent,
     )
 
-    trace = ReplicationTrace(k=k, result=result, snapshots=tuple(snapshots)) if capture_traces else None
+    trace = ReplicationTrace(k=k, snapshots=tuple(snapshots)) if capture_traces else None
     return result, trace

@@ -1,41 +1,36 @@
-"""Visualization functions for search results.
+"""Figures for search results and for a consolidated campaign.
 
-All functions accept plain Python dicts / pandas DataFrames derived from the persisted
-result files and return matplotlib Figure objects. Callers decide how to save or display.
+Every function takes plain dicts or pandas DataFrames derived from the persisted result
+files and returns a matplotlib Figure; the caller decides how to save it.
 
-Public API — plot functions
----------------------------
-    plot_cost_vs_value(objectives, best_key, keep_keys, floor, title)   -> Figure
-    plot_cost_split(objectives, keys, title)                            -> Figure
-    plot_trajectories(traces_per_config, highlight_keys, fields, title) -> Figure
-    plot_comparison_optima(scenarios, title)                            -> Figure
-    plot_elite_turnover(turnover, title)                                -> Figure
+Per-search plots
+----------------
+    plot_cost_vs_value, plot_cost_split, plot_trajectories, plot_comparison_optima,
+    plot_elite_turnover
 
-Public API — campaign-level plots (paper §5)
----------------------------------------------
-This one takes the ``optima.csv`` table of :mod:`src.campaign`, not a per-search
-`objectives` dict.
+Campaign plots
+--------------
+These take the ``optima.csv`` table of :mod:`src.campaign` rather than a per-search
+`objectives` dict:
 
-    plot_human_agent_matrix(df, x_group, y_group, size_group, marker_group,
-                            color_group, title)                         -> Figure
+    plot_human_agent_matrix, plot_quality_development_matrix,
+    plot_agent_human_ratio_matrix, plot_constellation_profile,
+    plot_constellation_heatmap, plot_team_shape, plot_team_drivers
 
-They all share `_draw_matrix`, which owns the five-channel tier grid; they differ only in
-the pair of columns they put on the axes.  All but the ratio figure take an optional `baseline`
-frame — the human-only optima of §4.1 — drawn in black on the shape and size channels of
-the groups it varies; see `_draw_matrix`, `_baseline_cell` and `_baseline_style_groups`.
+The first three share `_draw_matrix`, which owns the five-channel tier grid, and differ
+only in the pair of columns they put on the axes.  All but the ratio figure take an
+optional `baseline` frame of zero-agent optima, drawn in black on the shape and size
+channels of the groups it varies; see `_baseline_cell` and `_baseline_style_groups`.
 
-Public API — result-directory helpers
---------------------------------------
-    visualize_single(result_dir, out_dir, fmt)                    -> None
-    visualize_multi(result_dirs, out_dir, fmt)                    -> None
-    visualize_campaign(optima, out_dir, fmt, turnover, **channels)        -> None
-    save_figure(fig, out_dir, name, fmt)                          -> None
+Directory-level helpers
+-----------------------
+    visualize_single, visualize_multi, visualize_campaign, visualize_constellation,
+    visualize_team_summary, save_figure
 """
 
 from __future__ import annotations
 
 import json
-import textwrap
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -58,7 +53,10 @@ from .config import (
     AGENT_ROLE_ABBREV,
     ALL_SCENARIO_TIERS,
     AUTONOMOUS_ROLE_INDICES,
+    HUMAN_ONLY_MODE,
     SCENARIO_GROUPS,
+    require_distinct_groups,
+    require_group_pair,
     SUPERVISED_ROLE_INDICES,
     UNUSED_TIER,
 )
@@ -81,13 +79,11 @@ _BEST_COLOR  = cm.tab10(3)     # red — c*
 _KEEP_COLOR  = cm.tab10(0)     # blue — the indistinguishable set I*
 _OK_COLOR    = "#88bb88"       # green-grey — admissible but distinguishably worse
 _OTHER_COLOR = "#cccccc"       # grey — violates the throughput constraint
-_CHANGE_COLOR = cm.tab10(2)    # green — cumulative change in c*'s cost (§5.1)
+_CHANGE_COLOR = cm.tab10(2)    # green — cumulative change in c*'s cost
 _STYLE       = "seaborn-v0_8-whitegrid"
 
-#: A §4.2 search evaluates up to 10,000 candidates, far past the point where per-point CI
-#: whiskers or one bar per configuration stay legible.
-_ERRORBAR_LIMIT = 200          # points drawn with CI whiskers
-_BAR_LIMIT      = 60           # bars in plot_cost_split
+#: Bars drawn by plot_cost_split; a search evaluates far more candidates than fit.
+_BAR_LIMIT = 60
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +99,7 @@ def plot_cost_vs_value(
 ) -> "Figure":
     """Every evaluated candidate as (value, cost), with the throughput floor marked.
 
-    This is the search problem of §3.9 drawn directly: the vertical line is
+    The search problem drawn directly: the vertical line is
     `(1 - eps) * r_arrival`, everything left of it violates the throughput constraint, and
     the objective is to sit as low as possible to the right of it.  `c*` and the
     indistinguishable set `I*` are highlighted, and `c*` carries its cost CI — the interval
@@ -169,7 +165,7 @@ def plot_cost_split(
     keys: list[str],
     title: str = "",
 ) -> "Figure":
-    """Stacked bars of the three cost drivers of §3.8, one bar per key.
+    """Stacked bars of the three cost drivers, one bar per key.
 
     The three shares sum to `cost_mean` by construction, so this reads as "where the money
     went" for the reported configurations.  Truncated at `_BAR_LIMIT` bars.
@@ -205,19 +201,19 @@ def plot_cost_split(
 # 3. State trajectories
 # ---------------------------------------------------------------------------
 
-_DEFAULT_TRAJECTORY_FIELDS = ["F_completed", "D_tech", "B_kno", "doc_cov"]
+#: `B_kno` is derived in `plot_trajectories`; the rest are persisted snapshot fields.
+_DEFAULT_TRAJECTORY_FIELDS = ["F_completed", "D_tech", "B_kno", "N_doc"]
 _TRAJECTORY_LABELS = {
     "F_completed": "Cumulative features\n(F_completed)",
     "D_tech":      "Technical debt\n(D_tech)",
     "B_kno":       "Known bugs\n(B_kno_min + B_kno_maj)",
-    "doc_cov":     "Documentation coverage\n(doc_cov)",
+    "N_doc":       "Documentation written\n(N_doc)",
 }
 
 
 def plot_trajectories(
     traces_per_config: "dict[str, pd.DataFrame]",
     highlight_keys: list[str],
-    fields: "list[str] | None" = None,
     title: str = "",
 ) -> "Figure":
     """Mean trajectory per sprint for the given configs, with a shaded quantile band.
@@ -225,9 +221,7 @@ def plot_trajectories(
     Each trace DataFrame must have a (replication, sprint) MultiIndex and columns for
     each state field. B_kno is derived as B_kno_min + B_kno_maj if both are present.
     """
-    if fields is None:
-        fields = _DEFAULT_TRAJECTORY_FIELDS
-
+    fields = _DEFAULT_TRAJECTORY_FIELDS
     wanted = set(highlight_keys)
     palette = cm.tab10
     config_colors = {k: palette(i % 10) for i, k in enumerate(wanted)}
@@ -319,17 +313,17 @@ def plot_comparison_optima(
 
 
 # ---------------------------------------------------------------------------
-# 4b. Search convergence (paper §5.1)
+# 4b. Search convergence
 # ---------------------------------------------------------------------------
 
-def _drop_label(statistic: str, values: np.ndarray) -> str:
+def _drop_label(values: np.ndarray) -> str:
     """Legend label for the drop curve, saying so when the log axis cannot draw it.
 
     A search whose incumbent never moves has a drop of zero throughout, and a curve with no
     positive value has nothing for a log axis to place.  Matplotlib would drop it silently
     and leave an unexplained legend entry, so the label says it instead.
     """
-    label = f"{statistic} drop in $c^\\star$ cost"
+    label = "mean drop in $c^\\star$ cost"
     positive = np.asarray(values, dtype=float) > 0.0
     if not positive.any():
         return f"{label} (zero throughout — not drawable on a log axis)"
@@ -342,29 +336,24 @@ def _incumbent_cost_drop(
     """`c*`'s mean drop since the previous generation, relative and unsigned.
 
     `|best_cost(g) / best_cost(g-1) - 1|` per search, then the mean over searches.
-    Relative, because the campaign's optima span four decades and a pooled dollar drop
-    would be a picture of the scenario grid rather than of the search; unsigned and
-    per-generation, so that it is a rate like `tau_g`.  Generation 1 has no predecessor and
-    therefore no value.
+    Relative, because the optima span four decades and a pooled dollar drop would picture
+    the scenario grid rather than the search; unsigned and per-generation, so that it is a
+    rate like the turnover.  Generation 1 has no predecessor and therefore no value.
 
-    The **mean only**: an incumbent moves in a handful of generations and stands still in
-    the rest, so the median over searches is exactly zero almost everywhere — a flat line
-    on a linear axis and nothing at all on the log axis the figure gives this curve.
+    The mean only: an incumbent moves in a handful of generations and stands still in the
+    rest, so the median over searches is exactly zero almost everywhere.
 
-    Returns None when the table predates the `best_cost` column or carries no usable value
-    in it — the figure then keeps its turnover curves alone.
+    Returns None when the column carries no usable value; the figure then keeps its
+    turnover curves alone.
     """
-    if "best_cost" not in turnover.columns:
-        return None
-    keys = [c for c in ("scenario_id", "strategy") if c in turnover.columns]
+    keys = ["scenario_id", "mode"]
     frame = (turnover[[*keys, "generation", "best_cost"]]
              .dropna(subset=["best_cost"])
              .sort_values("generation"))
     if frame.empty:
         return None
     costs = frame["best_cost"]
-    previous = (costs.groupby([frame[k] for k in keys]).shift(1) if keys
-                else costs.shift(1))
+    previous = costs.groupby([frame[k] for k in keys]).shift(1)
     previous = previous.to_numpy(dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         drop = np.where(previous > 0.0,
@@ -379,30 +368,27 @@ def plot_elite_turnover(
     turnover: "pd.DataFrame",
     title: str = "",
 ) -> "Figure":
-    """The elite turnover of Eq. (elite_turnover) against the generation index (§5.1).
+    """Elite turnover and the incumbent's cost drop, against the generation index.
 
     Takes the long-format ``elite_turnover.csv`` of :mod:`src.campaign` — one row per
-    (scenario, strategy, generation) — and draws **three curves**, because one curve per
-    search would not be readable at 432 of them.  In blue on the left axis, the elite
-    turnover `tau_g` as a mean (solid) and a median (dotted) over searches; in green on a
-    **logarithmic** right-hand axis, the mean of `c*`'s relative drop since the previous
-    generation (:func:`_incumbent_cost_drop`).  The two are the same *kind* of quantity —
-    an unsigned rate per generation — but the drop runs one to two decades below `tau_g`,
-    which is why it gets an axis of its own and why that axis is logarithmic: on a shared
-    linear one it is a flat line on zero.  The drop has no median curve for the same
-    reason it needs the log axis: that median is exactly zero almost everywhere.  A drop
-    that is zero in *every* generation cannot be drawn at all, and :func:`_drop_label` says
-    so in the legend rather than leaving the curve silently missing.
+    (scenario, mode, generation) — and draws three curves, since one per search would not
+    be readable at several hundred of them.  In blue on the left axis, the turnover as a
+    mean (solid) and a median (dotted) over searches; in green on a logarithmic right-hand
+    axis, the mean of `c*`'s relative drop since the previous generation.
 
-    Reading the two together is the point: `tau_g` has a noise floor, since candidates
-    that are indistinguishable at `K'` swap ranks inside the elite without anything
-    improving, and turnover that persists after the drop curve has reached zero is exactly
-    that churn.
+    The two are the same kind of quantity, an unsigned rate per generation, but the drop
+    runs one to two decades lower, hence the second, logarithmic axis: on a shared linear
+    one it is a flat line on zero.  It has no median curve for the same reason — that
+    median is exactly zero almost everywhere.  A drop that is zero in every generation
+    cannot be drawn at all, and :func:`_drop_label` says so in the legend.
 
-    Deliberately *not* a `_draw_matrix` figure: convergence is a property of the search,
-    not of the scenario grid, so it carries no tier channels.
+    Reading the two together is the point: turnover has a noise floor, since candidates
+    indistinguishable at `K_search` swap ranks inside the elite without anything
+    improving, and turnover that persists after the drop curve decays is exactly that
+    churn.  It carries no tier channels: convergence is a property of the search, not of
+    the scenario grid.
     """
-    needed = {"generation", "tau"}
+    needed = {"scenario_id", "mode", "generation", "tau", "best_cost"}
     missing = needed - set(turnover.columns)
     if missing:
         raise KeyError(f"turnover table is missing column(s) {sorted(missing)}")
@@ -413,8 +399,7 @@ def plot_elite_turnover(
     generations = np.array(sorted(turnover["generation"].unique()), dtype=float)
     median = grouped.median().reindex(generations).to_numpy(dtype=float)
     mean = grouped.mean().reindex(generations).to_numpy(dtype=float)
-    n_searches = (turnover.groupby(["scenario_id", "strategy"]).ngroups
-                  if {"scenario_id", "strategy"} <= set(turnover.columns) else 1)
+    n_searches = turnover.groupby(["scenario_id", "mode"]).ngroups
 
     with plt.style.context(_STYLE):
         fig, ax = plt.subplots(figsize=(7.5, 4.2))
@@ -437,7 +422,7 @@ def plot_elite_turnover(
             ax2.grid(False)
             ax2.set_yscale("log")
             ax2.plot(generations, drop, color=_CHANGE_COLOR, linewidth=1.8,
-                     label=_drop_label("mean", drop))
+                     label=_drop_label(drop))
             # A degenerate case worth handling rather than warning through: an incumbent
             # that never moves gives a drop of 0 in every generation, and autoscaling a log
             # axis over no positive value at all raises.  The label says the curve is
@@ -484,12 +469,11 @@ def plot_elite_turnover(
 # 5. The campaign in one figure: all five scenario groups at once
 # ---------------------------------------------------------------------------
 
-# Ordered so the legends read low → medium → high → fourth tier rather than alphabetically.
-# These are really *ordinal-position* encodings that happen to be keyed by tier name, so
-# `veryhigh` and `pessimistic` share the fourth slot: they are the fourth tier of `project`
-# and of `agent` respectively, no group holds both, and therefore no channel can ever have
-# to draw them side by side.  `tests/test_config.py` pins that invariant; keeping the
-# vocabulary at four levels is what lets the shape channel stay legible (see below).
+# Ordered so the legends read low -> medium -> high -> fourth tier, not alphabetically.
+# These are ordinal-position encodings keyed by tier name, so `veryhigh` and `pessimistic`
+# share the fourth slot: they are the fourth tier of `project` and of `agent` respectively
+# and no group holds both, so no channel ever has to draw them side by side.  Keeping the
+# vocabulary at four levels is what lets the shape channel stay legible.
 _TIER_COLORS = {"low": cm.tab10(0), "medium": cm.tab10(1), "high": cm.tab10(3),
                 "veryhigh": cm.tab10(4), "pessimistic": cm.tab10(4)}
 
@@ -501,30 +485,23 @@ _TIER_MARKERS = {"low": "x", "medium": "o", "high": "^", "veryhigh": "s",
 _TIER_MARKER_FILLED = {"low": False, "medium": False, "high": True, "veryhigh": True,
                        "pessimistic": True}
 
-# Marker area (pt²) per tier.  An 8× spread from low to high (~2.9× in marker width) so
-# the size channel survives the alpha blending of a dense panel.  The ladder is lifted at
-# the bottom rather than stretched: at the earlier 3 pt² the low tier was under 2 pt wide
-# and read as grit, and an open cross or circle that small loses its shape entirely — so
-# the low tier sets the floor and the rest are spaced up from it by a roughly constant
-# ratio in *width* (2.8 / 4.9 / 8.1 / 12.7 pt), which is what the eye compares.
+# Marker area (pt^2) per tier.  An 8x spread from low to high (~2.9x in marker width), so
+# the size channel survives the alpha blending of a dense panel.  Spaced by a roughly
+# constant ratio in *width* (2.8 / 4.9 / 8.1 / 12.7 pt), which is what the eye compares,
+# with the low tier setting a floor below which an open cross or circle loses its shape.
 _TIER_SIZES = {"low": 8.0, "medium": 24.0, "high": 66.0, "veryhigh": 160.0,
                "pessimistic": 160.0}
 
-# The human-only baseline of paper §4.1 varies only three of the five groups, so it can
-# carry a per-point channel exactly where the group on that channel is one of the three:
-# `_baseline_style_groups` reads its shape and its size from _TIER_MARKERS/_TIER_SIZES on
-# the default layout, where `project` and `bugimpact` sit there, and the baseline is a
-# genuine observation at both.  A channel whose group the baseline holds at UNUSED_TIER
-# has no tier to encode and falls back to the fixed style below — the star and the single
-# size.  Do not promote the baseline into _TIER_MARKERS: it reuses the four tier shapes,
-# it does not add a fifth, which would not survive the smallest size tier.
+# The baseline varies only three of the five groups, so it can carry a per-point channel
+# exactly where that channel's group is one of the three: `_baseline_style_groups` then
+# reads its shape and size from _TIER_MARKERS / _TIER_SIZES, reusing the four tier shapes
+# rather than adding a fifth.  A channel whose group the baseline holds at UNUSED_TIER has
+# no tier to encode and falls back to the fixed star and size below.
 #
-# Colour is the exception and stays fixed at black on every layout.  With shape and size
-# now shared with the search optima it is the only channel left that says "no agents", and
-# on the default layout it is also the honest reading: `debt` sits on colour, the baseline
-# is provably independent of it, and black is off the tier palette.  Black is drawn at the
-# panel's alpha rather than opaque, so the reference level does not hide the optima it is
-# there to be compared against; the legend proxy stays opaque, where nothing is behind it.
+# Colour stays fixed at black on every layout: with shape and size shared with the search
+# optima it is the only channel left that says "no agents", and it is off the tier
+# palette.  It is drawn at the panel's alpha so the reference level does not hide the
+# optima it is there to be compared against; the legend proxy stays opaque.
 _BASELINE_COLOR = "black"
 _BASELINE_MARKER = "*"
 _BASELINE_SIZE = 90.0
@@ -658,13 +635,11 @@ def _density_style(n: int) -> tuple[float, float]:
 _LEGEND_WIDTH_IN = 2.1
 _LEGEND_GAP_IN = 0.25
 
-#: Font sizes (points) for the tier grid.  They are deliberately well above matplotlib's
-#: defaults, and the reason is the size the figure is *read* at rather than the size it is
-#: drawn at: the grid is 17-20 inches wide (one panel per tier of two scenario groups) and
-#: goes onto a text column at `\linewidth`, a reduction of roughly a third, which is what
-#: turns a default 10 pt tick label into an unreadable one.  Enlarging the figure instead
-#: would achieve nothing — the same reduction would cancel it — so the type grows inside
-#: the same inches.  Keep the panel geometry fixed when changing these.
+#: Font sizes (points) for the tier grid, chosen against the size the figure is *read* at
+#: rather than drawn at: the grid is 17-20 inches wide and goes onto a text column at
+#: `\linewidth`, a reduction of roughly a third.  Enlarging the figure instead achieves
+#: nothing, since the same reduction cancels it, so the type grows inside the same inches
+#: and the panel geometry stays fixed.
 _MATRIX_FONT: dict[str, int] = {
     "suptitle": 17,
     "column":   15,   # the facet tier heading, on the top row only
@@ -793,7 +768,6 @@ def _draw_matrix(
     ylabel: str,
     title: str,
     xscale: str = "log",
-    yscale: str = "log",
     x_floor: float | None = None,
     y_floor: float | None = None,
     shared_limits: tuple[float, float] | None = None,
@@ -811,8 +785,8 @@ def _draw_matrix(
     the same length on both and the 1:1 diagonal runs at 45°; without that the equal range
     would be a claim the picture does not keep.
 
-    `baseline` holds the human-only optima of §4.1, which carry no tier for the two groups
-    they do not vary and are therefore drawn outside the three per-point channels: one
+    `baseline` holds the zero-agent optima, which carry no tier for the two groups they do
+    not vary and are therefore drawn outside the three per-point channels: one
     fixed black marker, matched to a panel by the *facet* groups alone.  Where a facet
     group is one the baseline does not vary (`agent` on the default layout), every column
     gets the same points — the baseline is a reference level, not an observation at that
@@ -895,7 +869,7 @@ def _draw_matrix(
                                    label=_BASELINE_LABEL,
                                    **_baseline_marker_kwargs(b_marker, b_area))
                 ax.set_xscale(xscale)
-                ax.set_yscale(yscale)
+                ax.set_yscale("log")
                 if shared_limits is not None:
                     ax.set_xlim(*shared_limits)
                     ax.set_ylim(*shared_limits)
@@ -975,6 +949,52 @@ def _draw_matrix(
     return fig
 
 
+def _require_columns(df: "pd.DataFrame", columns: tuple[str, ...]) -> None:
+    """Raise unless every one of `columns` is present."""
+    for column in columns:
+        if column not in df.columns:
+            raise KeyError(f"{column!r} is not a column of the optima table")
+
+
+def _draw_cost_plane(
+    df: "pd.DataFrame",
+    channels: dict[str, str],
+    x_col: str,
+    y_col: str,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    baseline: "pd.DataFrame | None",
+) -> "Figure":
+    """A tier grid whose two axes are both dollars per feature.
+
+    Both columns share one log range (over `df` and `baseline` together, so a baseline
+    zero does not drop off the axis) at an equal aspect, and the 1:1 diagonal is drawn:
+    which side of it a point falls on is which of the two costs the optimum spends more
+    on.  Ticks are decades in dollars, with 2 and 5 as unlabelled minor ticks so a point
+    can still be placed inside its decade.
+    """
+    scaled = _with_baseline(df, baseline)
+    x_floor = _log_floor(scaled, x_col)
+    y_floor = _log_floor(scaled, y_col)
+    fig = _draw_matrix(
+        df, **channels,
+        x_col=x_col, y_col=y_col, xlabel=xlabel, ylabel=ylabel, title=title,
+        x_floor=x_floor, y_floor=y_floor,
+        shared_limits=_common_log_limits(scaled, (x_col, y_col), (x_floor, y_floor)),
+        baseline=baseline,
+    )
+    for ax in fig.get_axes():
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_locator(LogLocator(base=10.0))
+            axis.set_major_formatter(FuncFormatter(_dollar_tick))
+            axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
+            axis.set_minor_formatter(NullFormatter())
+        ax.plot(ax.get_xlim(), ax.get_xlim(), color="0.6", linewidth=0.8,
+                linestyle=(0, (4, 3)), zorder=0)
+    return fig
+
+
 def plot_human_agent_matrix(
     df: "pd.DataFrame",
     x_group: str = "agent",
@@ -985,70 +1005,31 @@ def plot_human_agent_matrix(
     title: str = "",
     baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
-    """The two team cost drivers of each optimum against each other, on the same tier grid.
+    """The two team cost drivers of each optimum against each other, on a tier grid.
 
-    It shares the facets and the colour/shape/size channels of the other campaign
-    matrices, so they all read the same way; only the pair of columns differs.
-    Here both axes are dollars per feature: x is what the agents billed
-    (`cost_agent_mean`), y is what the developers cost (`cost_human_mean`).
-
-    This is the part of the bill the team composition actually controls — the quality term
-    is what the escaped bugs cost afterwards — so the panel is the human/agent trade-off
-    itself rather than a view of the total.
-
-    Both axes carry the **same range**, the union of the two columns padded in log space
-    (:func:`_common_log_limits`), at an equal aspect.  The two are the same unit, so the
-    comparison the figure exists for is the one *between* them: where a point sits relative
-    to the 1:1 diagonal is which driver the optimum spends more on, and that reading is only
-    available when a dollar is the same distance on both axes.  The price is that the agent
-    axis is no longer scaled to its own spread — it holds one decade inside a column against
-    the four the developer cost spans — so within-column agent differences read small, which
-    is the honest depiction of their size.
+    x is what the agents billed (`cost_agent_mean`), y what the developers cost
+    (`cost_human_mean`), both dollars per feature.  This is the part of the bill the team
+    composition controls; the escaped-bug term is the subject of
+    :func:`plot_quality_development_matrix`.  Same-unit axes, so the panels get the shared
+    range and 1:1 diagonal of :func:`_draw_cost_plane`.
     """
     channels = {
         "x_group": x_group, "y_group": y_group, "size_group": size_group,
         "marker_group": marker_group, "color_group": color_group,
     }
     _check_matrix_groups(df, channels)
-    for column in ("cost_agent_mean", "cost_human_mean"):
-        if column not in df.columns:
-            raise KeyError(f"{column!r} is not a column of the optima table")
-
-    # The baseline's agent cost is exactly 0, so the floor and the shared range are taken
-    # over both frames: computed from `df` alone the floor would be None and every baseline
-    # point would silently drop off the log axis.
-    scaled = _with_baseline(df, baseline)
-    x_floor = _log_floor(scaled, "cost_agent_mean")
-    y_floor = _log_floor(scaled, "cost_human_mean")
-    fig = _draw_matrix(
-        df,
-        x_group=x_group, y_group=y_group, size_group=size_group,
-        marker_group=marker_group, color_group=color_group,
+    _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
+    return _draw_cost_plane(
+        df, channels,
         x_col="cost_agent_mean", y_col="cost_human_mean",
-        # Both labels escape the dollar sign, or mathtext sees three delimiters in the
-        # label and renders the whole thing literally.
+        # The dollar signs are escaped, or mathtext sees three delimiters in the label
+        # and renders the whole thing literally.
         xlabel="↓  agent cost   (\\$ / feature)",
         ylabel="↓  developer cost   (\\$ / feature)",
         title=title or f"Developer vs. agent cost at $c^\\star$ — "
                        f"{x_group} × {y_group}",
-        x_floor=x_floor, y_floor=y_floor,
-        shared_limits=_common_log_limits(
-            scaled, ("cost_agent_mean", "cost_human_mean"), (x_floor, y_floor)
-        ),
         baseline=baseline,
     )
-    # One range on both axes means one ticking on both: decades in dollars, with the 2 and
-    # the 5 as unlabelled minor ticks so a point can still be placed inside its decade.
-    for ax in fig.get_axes():
-        for axis in (ax.xaxis, ax.yaxis):
-            axis.set_major_locator(LogLocator(base=10.0))
-            axis.set_major_formatter(FuncFormatter(_dollar_tick))
-            axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
-            axis.set_minor_formatter(NullFormatter())
-        # The 1:1 line: above it the developers cost more than the agents, below it less.
-        ax.plot(ax.get_xlim(), ax.get_xlim(), color="0.6", linewidth=0.8,
-                linestyle=(0, (4, 3)), zorder=0)
-    return fig
 
 
 def plot_quality_development_matrix(
@@ -1061,29 +1042,20 @@ def plot_quality_development_matrix(
     title: str = "",
     baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
-    """What the escaped bugs cost against what the team cost, on the same tier grid.
+    """What the escaped bugs cost against what the team cost, on a tier grid.
 
-    The other half of the split :func:`plot_human_agent_matrix` starts: there the two drivers
-    the composition *controls* are separated from each other, here they are added back
-    together (`cost_development_mean = cost_human_mean + cost_agent_mean`, x) and set against
-    the one driver it only influences, the bill the defects that reached production sent
-    (`cost_quality_mean`, y).  The sum is a column of neither `optima.csv` nor of any other
-    table — it is derived here, on a copy, since it exists only for this figure.
-
-    Both axes are dollars per feature, so the figure gets the same-unit treatment of
-    :func:`plot_human_agent_matrix`: one shared log range, an equal aspect, and the 1:1
-    diagonal.  Above the line the escaped bugs cost more than the whole team that built the
-    features, which over the §4.2 campaign is almost everywhere — the quality term spans some
-    four and a half decades where the development cost spans three.
+    The two drivers :func:`plot_human_agent_matrix` separates are added back together here
+    (`cost_development_mean = cost_human_mean + cost_agent_mean`, x) and set against the
+    escaped-bug bill (`cost_quality_mean`, y).  The sum is derived on a copy; it is a
+    column of no table.  Same unit on both axes, so the same treatment as
+    :func:`plot_human_agent_matrix`.
     """
     channels = {
         "x_group": x_group, "y_group": y_group, "size_group": size_group,
         "marker_group": marker_group, "color_group": color_group,
     }
     _check_matrix_groups(df, channels)
-    for column in ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"):
-        if column not in df.columns:
-            raise KeyError(f"{column!r} is not a column of the optima table")
+    _require_columns(df, ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"))
 
     def _with_development(frame):
         return frame.assign(
@@ -1092,38 +1064,15 @@ def plot_quality_development_matrix(
     df = _with_development(df)
     if baseline is not None and not baseline.empty:
         baseline = _with_development(baseline)
-    scaled = _with_baseline(df, baseline)
-    x_floor = _log_floor(scaled, "cost_development_mean")
-    y_floor = _log_floor(scaled, "cost_quality_mean")
-    fig = _draw_matrix(
-        df,
-        x_group=x_group, y_group=y_group, size_group=size_group,
-        marker_group=marker_group, color_group=color_group,
+    return _draw_cost_plane(
+        df, channels,
         x_col="cost_development_mean", y_col="cost_quality_mean",
-        # Both labels escape the dollar sign; see plot_human_agent_matrix.
-        # Short enough not to collide with the next panel's; the title carries the
-        # definition of "development cost".
         xlabel="↓  development cost   (\\$ / feature)",
         ylabel="↓  escaped-bug cost   (\\$ / feature)",
         title=title or f"Escaped-bug vs. development cost (developers + agents) at "
                        f"$c^\\star$ — {x_group} × {y_group}",
-        x_floor=x_floor, y_floor=y_floor,
-        shared_limits=_common_log_limits(
-            scaled, ("cost_development_mean", "cost_quality_mean"), (x_floor, y_floor)
-        ),
         baseline=baseline,
     )
-    # One range on both axes means one ticking on both; see plot_human_agent_matrix.
-    for ax in fig.get_axes():
-        for axis in (ax.xaxis, ax.yaxis):
-            axis.set_major_locator(LogLocator(base=10.0))
-            axis.set_major_formatter(FuncFormatter(_dollar_tick))
-            axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
-            axis.set_minor_formatter(NullFormatter())
-        # The 1:1 line: above it the bugs that escaped cost more than building the features.
-        ax.plot(ax.get_xlim(), ax.get_xlim(), color="0.6", linewidth=0.8,
-                linestyle=(0, (4, 3)), zorder=0)
-    return fig
 
 
 def plot_agent_human_ratio_matrix(
@@ -1139,28 +1088,24 @@ def plot_agent_human_ratio_matrix(
 
     y is `cost_agent_mean / cost_human_mean`, the same trade-off
     :func:`plot_human_agent_matrix` draws as a plane, collapsed to the one number that says
-    which side it fell on: above 1 the agents outbilled the developers.  Over the §4.2
-    campaign it spans five decades, hence the log axis and the reference line at 1.
+    which side it fell on: above 1 the agents outbilled the developers.  It spans several
+    decades, hence the log axis and the reference line at 1.
 
     x is that ratio's **percentile rank within `df`**, so the panels share one empirical
-    distribution and each is a fragment of it: where a panel's points sit horizontally is
-    where its scenarios sit in the campaign-wide ordering, and a panel that occupies the
-    right end is one whose tiers push the bill onto the agents.  The rank is therefore taken
-    over the frame as handed in — `visualize_campaign` passes one mode's scenarios, and
-    filtering the frame further before calling re-ranks what is left against itself.
+    distribution and each is a fragment of it: a panel's horizontal position says where
+    its scenarios sit in the campaign-wide ordering.  The rank is taken over the frame as
+    handed in, so filtering it further before calling re-ranks what is left against itself.
 
-    Ranking makes the x axis linear and uniform by construction; the reading is in the
-    *vertical* spread of a panel and in which part of the axis it occupies, not in the
-    slope, which is an artefact of every ECDF.
+    Ranking makes the x axis linear and uniform by construction, so the reading is the
+    vertical spread of a panel and which part of the axis it occupies, not the slope,
+    which every ECDF has.
     """
     channels = {
         "x_group": x_group, "y_group": y_group, "size_group": size_group,
         "marker_group": marker_group, "color_group": color_group,
     }
     _check_matrix_groups(df, channels)
-    for column in ("cost_agent_mean", "cost_human_mean"):
-        if column not in df.columns:
-            raise KeyError(f"{column!r} is not a column of the optima table")
+    _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
 
     ratio = df["cost_agent_mean"] / df["cost_human_mean"]
     df = df.assign(
@@ -1203,22 +1148,15 @@ def plot_agent_human_ratio_matrix(
 # ---------------------------------------------------------------------------
 
 # The two populations of `src.constellation`, and the colours they keep across both
-# figures.  Deliberately the same red and blue the per-search landscape uses for `c*` and
-# `I*`: they mean the same two things here.
+# figures — the same red and blue the per-search landscape uses for `c*` and `I*`, which
+# mean the same two things here.
 _POPULATION_COLORS = {C_STAR: _BEST_COLOR, I_STAR: _KEEP_COLOR}
 _POPULATION_LABELS = {C_STAR: "$c^\\star$", I_STAR: "$\\mathcal{I}^\\star$ (mean per scenario)"}
 
 
 def _check_cell_channels(cells: "pd.DataFrame", groups: tuple[str, ...]) -> tuple[str, str]:
     """Validate the two faceting groups of the constellation figures."""
-    if len(groups) != 2:
-        raise ValueError(f"expected exactly two faceting groups, got {list(groups)}")
-    unknown = [g for g in groups if g not in SCENARIO_GROUPS]
-    if unknown:
-        raise ValueError(f"unknown scenario group(s) {unknown}; "
-                         f"expected one of {list(SCENARIO_GROUPS)}")
-    if groups[0] == groups[1]:
-        raise ValueError(f"the two faceting groups must differ, got {groups[0]!r} twice")
+    require_group_pair(groups)
     missing = [f"tier_{g}" for g in groups if f"tier_{g}" not in cells.columns]
     if missing:
         raise KeyError(f"{missing} are not columns of the constellation table")
@@ -1263,8 +1201,6 @@ def plot_constellation_profile(
     cells: "pd.DataFrame",
     rows_group: str = "bugimpact",
     cols_group: str = "project",
-    parameters: tuple[str, ...] = DEV_PARAMETERS,
-    labels: tuple[str, ...] = AGENT_ROLE_ABBREV,
     title: str = "",
 ) -> "Figure":
     """The development-phase composition of the optimal team, per cell of a tier grid.
@@ -1285,8 +1221,7 @@ def plot_constellation_profile(
     statement about the mean, not a claim that the count can be negative.
     """
     rows_group, cols_group = _check_cell_channels(cells, (rows_group, cols_group))
-    if len(labels) != len(parameters):
-        raise ValueError(f"{len(labels)} labels for {len(parameters)} parameters")
+    parameters, labels = DEV_PARAMETERS, AGENT_ROLE_ABBREV
     row_column, col_column = f"tier_{rows_group}", f"tier_{cols_group}"
     row_tiers = _tiers_present(cells, row_column)
     col_tiers = _tiers_present(cells, col_column)
@@ -1394,13 +1329,12 @@ def plot_constellation_heatmap(
     cells: "pd.DataFrame",
     rows_group: str = "project",
     cols_group: str = "bugimpact",
-    blocks: "tuple[tuple[str, tuple[str, ...]], ...]" = PARAMETER_BLOCKS,
     title: str = "",
 ) -> "Figure":
     """The whole constellation table as a picture, one panel per population.
 
     Rows are the cells of the tier grid — both faceting groups on one axis, so all twelve
-    are visible at once — and columns are the control variables of §3.3, grouped into the
+    are visible at once — and columns are the control variables, grouped into the
     process triple, the two composition vectors and the derived totals, with a rule between
     the blocks.
 
@@ -1419,13 +1353,13 @@ def plot_constellation_heatmap(
         raise ValueError("no rows for any tier of the faceting groups")
     populations = [p for p in POPULATIONS if (cells["population"] == p).any()]
 
-    parameters = tuple(p for _, block in blocks for p in block
+    parameters = tuple(p for _, block in PARAMETER_BLOCKS for p in block
                        if (cells["parameter"] == p).any())
     if not parameters:
         raise ValueError("none of the requested parameters is in the table")
     # Where each block ends, for the separator rules; the last one needs no rule.
     edges, seen = [], 0
-    for _, block in blocks:
+    for _, block in PARAMETER_BLOCKS:
         seen += sum(1 for p in block if p in parameters)
         edges.append(seen)
     edges = [e for e in edges[:-1] if 0 < e < len(parameters)]
@@ -1565,25 +1499,23 @@ class _ShareWeight(NamedTuple):
 
 #: How a contributor's slice is weighed.  Three views of one composition:
 #:
-#: `agent` (the default) — share of the **agent bill** of Eq. (cost_agents).  A share of
-#:   the head count systematically overstates the three autonomous roles, which are
-#:   flat-rate, monitoring-free and bounded only by saturation, so the search stacks them
-#:   freely: Code Review is 69 % of the mean optimal team and 20 % of its bill.
-#: `team` — the same eight roles **plus the developers**, i.e. the whole bill the team
-#:   composition controls.  The agent split is the reported `cost_agent_mean` apportioned
-#:   by `agent` share, so the nine slices add to `cost_team_mean` exactly.  Excludes
-#:   `cost_quality_mean`, the third driver of Eq. (cost_rep): escaped bugs are what the
-#:   team's choices cost elsewhere, not a line item of the team.
-#: `count` — the head count, kept because it is the control variable the search actually
-#:   moves, and because its disagreeing with the bill is a result in itself.
+#: `agent` (the default) — share of the agent bill.  A share of the head count instead
+#:   systematically overstates the three autonomous roles, which are flat-rate,
+#:   monitoring-free and bounded only by saturation, so the search stacks them freely.
+#: `team` — the same eight roles plus the developers, i.e. the whole bill the composition
+#:   controls.  The agent split is the reported `cost_agent_mean` apportioned by `agent`
+#:   share, so the nine slices add to `cost_team_mean` exactly.  Excludes the escaped-bug
+#:   cost, which is what the team's choices cost elsewhere, not a line item of the team.
+#: `count` — the head count, the control variable the search actually moves; that it
+#:   disagrees with the bill is a result in itself.
 #:
 #: The two cost weightings annotate the *reported* per-feature figure rather than a summed
-#: horizon bill, so the number at the end of a bar is in the unit §5 quotes.
+#: horizon bill, so the number at the end of a bar is in the unit the tables report.
 _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
     "agent": _ShareWeight(
         columns=BILL_PARAMETERS, labels=AGENT_ROLE_ABBREV, colors=_ROLE_COLORS,
         xlabel="share of the agent bill of the optimal team",
-        total_column="cost_agent_mean", total_label="agent \$ per\nfeature",
+        total_column="cost_agent_mean", total_label="agent \\$ per\nfeature",
         total_format="${:,.2f}",
         filename="composition_agent_bill"),
     "team": _ShareWeight(
@@ -1591,7 +1523,7 @@ _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
         labels=("Developers",) + AGENT_ROLE_ABBREV,
         colors=(_HUMAN_COLOR,) + _ROLE_COLORS,
         xlabel="share of the team bill (developers + agents) of the optimal team",
-        total_column="cost_team_mean", total_label="team \$ per\nfeature",
+        total_column="cost_team_mean", total_label="team \\$ per\nfeature",
         total_format="${:,.0f}",
         filename="composition_team_bill"),
     "count": _ShareWeight(
@@ -1602,14 +1534,12 @@ _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
 }
 
 
-#: The third driver of Eq. (cost_rep), annotated beside every bar.  It is **not** a slice:
-#: the bar describes the team, and what the escaped bugs cost is what that team's choices
-#: cost elsewhere.  Folding it in would turn a team description into a cost breakdown, and
-#: dropping it entirely would leave the reader without the one number that says whether the
-#: whole bill beside it matters — it runs from $83 to $517 k per feature across the cells,
-#: three decades wider than either team column.
+#: The escaped-bug cost, annotated beside every bar but never a slice: the bar describes
+#: the team, and what the escaped bugs cost is what that team's choices cost elsewhere.
+#: Annotated rather than dropped because it is the one number that says whether the bill
+#: beside it matters at all — it spans three decades more than either team column.
 _BUG_COST_COLUMN = "cost_quality_mean"
-_BUG_COST_LABEL = "bug \$ per\nfeature"
+_BUG_COST_LABEL = "bug \\$ per\nfeature"
 
 #: Points to the right of a bar's end for the two annotated columns.  The first has to
 #: clear the widest team figure ("$3,777", "$986.48"), the second the widest bug one.
@@ -1692,7 +1622,6 @@ def plot_team_shape(
     block_group: str = "project",
     bar_group: str = "bugimpact",
     weight: str = "agent",
-    labels: "tuple[str, ...] | None" = None,
     title: str = "",
     panel_group: "str | None" = "agent",
 ) -> "Figure":
@@ -1705,37 +1634,23 @@ def plot_team_shape(
     composition into a sliver.
 
     `weight` chooses what a slice measures (see `_SHARE_WEIGHTS`) and brings its own
-    labels and palette.  **The default is `agent`**, the role's share of the agent bill of
-    Eq. (cost_agents): a share of the head count systematically overstates the three
-    autonomous roles, which are flat-rate and bounded by nothing but saturation, so the
-    search stacks them freely.  `team` adds the developers as a ninth slice — the whole
-    bill the composition controls, and the one that says whether the agents matter at all.
-    `count` is the head-count view, and its disagreeing with the bill is a result itself.
+    labels and palette; the default `agent` is the role's share of the agent bill.
 
-    **Three scenario groups are read off the figure, not two.**  The bars are grouped into
-    blocks by `block_group` so the same `bar_group` ladder repeats in each: whether a
-    ladder is reproduced across the blocks is exactly the "which scenario group causes
-    this" reading, and a stacked bar makes an invariance as visible as a change.
-    `panel_group` (**`agent` by default**) repeats that whole block structure once per
-    panel, on a shared row axis and two panels to a row, extending the same reading to a
-    third group — the driver figure puts the agent tier among the settings that move the
-    team, and a composition pooled over it would average teams the model prices an order
-    of magnitude apart.  `panel_group=None` gives the single-panel form, which pools that
-    group instead.
+    Three scenario groups are read off the figure, not two.  The bars are grouped into
+    blocks by `block_group`, so the same `bar_group` ladder repeats in each and whether it
+    is reproduced across the blocks is the "which scenario group causes this" reading —
+    a stacked bar makes an invariance as visible as a change.  `panel_group` repeats that
+    whole block structure once per panel, two panels to a row, extending the same reading
+    to a third group; `panel_group=None` gives the single-panel form and pools it instead.
     """
     if weight not in _SHARE_WEIGHTS:
         raise ValueError(f"unknown weight {weight!r}; "
                          f"expected one of {list(_SHARE_WEIGHTS)}")
     spec = _SHARE_WEIGHTS[weight]
     columns, total_column = spec.columns, spec.total_column
-    labels = spec.labels if labels is None else labels
+    labels = spec.labels
     grouping = tuple(g for g in (panel_group, block_group, bar_group) if g is not None)
-    for group in grouping:
-        if group not in SCENARIO_GROUPS:
-            raise ValueError(f"unknown scenario group {group!r}; "
-                             f"expected one of {list(SCENARIO_GROUPS)}")
-    if len(set(grouping)) != len(grouping):
-        raise ValueError(f"the grouping variables must differ, got {list(grouping)}")
+    require_distinct_groups(grouping)
     if len(labels) != len(columns):
         raise ValueError(f"{len(labels)} labels for {len(columns)} roles")
 
@@ -1765,9 +1680,8 @@ def plot_team_shape(
 
     # A panel has to stay wide enough for a segment label to fit inside it, so the width
     # is per panel and the figure grows with their number rather than splitting one budget.
-    # Two to a row: four side by side is a 19-inch strip, and stacking them keeps the rows
-    # of the left column aligned with the rows of the right one, which is what the panels
-    # have to be read against each other on.
+    # Two to a row: four side by side is a 19-inch strip, and stacking them keeps the left
+    # column's rows aligned with the right column's, which is what they are compared on.
     n_panels = len(panels)
     ncols = 1 if n_panels == 1 else 2
     nrows = -(-n_panels // ncols)
@@ -1879,36 +1793,28 @@ def plot_team_shape(
 
 
 class _Quantity(NamedTuple):
-    """One panel of the driver figure."""
+    """One panel of the driver figure: a column, its axis label, its tick formatter."""
     column: str
     label: str
-    scale: str
-    formatter: "object"
+    formatter: "object" = None
 
 
-#: The structural quantities the driver figure summarises, one panel each.  Six,
-#: deliberately: the three process controls a team is set up with (`N`, `R`, `F_freeze`),
-#: how much machine it puts on a unit of work, and what that machine is pointed at.
+#: The structural quantities the driver figure summarises, one panel each: the three
+#: process controls a team is set up with, how much machine it puts on a unit of work,
+#: and what that machine is pointed at.  All six panels are linear.
 _TEAM_QUANTITIES: tuple[_Quantity, ...] = (
-    _Quantity("N", "human staffing $N$\n(FTE)", "linear", None),
-    _Quantity("R", "release cycle $R$\n(sprints)", "linear", None),
-    _Quantity("F_freeze", "feature freeze $F_{freeze}$\n(sprints)", "linear", None),
-    _Quantity("sup_agents_per_feature", "supervised agents\nper arriving feature",
-              "linear", None),
-    _Quantity("aut_agents_per_feature", "autonomous agents\nper arriving feature",
-              "linear", None),
-    _Quantity("security_share", "Security's share of\nthe detection pair", "linear",
-              _percent_tick),
+    _Quantity("N", "human staffing $N$\n(FTE)"),
+    _Quantity("R", "release cycle $R$\n(sprints)"),
+    _Quantity("F_freeze", "feature freeze $F_{freeze}$\n(sprints)"),
+    _Quantity("sup_agents_per_feature", "supervised agents\nper arriving feature"),
+    _Quantity("aut_agents_per_feature", "autonomous agents\nper arriving feature"),
+    _Quantity("security_share", "Security's share of\nthe detection pair", _percent_tick),
 )
 
-#: The two agent panels deliberately keep **separate** x ranges even though they are the
-#: same unit.  A shared range is the honest way to draw two halves of one total, and it was
-#: tried: the autonomous count is ~40x the supervised one, so it puts every autonomous row
-#: on one tick and destroys the only thing that panel is for.  The scales differ visibly
-#: (a fraction of one against several) and each axis is labelled, so the magnitudes are
-#: still readable;
-#: what is given up is reading the split off the *positions*, which `composition_*.png`
-#: shows properly anyway.
+#: The two agent panels keep separate x ranges even though they share a unit: the
+#: autonomous count is ~40x the supervised one, so a shared range puts every autonomous
+#: row on one tick.  Each axis is labelled, so the magnitudes stay readable; what is given
+#: up is reading the split off the positions, which the composition figures show instead.
 
 
 def _team_quantities(optima: "pd.DataFrame") -> "pd.DataFrame":
@@ -1921,9 +1827,9 @@ def _team_quantities(optima: "pd.DataFrame") -> "pd.DataFrame":
     frame = optima.copy()
     # The two halves of the team are bounded by different things and differ by a factor of
     # ~40, so they get a column each: the supervised roles are held down by the monitoring
-    # condition of Eq. (feas_monitoring) and the saturation bounds, while nothing but its
-    # own saturation bounds an autonomous one.  A single "agents per feature" column is
-    # the autonomous count with a rounding error, and says nothing about the constraint.
+    # condition and the saturation bounds, while nothing but its own saturation bounds an
+    # autonomous one.  A single "agents per feature" column would be the autonomous count
+    # with a rounding error, and would say nothing about the constraint.
     supervised = frame[[DEV_PARAMETERS[i] for i in SUPERVISED_ROLE_INDICES]].sum(axis=1)
     autonomous = frame[[DEV_PARAMETERS[i] for i in AUTONOMOUS_ROLE_INDICES]].sum(axis=1)
     detection = frame["a_dev_5"] + frame["a_dev_6"]
@@ -1951,7 +1857,6 @@ def _tier_rows(frame: "pd.DataFrame", groups: tuple[str, ...]) -> list:
 
 def plot_team_drivers(
     optima: "pd.DataFrame",
-    groups: tuple[str, ...] = SCENARIO_GROUPS,
     title: str = "",
 ) -> "Figure":
     """Which scenario setting moves which part of the team, on one shared row axis.
@@ -1973,14 +1878,10 @@ def plot_team_drivers(
     a value no optimum actually took.  There is no campaign-median rule: with six panels it
     was six more lines of ink for a reference the axis already carries.
     """
-    unknown = [g for g in groups if g not in SCENARIO_GROUPS]
-    if unknown:
-        raise ValueError(f"unknown scenario group(s) {unknown}; "
-                         f"expected one of {list(SCENARIO_GROUPS)}")
     frame = _team_quantities(optima)
-    rows = _tier_rows(frame, tuple(groups))
+    rows = _tier_rows(frame, SCENARIO_GROUPS)
     if not rows:
-        raise ValueError("no optima for any tier of the requested groups")
+        raise ValueError("no optima for any tier of the scenario groups")
     height = max(r[2] for r in rows) + 1.0
     # Midway down the gap `_tier_rows` leaves between two groups.  The blocks are already
     # spaced apart, so the rule is redundant on its own; it earns its ink on six panels
@@ -2008,7 +1909,6 @@ def plot_team_drivers(
                 ax.plot([q1, q3], [y, y], color=color, linewidth=2.4, alpha=0.45,
                         solid_capstyle="butt", zorder=2)
                 ax.plot([median], [y], marker="o", markersize=6, color=color, zorder=3)
-            ax.set_xscale(quantity.scale)
             ax.margins(x=0.06)
             if quantity.formatter is not None:
                 ax.xaxis.set_major_formatter(FuncFormatter(quantity.formatter))
@@ -2079,7 +1979,7 @@ def visualize_team_summary(
             f"{panel_group!r} is already a composition axis; the composition figures "
             f"pool it instead of panelling on it.", stacklevel=2)
         panel_group = None
-    searched = optima[optima["strategy"] != "human_only"] if "strategy" in optima else optima
+    searched = optima[optima["mode"] != HUMAN_ONLY_MODE]
     if searched.empty:
         warnings.warn("no searched optimum to summarise; nothing to plot.", stacklevel=2)
         return
@@ -2135,15 +2035,12 @@ def _load_traces(
 
 
 def _scenario_label(result_dir: Path, manifest: dict) -> str:
-    """Human-readable scenario name: the §4.2 scenario id if present, else a path stem."""
+    """Human-readable scenario name: the scenario id if present, else the directory."""
     scenario_id = manifest.get("scenario_id", "")
     if scenario_id:
-        strategy = manifest.get("strategy", "")
-        return f"{scenario_id} / {strategy}" if strategy else scenario_id
-    scenario = manifest.get("scenario", "")
-    if isinstance(scenario, dict):
-        scenario = scenario.get("path", "")
-    return Path(scenario).stem if scenario else result_dir.name
+        mode = manifest.get("mode", "")
+        return f"{scenario_id} / {mode}" if mode else scenario_id
+    return result_dir.name
 
 
 def save_figure(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
@@ -2161,12 +2058,12 @@ def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
     manifest = _load_manifest(result_dir)
     label    = _scenario_label(result_dir, manifest)
 
-    # `objectives` is the whole evaluated pool at K' replications — the landscape the
-    # search saw.  The reported candidates are overwritten with their K-replication
-    # estimates from the re-simulation of §3.10, so c*'s CI is drawn at the width it is
-    # actually reported with, and the cost split shows the reported numbers.
+    # `objectives` is the whole evaluated pool at K_search replications, i.e. the
+    # landscape the search saw.  The reported candidates are overwritten with their
+    # K_final estimates from the re-simulation, so c*'s CI is drawn at the width it is
+    # actually reported with and the cost split shows the reported numbers.
     objectives = dict(summary["objectives"])
-    objectives.update(summary.get("final_objectives") or {})
+    objectives.update(summary["final_objectives"])
     best_key   = summary["best"]
     keep_keys  = summary["indistinguishable"]
     floor      = summary["throughput_floor"]
@@ -2211,8 +2108,7 @@ def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:
         best_key = summary["best"]
         if best_key is None:
             continue
-        obj = (summary.get("final_objectives", {}).get(best_key)
-               or summary["objectives"][best_key])
+        obj = summary["final_objectives"][best_key]
         scenarios[_scenario_label(rd, manifest)] = obj
 
     if not scenarios:
@@ -2224,15 +2120,6 @@ def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:
     save_figure(fig, out_dir, "comparison_optima", fmt)
 
 
-def _turnover_for(turnover: "pd.DataFrame | None", strategy: str) -> "pd.DataFrame | None":
-    """One mode's slice of the long-format turnover table, or None when it has no rows."""
-    if turnover is None or turnover.empty:
-        return None
-    curves = (turnover[turnover["strategy"] == strategy]
-              if "strategy" in turnover.columns else turnover)
-    return None if curves.empty else curves
-
-
 def visualize_campaign(
     optima: "pd.DataFrame",
     out_dir: Path,
@@ -2240,70 +2127,60 @@ def visualize_campaign(
     turnover: "pd.DataFrame | None" = None,
     **channels: str,
 ) -> None:
-    """All three campaign matrices, once per result mode in the campaign's ``optima.csv``.
+    """The campaign matrices, drawn from a consolidated ``optima.csv``.
 
-    Paper §3.11 leaves one search, so in practice the loop runs once, over
-    ``evolutionary``.  It is kept as a loop because each mode reports an optimum per
-    scenario independently: overlaying two would draw every scenario twice.
-    `channels` passes `x_group` / `y_group` / `size_group` / `marker_group` /
-    `color_group` through to all three.
+    The human-only rows are split off first and passed to the matrices as a `baseline`
+    overlay rather than getting figures of their own; everything else is one search
+    optimum per scenario.  `channels` passes `x_group` / `y_group` / `size_group` /
+    `marker_group` / `color_group` through to every matrix.
 
-    Note that each figure is handed one mode's slice, which is what makes the percentile
-    axis of :func:`plot_agent_human_ratio_matrix` a within-mode ranking.
-
-    `turnover` is the long-format ``elite_turnover.csv``; when it is given, the §5.1
-    convergence figure is drawn per mode as well.  It is sliced by mode like everything
-    else, so the ``human_only`` enumeration — which has no generations and contributes no
-    rows — simply does not get one.
+    `turnover` is the long-format ``elite_turnover.csv``.  Its search rows drive the
+    convergence figure; the enumeration contributes none, so an all-baseline campaign
+    simply gets no convergence figure.
     """
-    if "strategy" not in optima.columns:
-        raise KeyError("'strategy' is not a column of the optima table")
+    if "mode" not in optima.columns:
+        raise KeyError("'mode' is not a column of the optima table")
 
-    # The human-only baseline is split out *before* the loop: it is a reference level
-    # overlaid on the search's figures, not a mode with a figure set of its own.
-    is_baseline = optima["strategy"] == "human_only"
+    is_baseline = optima["mode"] == HUMAN_ONLY_MODE
     baseline = optima[is_baseline]
     searches = optima[~is_baseline]
     if baseline.empty:
         baseline = None
+    if searches.empty:
+        warnings.warn("no search optimum to draw; skipping the campaign matrices.",
+                      stacklevel=2)
+        return
 
-    for strategy in sorted(searches["strategy"].unique()):
-        sub = searches[searches["strategy"] == strategy]
-        suffix = f", {strategy} search ({len(sub)} scenarios)"
-        if baseline is not None:
-            suffix += f" + {len(baseline)} human-only baselines"
-        print(f"\n── Optima matrices: {strategy} ({len(sub)} scenarios) ──")
+    suffix = f", search ({len(searches)} scenarios)"
+    if baseline is not None:
+        suffix += f" + {len(baseline)} human-only baselines"
+    print(f"\n── Optima matrices ({len(searches)} scenarios) ──")
 
-        fig = plot_human_agent_matrix(
-            sub, baseline=baseline,
-            title=f"Developer vs. agent cost at $c^\\star${suffix}", **channels,
-        )
-        save_figure(fig, out_dir, f"human_agent_matrix_{strategy}", fmt)
+    fig = plot_human_agent_matrix(
+        searches, baseline=baseline,
+        title=f"Developer vs. agent cost at $c^\\star${suffix}", **channels,
+    )
+    save_figure(fig, out_dir, "human_agent_matrix", fmt)
 
-        fig = plot_quality_development_matrix(
-            sub, baseline=baseline, **channels,
-            title=f"Escaped-bug vs. development cost, developers + agents, "
-                  f"at $c^\\star${suffix}",
-        )
-        save_figure(fig, out_dir, f"quality_development_matrix_{strategy}", fmt)
+    fig = plot_quality_development_matrix(
+        searches, baseline=baseline, **channels,
+        title=f"Escaped-bug vs. development cost, developers + agents, "
+              f"at $c^\\star${suffix}",
+    )
+    save_figure(fig, out_dir, "quality_development_matrix", fmt)
 
-        # No baseline here: a team with no agents has no agent/developer ratio, and 0 on a
-        # five-decade log axis is not a position the figure can honestly give it.
-        fig = plot_agent_human_ratio_matrix(
-            sub, title=f"Agent-to-developer cost ratio at $c^\\star${suffix}", **channels,
-        )
-        save_figure(fig, out_dir, f"agent_human_ratio_matrix_{strategy}", fmt)
+    # No baseline: a team with no agents has no agent/developer ratio, and 0 has no
+    # position on a five-decade log axis.
+    fig = plot_agent_human_ratio_matrix(
+        searches, title=f"Agent-to-developer cost ratio at $c^\\star${suffix}", **channels,
+    )
+    save_figure(fig, out_dir, "agent_human_ratio_matrix", fmt)
 
-        # The convergence figure of §5.1: a property of the search, so it has no tier
-        # channels and no baseline, and it exists only for a mode that ran generations.
-        curves = _turnover_for(turnover, strategy)
-        if curves is not None:
+    # Convergence is a property of the search, so this figure has no tier channels and no
+    # baseline; the enumeration contributes no generations and therefore no rows.
+    if turnover is not None and not turnover.empty:
+        curves = turnover[turnover["mode"] != HUMAN_ONLY_MODE]
+        if not curves.empty:
             fig = plot_elite_turnover(
-                curves,
-                # Deliberately plain, and deliberately not `suffix`: that one advertises
-                # the baseline overlay, which this figure has no room for — an enumeration
-                # has no generations to turn over — and the search count is annotated
-                # inside the axes anyway.
-                title="Elite turnover and $c^\\star$ drop per generation",
-            )
-            save_figure(fig, out_dir, f"elite_turnover_{strategy}", fmt)
+                curves, title="Elite turnover and $c^\\star$ drop per generation")
+            save_figure(fig, out_dir, "elite_turnover", fmt)

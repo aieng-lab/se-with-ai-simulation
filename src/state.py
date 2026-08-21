@@ -1,4 +1,4 @@
-"""System state vector per paper/main.tex (§3)."""
+"""The 21-dimensional system state carried from sprint to sprint."""
 
 from __future__ import annotations
 
@@ -30,14 +30,6 @@ class SystemState:
     Q_esc: int = 0
     N_test: float = 0.0     # cumulative tests written by Test Development Agent
     N_doc: float = 0.0     # cumulative documentation items written
-
-    @property
-    def B_escaped(self) -> int:
-        return self.B_escaped_min + self.B_escaped_maj + self.B_escaped_sec
-
-    @property
-    def B_rel(self) -> int:
-        return self.B_rel_min + self.B_rel_maj + self.B_rel_sec
 
     @property
     def B_kno(self) -> int:

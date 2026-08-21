@@ -1,23 +1,13 @@
-"""Scoring a configuration and selecting the best one (paper §3.8-3.10).
+"""Scoring a configuration and selecting the one to report.
 
-A configuration is scored by *one* number, the expected cost per feature of
-Eq. (cost_rep), and is admissible only if it keeps up with the work the project
-generates, `value >= (1 - eps) * r_arrival` (Eq. throughput_constraint).  Because a
-candidate that violates the constraint still carries information — the search approaches
-the admissible region from outside — the two are combined into the total preorder `prefers`
-of Deb's feasibility rule rather than into a penalty.
+A configuration is scored by one number, the expected cost per feature, and is admissible
+only if it keeps up with the work the project generates, `value >= (1 - eps) * r_arrival`.
+The two are combined into the total preorder `preference_key` — Deb's feasibility rule —
+so that a candidate outside the admissible region is still ranked usefully.
 
-That preorder ranks by the *mean* cost, which is a Monte Carlo estimate.  We therefore
-report the minimiser `c*` together with the *indistinguishable set* `I*` of admissible
-configurations whose 95% bootstrap CI overlaps `c*`'s (Eq. topset), reduced by the
-parsimony tie-break: of two equally good teams running the same process, the one that uses
-no more agents anywhere *and* measured cheaper removes the other.  The cost half of that
-condition is what keeps `c*` in `I*` unconditionally — nothing in the set costs strictly
-less than the minimiser — so the best measured performance is never under-reported.
-
-Nothing here is a Pareto frontier.  With a single objective the preference relation is a
-total preorder, so ranking is a sort, `c*` is its first element, and none of the
-non-transitivity care that a CI-aware multi-objective dominance rule needs applies.
+That preorder ranks by the *mean* cost, which is a Monte Carlo estimate, so the reported
+result is the minimiser `c*` together with the indistinguishable set `I*`: the admissible
+candidates whose 95 % bootstrap CI overlaps `c*`'s, reduced by the parsimony tie-break.
 """
 
 from __future__ import annotations
@@ -41,42 +31,42 @@ if TYPE_CHECKING:
 class AggregatedObjectives:
     """Per-configuration Monte Carlo summary: the objective, the constraint, the split.
 
-    `cost_mean` is the objective of Eq. (objective) and `value_mean` the quantity the
-    throughput constraint of Eq. (throughput_constraint) bounds; both carry a 95%
-    percentile bootstrap CI.  Everything below them is reporting only and must stay
-    invisible to `prefers` and to `I*` membership.
+    `cost_mean` is the objective and `value_mean` the quantity the throughput constraint
+    bounds; both carry a 95 % percentile bootstrap CI.  Every other field is reporting
+    only and takes no part in ranking or in `I*` membership.
     """
 
     value_mean: float
     value_ci: tuple[float, float]
     cost_mean: float
     cost_ci: tuple[float, float]
-    # The three cost drivers of §3.8, summing to `cost_mean`.  Persisted rather than
-    # reconstructed: C_quality and C_agents both depend on the realised trajectory.
+    # The three cost drivers, summing to `cost_mean`.  Stored rather than reconstructed:
+    # the quality and agent terms both depend on the realised trajectory.
     cost_quality_mean: float = 0.0
     cost_human_mean: float = 0.0
     cost_agent_mean: float = 0.0
     # Work completed per role over the horizon; `cost_agent_mean` is its inner product
     # with c_token, so this tells a role that worked from one merely deployed.
     actions_mean: tuple[float, ...] = ()
-    # Who did the work — the human share appears in no `actions_mean` entry at all
-    # (see SprintActions).
+    # Who did the work; the human share appears in no `actions_mean` entry at all.
     impl_human_mean: float = 0.0
     impl_agents_mean: float = 0.0
     fixes_human_mean: float = 0.0
     fixes_agent_mean: float = 0.0
 
 
+#: Resamples drawn for the percentile bootstrap CIs of `cost` and `value`.
+N_BOOTSTRAP = 1000
+
+
 def aggregate_config_result(
     result: "ConfigResult",
     master_seed: int,
-    n_bootstrap: int = 1000,
 ) -> AggregatedObjectives:
-    """Compute means and 95% percentile bootstrap CIs over K replications (§3.8).
+    """Means and 95 % percentile bootstrap CIs over the replications of `result`.
 
-    Only `cost` and `value` are bootstrapped — the objective and the constrained
-    quantity.  The cost drivers and contribution counts are reported as plain means: they
-    take part in no comparison, so a CI for them would never be read.
+    Only `cost` and `value` are bootstrapped.  The cost drivers and contribution counts
+    take part in no comparison, so they are reported as plain means.
     """
     value_arr = np.array([r.value for r in result.replications])
     cost_arr  = np.array([r.cost  for r in result.replications])
@@ -85,7 +75,7 @@ def aggregate_config_result(
     boot_seed = (master_seed ^ _config_hash(result.config) ^ 0xB007_5EED) & 0xFFFF_FFFF_FFFF_FFFF
     rng = np.random.default_rng(boot_seed)
 
-    idx = rng.integers(0, K, size=(n_bootstrap, K))
+    idx = rng.integers(0, K, size=(N_BOOTSTRAP, K))
     value_boot = value_arr[idx].mean(axis=1)
     cost_boot  = cost_arr[idx].mean(axis=1)
 
@@ -109,7 +99,7 @@ def aggregate_config_result(
 
 
 # ---------------------------------------------------------------------------
-# Throughput constraint (§3.9, Eq. throughput_constraint)
+# Throughput constraint
 # ---------------------------------------------------------------------------
 
 def throughput_floor(params: "ScenarioParameters", epsilon: float) -> float:
@@ -134,52 +124,42 @@ def satisfies_throughput(agg: AggregatedObjectives, floor: float) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Preference relation (§3.11.3, Deb's feasibility rule)
+# Preference relation (Deb's feasibility rule)
 # ---------------------------------------------------------------------------
 
-def _preference_key(agg: AggregatedObjectives, floor: float) -> tuple[float, float]:
-    """Sort key realising `prefers`: smaller is better, lexicographically.
+def preference_key(agg: AggregatedObjectives, floor: float) -> tuple[float, float]:
+    """Ranking key, smaller is better, compared lexicographically.
 
-    Constraint violation first, cost second.  This encodes all three of Deb's rules at
-    once: two violators are separated by whose violation is smaller (equivalently, whose
-    value is higher), an admissible configuration has violation 0 and therefore precedes
-    every violator, and two admissible ones are separated by cost alone.
+    Constraint violation first, cost second.  That encodes all three of Deb's rules at
+    once: two violators are separated by whose violation is smaller, an admissible
+    configuration has violation 0 and precedes every violator, and two admissible ones
+    are separated by cost alone.
     """
     return (violation(agg, floor), agg.cost_mean)
 
 
-def prefers(a: AggregatedObjectives, b: AggregatedObjectives, floor: float) -> bool:
-    """True when `a` is preferred to `b`, i.e. `a` ≺ `b` (§3.11.3).
-
-    Strict: two configurations with the same key are equally preferred and neither
-    `prefers` the other.
-    """
-    return _preference_key(a, floor) < _preference_key(b, floor)
-
-
 def rank(aggs: "Sequence[AggregatedObjectives]", floor: float) -> list[int]:
-    """Indices of `aggs` ordered best first under `prefers`.
+    """Indices of `aggs` ordered best first.
 
-    A plain stable sort: `prefers` is a total preorder, so ties keep input order and the
+    A plain stable sort: the key is a total preorder, so ties keep input order and the
     result does not depend on the comparison sequence.
     """
-    return sorted(range(len(aggs)), key=lambda i: _preference_key(aggs[i], floor))
+    return sorted(range(len(aggs)), key=lambda i: preference_key(aggs[i], floor))
 
 
 def best_index(aggs: "Sequence[AggregatedObjectives]", floor: float) -> int | None:
-    """Index of `c*`, the `prefers`-minimal configuration; None for an empty pool.
+    """Index of `c*`, the best-ranked configuration; None for an empty pool.
 
-    Note that `c*` may violate the throughput constraint when *no* candidate satisfies it.
-    Callers that report it must say so — `satisfies_throughput` on the returned entry is
-    the check.
+    `c*` may violate the throughput constraint when *no* candidate satisfies it, so a
+    caller that reports it must say so; `satisfies_throughput` on the entry is the check.
     """
     if not aggs:
         return None
-    return min(range(len(aggs)), key=lambda i: _preference_key(aggs[i], floor))
+    return min(range(len(aggs)), key=lambda i: preference_key(aggs[i], floor))
 
 
 # ---------------------------------------------------------------------------
-# Parsimony tie-break (§3.10)
+# Parsimony tie-break
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
@@ -212,19 +192,12 @@ def parsimony_dominates(
 ) -> bool:
     """True when `a` runs `b`'s process, is no larger anywhere, smaller somewhere, and cheaper.
 
-    The statistical half of the §3.10 rule stays the caller's precondition: this relation is
-    only applied *within* `I*`, whose members are statistically indistinguishable by
-    construction, so the additional agents of the larger team buy nothing measurable.  What
-    *is* checked here is the cost condition `cost_a < cost_b` — the larger team is only
-    removed in favour of a smaller one that also measured better, so the best measured
-    performance is never under-reported.  Two consequences the rest of the module relies on:
-
-    * `c*` can never be dominated, since no member of `I*` has a strictly lower mean cost
-      than the minimiser.  No exemption is needed anywhere, and the strictness is what makes
-      that hold for two members whose means are exactly equal.
-    * The relation is a strict partial order — irreflexive, antisymmetric and transitive,
-      both halves being so — hence a single filtering pass suffices, its result does not
-      depend on ordering, and a minimal member of any family always survives.
+    Statistical indistinguishability is the caller's precondition: apply this only within
+    `I*`, whose members are tied on cost by construction.  The cost condition
+    `cost_a < cost_b` is checked here, which has two consequences the module relies on:
+    `c*` is the cost minimiser and therefore can never be dominated, and the relation is a
+    strict partial order, so one filtering pass suffices and its result is
+    order-independent.
     """
     if key_a.process != key_b.process:
         return False
@@ -240,24 +213,18 @@ def indistinguishable_set(
     floor: float,
     keys: "Sequence[ParsimonyKey] | None" = None,
 ) -> list[int]:
-    """Indices of `I*` (Eq. topset): admissible candidates statistically tied with `c*`.
+    """Indices of `I*`: the admissible candidates statistically tied with `c*`.
 
-    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost CI
-    overlaps `c*`'s, i.e. the two are not significantly different at the 95% level.
+    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost
+    CI overlaps `c*`'s, i.e. the two are not significantly different at the 95 % level.
 
-    With `keys` given, the parsimony tie-break of §3.10 is applied afterwards: a member
-    that another member parsimony-dominates is dropped.  A single pass suffices and the
-    result does not depend on ordering, because `parsimony_dominates` is a strict partial
-    order and every remover is itself a member.
+    With `keys` given, the parsimony tie-break is applied afterwards: a member that
+    another member parsimony-dominates is dropped.  `c*` needs no exemption — domination
+    requires a strictly lower mean cost — so it is a member of every non-empty result.
 
-    `c*` needs no exemption from that tie-break: domination requires a strictly lower mean
-    cost and `c*` is the minimiser, so nothing can remove it.  It is therefore always a
-    member of a non-empty result, and `report_optimum` returns the raw minimiser.
-
-    Empty in exactly two cases: an empty pool, and a pool in which *no* candidate satisfies
-    the throughput constraint.  In the latter §3.10 says no `c*` exists and `I*` is empty —
-    the caller still reports the least-violating candidate and marks it inadmissible
-    (`report_optimum` returns its index beside the empty set).
+    Empty in exactly two cases: an empty pool, and a pool in which no candidate satisfies
+    the throughput constraint.  In the latter there is no `c*` for a set to be built
+    around; the caller still reports the least-violating candidate, marked inadmissible.
     """
     best = best_index(aggs, floor)
     if best is None:
@@ -265,8 +232,7 @@ def indistinguishable_set(
     if keys is not None and len(keys) != len(aggs):
         raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
     if not satisfies_throughput(aggs[best], floor):
-        # Nothing in the pool keeps up with the project, so there is no `c*` for the set to
-        # be built around (§3.10).  `report_optimum` reports the least-violating candidate.
+        # Nothing in the pool keeps up with the project, so there is no `c*` here.
         return []
 
     lo, hi = aggs[best].cost_ci
@@ -292,18 +258,16 @@ def report_optimum(
     floor: float,
     keys: "Sequence[ParsimonyKey] | None" = None,
 ) -> tuple[int | None, list[int]]:
-    """The `(c*, I*)` pair to report (§3.10).
+    """The `(c*, I*)` pair to report.
 
-    `c*` is the `prefers`-minimal candidate of the whole pool and `I*` is
-    `indistinguishable_set`.  The parsimony tie-break cannot remove `c*` — domination
-    requires a strictly lower mean cost and `c*` is the minimiser — so `c*` is a member of
-    every non-empty `I*`.
+    `c*` is the best-ranked candidate of the whole pool and `I*` is
+    :func:`indistinguishable_set`.  The parsimony tie-break cannot remove `c*`, so it is
+    a member of every non-empty `I*`.
 
-    The one case where it is not is the inadmissible one: when no candidate satisfies the
-    throughput constraint, §3.10 says `I*` is empty, and this returns the least-violating
-    candidate (equivalently the highest-value one) beside it.  Callers must mark that
-    result as inadmissible; `satisfies_throughput` on the returned entry is the check.
-    Both halves are None/empty only for an empty pool.
+    The exception is the inadmissible case: when no candidate satisfies the throughput
+    constraint `I*` is empty and this returns the least-violating candidate beside it.
+    Callers must mark such a result as inadmissible; `satisfies_throughput` on the
+    returned entry is the check.  Both halves are None/empty only for an empty pool.
     """
     best = best_index(aggs, floor)
     if best is None:

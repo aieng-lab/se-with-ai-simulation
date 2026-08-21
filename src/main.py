@@ -20,11 +20,11 @@ Search for the cheapest team that keeps up with the project:
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
         --samples none --progress-every 500 --out results/one_scenario
 
-Enumerate the human-only baseline of paper Section 4.1 instead of searching:
+Enumerate the zero-agent baseline grid instead of searching:
     python -m src.main optimize config/search_baseline/search_h-h_p-l_d-X_a-X_b-m.json \
         --human-only --out results/baseline_one
 
-Run all 432 scenarios of paper Section 4.2:
+Run the whole campaign:
     ./run_experiments.sh          (see its --help; generate the configs first with
                                    scripts/generate_search_configs.py)
 
@@ -54,7 +54,7 @@ from .analysis import final_distribution, mean_trajectory
 from .config import (
     AGENT_ROLE_NAMES,
     AUTONOMOUS_ROLE_INDICES,
-    EVOLUTIONARY_MODE,
+    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     SAMPLE_POLICIES,
     SCENARIO_GROUPS,
@@ -63,9 +63,9 @@ from .config import (
 )
 from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
 from .results import load_result, load_traces, save_result, save_traces
-from .search_configurations import (
-    _run_evolutionary_search,
-    _run_human_only,
+from .search import (
+    run_search,
+    run_human_only,
     human_only_grid,
     two_stage_selection,
     write_samples,
@@ -92,7 +92,7 @@ DEFAULT_SCENARIO_PATHS: dict[str, str] = {
 
 
 def _add_scenario_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add one --<group> path option per scenario group (paper §4.1)."""
+    """Add one --<group> path option per scenario group."""
     for group, default in DEFAULT_SCENARIO_PATHS.items():
         parser.add_argument(
             f"--{group}", default=default, metavar="PATH",
@@ -103,6 +103,18 @@ def _add_scenario_arguments(parser: argparse.ArgumentParser) -> None:
 def _scenario_paths_from_args(args: argparse.Namespace) -> dict[str, str]:
     """Collect the five --<group> options into a group -> path mapping."""
     return {group: getattr(args, group) for group in SCENARIO_GROUPS}
+
+
+def _print_objectives(agg) -> None:
+    """The objective, the constraint and the three cost drivers of one configuration."""
+    print("Objective and constraint (mean [95 % CI]):")
+    print(f"  cost   $/feature         {agg.cost_mean:.1f}   "
+          f"[{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
+    print(f"  value  features/sprint   {agg.value_mean:.3f}   "
+          f"[{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
+    print("Cost drivers ($/feature):")
+    print(f"  escaped bugs {agg.cost_quality_mean:.1f}   "
+          f"developers {agg.cost_human_mean:.1f}   agents {agg.cost_agent_mean:.1f}")
 
 
 def _print_config(config: TeamConfiguration) -> None:
@@ -158,12 +170,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     agg = aggregate_config_result(cr, master_seed=horizon.master_seed)
 
     print()
-    print("Objective and constraint (mean [95 % CI]):")
-    print(f"  cost   $/feature         {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
-    print(f"  value  features/sprint   {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
-    print("Cost drivers ($/feature):")
-    print(f"  escaped bugs {agg.cost_quality_mean:.1f}   "
-          f"developers {agg.cost_human_mean:.1f}   agents {agg.cost_agent_mean:.1f}")
+    _print_objectives(agg)
 
     if args.out:
         out = Path(args.out)
@@ -177,6 +184,13 @@ def _cmd_run(args: argparse.Namespace) -> None:
             print(f"Saved traces  → {traces_path}")
 
 
+#: Trajectory columns the `analyze` subcommand tabulates.  Every name must be a persisted
+#: SprintSnapshot field, i.e. a column `results.to_dataframe` writes.
+ANALYZE_TRAJECTORY_FIELDS: tuple[str, ...] = (
+    "F_completed", "D_tech", "B_kno_min", "B_kno_maj", "N_test", "N_doc",
+)
+
+
 def _cmd_analyze(args: argparse.Namespace) -> None:
     result, agg = load_result(args.result)
     config = result.config
@@ -188,12 +202,7 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print(f"Source:      {args.result}")
     print(f"Replications: K={len(result.replications)}")
     print()
-    print("Objective and constraint (mean [95 % CI]):")
-    print(f"  cost   $/feature         {agg.cost_mean:.1f}   [{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
-    print(f"  value  features/sprint   {agg.value_mean:.3f}   [{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
-    print("Cost drivers ($/feature):")
-    print(f"  escaped bugs {agg.cost_quality_mean:.1f}   "
-          f"developers {agg.cost_human_mean:.1f}   agents {agg.cost_agent_mean:.1f}")
+    _print_objectives(agg)
 
     if not args.traces:
         return
@@ -204,9 +213,8 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print(f"Trace file:  {args.traces}  ({len(result.replications)} reps × {T} sprints)")
     print()
 
-    # Key trajectory fields to display
-    fields = ["F_completed", "D_tech", "B_kno_min", "B_kno_maj", "doc_cov", "impl"]
-    labels = ["F_done", "Debt", "B_kno_min", "B_kno_maj", "doc_cov", "impl/spr"]
+    fields = list(ANALYZE_TRAJECTORY_FIELDS)
+    labels = ["F_done", "Debt", "B_kno_min", "B_kno_maj", "N_test", "N_doc"]
 
     # Header
     col_w = 10
@@ -236,10 +244,9 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
 def _objective_entry(config: TeamConfiguration, agg, floor: float) -> dict:
     """One `search_summary.json` objectives entry: the configuration and its aggregates.
 
-    Used for both blocks of that file — `objectives` at K' replications for every simulated
-    candidate, and `final_objectives` at K for the re-simulated ones (§3.10) — so the two
-    have identical shape and every consumer can prefer the latter and fall back to the
-    former with no special casing.
+    Used for both blocks of that file — `objectives` at `K_search` for every simulated
+    candidate and `final_objectives` at `K_final` for the re-simulated ones — so the two
+    have identical shape.
     """
     return {
         "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
@@ -259,37 +266,25 @@ def _objective_entry(config: TeamConfiguration, agg, floor: float) -> dict:
     }
 
 
-def _cmd_optimize(args: argparse.Namespace) -> None:
-    cfg_path = Path(args.search_config)
-    search_cfg = load_search_config(cfg_path)
-    # The baseline is a result mode, not a search strategy: the search itself is fixed
-    # (paper §3.11 describes one) and is therefore not selectable.
-    human_only = args.human_only or search_cfg.human_only
-    mode = HUMAN_ONLY_MODE if human_only else EVOLUTIONARY_MODE
-    if args.samples is not None:
-        search_cfg = replace(search_cfg, samples=args.samples)
+def _write_json(path: Path, payload: dict) -> None:
+    """Write one of the three JSON artefacts a search leaves behind."""
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
-    horizon = load_simulation_horizon(search_cfg.horizon_path)
-    scenario_values = {
-        group: json.loads(Path(path).read_text(encoding="utf-8"))
-        for group, path in search_cfg.scenario_paths.items()
-    }
-    params = load_scenario_params(search_cfg.scenario_paths)
-    initial_state = load_initial_state(args.start_state)
 
+def _print_search_banner(cfg_path: Path, search_cfg, horizon, params, mode: str,
+                         human_only: bool, start_state: str) -> None:
+    """What is about to be run: inputs, protocol, budget and throughput floor."""
     print(f"Search:      {cfg_path}")
     print(f"Scenario id: {search_cfg.scenario_id or '(unnamed)'}")
     print("Scenario:")
     for group, path in search_cfg.scenario_paths.items():
         print(f"  {group:<10} {path}")
-    print(f"Start state: {args.start_state}")
+    print(f"Start state: {start_state}")
     print(f"Mode:        {mode}")
     print(f"Horizon:     K'={horizon.K_search} replications during the search, "
           f"K={horizon.K_final} for the re-simulation of I* * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
     if human_only:
-        # Not a search: the human-only baseline of §4.1 fixes both composition vectors at
-        # zero, so its configuration space is small enough to enumerate in full.
         n_grid = len(human_only_grid(search_cfg))
         print(f"Budget:      none; exhaustive enumeration of the {n_grid}-point "
               f"zero-agent grid")
@@ -303,28 +298,44 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Samples:     {search_cfg.samples}")
     print()
 
+
+def _cmd_optimize(args: argparse.Namespace) -> None:
+    cfg_path = Path(args.search_config)
+    search_cfg = load_search_config(cfg_path)
+    human_only = args.human_only or search_cfg.human_only
+    mode = HUMAN_ONLY_MODE if human_only else SEARCH_MODE
+    if args.samples is not None:
+        search_cfg = replace(search_cfg, samples=args.samples)
+
+    horizon = load_simulation_horizon(search_cfg.horizon_path)
+    scenario_values = {
+        group: json.loads(Path(path).read_text(encoding="utf-8"))
+        for group, path in search_cfg.scenario_paths.items()
+    }
+    params = load_scenario_params(search_cfg.scenario_paths)
+    initial_state = load_initial_state(args.start_state)
+
+    _print_search_banner(cfg_path, search_cfg, horizon, params, mode, human_only,
+                         args.start_state)
+
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(search_cfg.seed)
 
     t_start = time.perf_counter()
-    runner = _run_human_only if human_only else _run_evolutionary_search
-    outcome = runner(
-        search_cfg, horizon, params, rng, initial_state,
-        progress_every=args.progress_every,
-    )
+    if human_only:
+        outcome = run_human_only(search_cfg, horizon, params, initial_state,
+                                 progress_every=args.progress_every)
+    else:
+        outcome = run_search(search_cfg, horizon, params, rng, initial_state,
+                             progress_every=args.progress_every)
     wall_clock_s = time.perf_counter() - t_start
 
     aggs = outcome.aggs
     floor = throughput_floor(params, search_cfg.epsilon)
-    # c* and the set of admissible configurations it cannot be distinguished from (§3.10),
-    # in two stages: the search's K'-replication estimates give a preliminary I*, the
-    # parsimony tie-break thins it — of several equally good teams running the same process
-    # only the one that uses no more agents anywhere and measured cheaper is kept — what is
-    # left is re-simulated with K > K' replications, and the tie-break runs once more on the
-    # narrower intervals.  c* is never removed by it, since domination requires a strictly
-    # lower mean cost.  I* is empty only when no candidate reached the throughput floor, in
-    # which case c* is the least-violating one.
+    # c* and the set of admissible configurations indistinguishable from it, in two
+    # stages; see `search.two_stage_selection`.  I* is empty only when no candidate
+    # reached the throughput floor, in which case c* is the least-violating one.
     t_select = time.perf_counter()
     report = two_stage_selection(
         outcome, search_cfg, horizon, params, initial_state,
@@ -337,15 +348,15 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     # rather than presenting it as an admissible answer.
     best_admissible = report.best_admissible
 
-    # Sample files are written only now, so that the "best" policy can restrict them to
-    # the configurations that are actually reported.  I* is empty when nothing reached the
-    # throughput floor (§3.10), so fall back to c* there — it is still reported, just
-    # marked inadmissible, and dropping its sample file would leave nothing behind.
-    sample_keys = {
-        "none": [],
-        "best": keep_keys or ([best_key] if best_key is not None else []),
-        "all": [key for key, _, _ in aggs],
-    }[search_cfg.samples]
+    # Sample files are written only now, so the "best" policy can restrict them to the
+    # configurations actually reported.  I* is empty when nothing reached the throughput
+    # floor, so fall back to c* there: it is still reported, just marked inadmissible.
+    if search_cfg.samples == "none":
+        sample_keys: list[str] = []
+    elif search_cfg.samples == "all":
+        sample_keys = [key for key, _, _ in aggs]
+    else:
+        sample_keys = keep_keys or ([best_key] if best_key is not None else [])
     # The re-simulated ConfigResults replace the search's for the keys they cover, so a
     # reported candidate's sample file carries the K replications it is reported from.
     outcome.results.update(report.final_results)
@@ -356,9 +367,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "search_config": str(cfg_path),
         "scenario_id": search_cfg.scenario_id,
         "scenario": {"paths": search_cfg.scenario_paths, "values": scenario_values},
-        # Kept under the name "strategy" because the campaign tables, the result tree and
-        # the per-mode figure names all key on it.
-        "strategy": mode,
+        "mode": mode,
         "horizon": {"path": search_cfg.horizon_path, "K_search": horizon.K_search,
                     "K_final": horizon.K_final, "T": horizon.T,
                     "master_seed": horizon.master_seed},
@@ -378,24 +387,22 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             "seed": search_cfg.seed,
         },
         # n_evaluated counts everything that consumed budget; n_simulated excludes the
-        # candidates rejected by the human-capacity condition (paper §4.2).
+        # candidates rejected by the human-capacity check.
         "n_evaluated": outcome.n_evaluated,
         "n_simulated": outcome.n_simulated,
         "n_infeasible": outcome.n_evaluated - outcome.n_simulated,
         "n_feasible": outcome.n_simulated,
         "throughput_floor": floor,
         "best_admissible": best_admissible,
-        # The *final* size of I*, i.e. after the re-simulation at K and the parsimony
-        # tie-break; convergence.json carries the size at each of the three stages.
+        # The final size of I*, after the re-simulation and the parsimony tie-break;
+        # convergence.json carries the size at each earlier stage.
         "n_indistinguishable": len(keep_keys),
         "n_samples_written": n_samples_written,
         "wall_clock_s": round(wall_clock_s, 1),
         "resimulation_s": round(resim_s, 1),
         "configs": outcome.manifest,
     }
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest_out), encoding="utf-8"
-    )
+    _write_json(out_dir / "manifest.json", manifest_out)
 
     configs_by_key = {key: cfg for key, cfg, _ in aggs}
     final_best = (_objective_entry(configs_by_key[best_key],
@@ -407,26 +414,24 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "throughput_floor": floor,
         "K_search": horizon.K_search,
         "K_final": horizon.K_final,
-        # Every simulated candidate at K' replications: what the search ranked by, and what
-        # a plot of the whole evaluated pool shows.
+        # Every simulated candidate at K_search replications: what the search ranked by,
+        # and what a plot of the whole evaluated pool shows.
         "objectives": {
             key: _objective_entry(cfg, agg, floor)
             for key, cfg, agg in aggs
         },
-        # The re-simulated candidates at K replications (§3.10): "best" and
-        # "indistinguishable" key into this one, and every reported number comes from here.
+        # The re-simulated candidates at K_final replications; "best" and
+        # "indistinguishable" key into this block, and every reported number comes from it.
         "final_objectives": {
             key: _objective_entry(configs_by_key[key], agg, floor)
             for key, agg in report.final_aggs.items()
         },
     }
-    (out_dir / "search_summary.json").write_text(
-        json.dumps(search_summary), encoding="utf-8"
-    )
+    _write_json(out_dir / "search_summary.json", search_summary)
 
     convergence = {
         "scenario_id": search_cfg.scenario_id,
-        "strategy": mode,
+        "mode": mode,
         "n_elite": search_cfg.n_elite,
         "n_generations": search_cfg.n_generations,
         "n_generations_run": len(outcome.elite_turnover),
@@ -445,9 +450,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         "wall_clock_s": round(wall_clock_s, 1),
         "resimulation_s": round(resim_s, 1),
     }
-    (out_dir / "convergence.json").write_text(
-        json.dumps(convergence), encoding="utf-8"
-    )
+    _write_json(out_dir / "convergence.json", convergence)
 
     print()
     print(f"Evaluated {outcome.n_evaluated} candidates "
@@ -484,8 +487,8 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             if st["best_changed_by_resim"]:
                 print("  the re-simulation moved c* to a different configuration")
         else:
-            # No admissible candidate means no c* in the sense of §3.10, so I* is empty
-            # rather than a set of one; the line above would read as a real tie.
+            # With no admissible candidate there is no c* for a set to form around, so
+            # I* is empty rather than a set of one; the line above would read as a tie.
             print("Indistinguishable set I*: empty (the result is inadmissible)")
     print()
     print(f"Results saved to: {out_dir}")
@@ -513,13 +516,23 @@ def _cmd_visualize(args: argparse.Namespace) -> None:
     print("\nDone.")
 
 
-#: Which scenario group drives which visual channel of the §5 optima matrix, by default.
+#: Which scenario group drives which visual channel of the optima matrices, by default.
 #: Two groups have a fourth tier: `project` sits on the shape channel, the only per-point
-#: channel whose fourth level reads as a peer rather than as "more", and `agent` on a facet
-#: axis, where a fourth tier costs only one extra column.
+#: channel whose fourth level reads as a peer rather than as "more", and `agent` on a
+#: facet axis, where a fourth tier costs only one extra column.
 CAMPAIGN_CHANNEL_DEFAULTS: dict[str, str] = {
     "x": "agent", "y": "human", "color": "debt", "marker": "project", "size": "bugimpact",
 }
+
+
+def _read_table(path: Path, label: str, hint: str) -> "pd.DataFrame":
+    """Load a consolidated CSV, or exit with the command that would produce it."""
+    if not path.is_file():
+        print(f"Error: {path} does not exist; {hint}", file=sys.stderr)
+        sys.exit(1)
+    frame = pd.read_csv(path)
+    print(f"Loaded {len(frame)} {label} from {path}")
+    return frame
 
 
 def _cmd_campaign(args: argparse.Namespace) -> None:
@@ -527,23 +540,14 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
     optima_path = out_dir / "optima.csv"
 
     if args.figures_only:
-        # Redraw from the table a previous run already consolidated: the campaign is
-        # finished, so re-reading 864 result directories would only rewrite the same CSVs.
-        if not optima_path.is_file():
-            print(f"Error: {optima_path} does not exist; run the campaign without "
-                  f"--figures-only first.", file=sys.stderr)
-            sys.exit(1)
-        optima = pd.read_csv(optima_path)
-        print(f"Loaded {len(optima)} reported optima from {optima_path}")
+        # Redraw from the tables a previous run consolidated, without re-reading the
+        # result tree or rewriting a single CSV.
+        hint = "run the campaign without --figures-only first."
+        optima = _read_table(optima_path, "reported optima", hint)
         if optima.empty:
             print("\nNo optimum was reported; skipping the figures.")
             return
-        # The elite-turnover figure has its own table; without it the other figures still
-        # redraw, so a campaign consolidated before §5.1 landed is not an error here.
-        turnover_path = out_dir / "elite_turnover.csv"
-        turnover = pd.read_csv(turnover_path) if turnover_path.is_file() else None
-        if turnover is not None:
-            print(f"Loaded {len(turnover)} turnover point(s) from {turnover_path}")
+        turnover = _read_table(out_dir / "elite_turnover.csv", "turnover point(s)", hint)
         _campaign_figures(optima, out_dir, args, turnover)
         print("\nDone.")
         return
@@ -584,7 +588,7 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
     if not uplift.empty:
         print(f"  {uplift_path}   {len(uplift)} optima with a human-only reference")
     if not convergence.empty:
-        print(f"  {convergence_path}   {len(convergence)} search(es) with §5.1 measures")
+        print(f"  {convergence_path}   {len(convergence)} search(es) with convergence measures")
     if not turnover.empty:
         print(f"  {turnover_path}   {len(turnover)} generation(s) of elite turnover")
     # A baseline scenario is enumerated once and has no search counterpart, so the
@@ -601,6 +605,9 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print()
         print(summary, end="")
 
+    if args.no_figures:
+        print("\nDone.")
+        return
     if optima.empty:
         print("\nNo optimum was reported; skipping the figures.")
         return
@@ -627,54 +634,42 @@ def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
 def _cmd_constellation(args: argparse.Namespace) -> None:
     """What the optimal teams are made of, cut along two scenario groups.
 
-    Separate from `campaign` rather than folded into it: the campaign's four CSVs are the
-    §5.1/§5.2 reporting and are already written, while this is a second pass over the same
-    tree that reads a different block of each ``search_summary.json`` — the final `I*`, not
-    just `c*` — and must not force a re-consolidation to be re-cut on a different grid.
+    Separate from `campaign` because it is a second pass over the same tree, reading a
+    different block of each ``search_summary.json`` — the final `I*`, not just `c*` — and
+    must not force a re-consolidation just to be re-cut on a different grid.
     """
     out_dir = Path(args.out)
     cells_path = out_dir / "constellation_cells.csv"
-    # `--rows`/`--cols` name the *figure* axes; the tables are keyed in
-    # `CELL_GROUPS` order, i.e. the column group first, so the default matches
-    # the module default and the summary blocks read one per column-group tier.
+    # `--rows`/`--cols` name the *figure* axes; the tables are keyed in `CELL_GROUPS`
+    # order, i.e. the column group first, so the summary blocks read one per column tier.
     groups = (args.cols, args.rows)
 
+    optima_path = out_dir / "optima.csv"
+    optima_hint = "run `python -m src.main campaign` first."
+
     if args.figures_only:
-        if not cells_path.is_file():
-            print(f"Error: {cells_path} does not exist; run the constellation "
-                  f"analysis without --figures-only first.", file=sys.stderr)
-            sys.exit(1)
-        cells = pd.read_csv(cells_path)
-        print(f"Loaded {len(cells)} cell statistic(s) from {cells_path}")
+        cells = _read_table(cells_path, "cell statistic(s)",
+                            "run the constellation analysis without --figures-only first.")
         visualize_constellation(cells, out_dir, args.format,
                                 rows_group=args.rows, cols_group=args.cols)
         # The two summary figures read the per-scenario table, not the cell statistics:
         # their shares and rates are formed inside a scenario, which an aggregate cannot
         # undo.  Redrawn here too, since a plotting change is why --figures-only is used.
-        optima_path = out_dir / "optima.csv"
-        if optima_path.is_file():
-            visualize_team_summary(
-                role_bill(pd.read_csv(optima_path), args.config_dir), out_dir,
-                args.format, block_group=args.cols, bar_group=args.rows)
+        optima = _read_table(optima_path, "reported optima", optima_hint)
+        visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
+                               block_group=args.cols, bar_group=args.rows)
         print("\nDone.")
         return
 
-    optima_path = out_dir / "optima.csv"
-    if not optima_path.is_file():
-        print(f"Error: {optima_path} does not exist; run "
-              f"`python -m src.main campaign` first.", file=sys.stderr)
-        sys.exit(1)
+    optima = _read_table(optima_path, "reported optima", optima_hint)
     results_dir = Path(args.results_dir)
     if not results_dir.is_dir():
         print(f"Error: {results_dir} is not a directory.", file=sys.stderr)
         sys.exit(1)
-
-    optima = pd.read_csv(optima_path)
-    print(f"Loaded {len(optima)} reported optima from {optima_path}")
     print(f"Reading the indistinguishable sets under {results_dir} ...")
     istar = build_indistinguishable(results_dir)
     print(f"  {len(istar)} I* member(s) over "
-          f"{istar[['scenario_id', 'strategy']].drop_duplicates().shape[0]} search(es)")
+          f"{istar[['scenario_id', 'mode']].drop_duplicates().shape[0]} search(es)")
 
     cells = build_constellation(optima, istar, groups)
     if cells.empty:
@@ -744,8 +739,8 @@ def main(argv: list[str] | None = None) -> None:
                          help="Output directory for optimization results")
     p_optimize.add_argument(
         "--human-only", action="store_true",
-        help="Enumerate the 99-point zero-agent grid of the paper's Section 4.1 baseline "
-             "instead of running the evolutionary search (also settable in the config)",
+        help="Enumerate the 99-point zero-agent baseline grid instead of searching "
+             "(also settable in the search config)",
     )
     p_optimize.add_argument(
         "--samples", choices=list(SAMPLE_POLICIES), default=None,
@@ -792,6 +787,9 @@ def main(argv: list[str] | None = None) -> None:
     p_camp.add_argument("--figures-only", action="store_true",
                         help="Redraw the figures from an existing OUT/optima.csv instead "
                              "of re-reading the campaign and rewriting the CSVs")
+    p_camp.add_argument("--no-figures", action="store_true",
+                        help="Write the CSVs and the convergence summary but draw no "
+                             "figures")
     for channel, default in CAMPAIGN_CHANNEL_DEFAULTS.items():
         p_camp.add_argument(
             f"--{channel}", default=default, choices=list(SCENARIO_GROUPS),

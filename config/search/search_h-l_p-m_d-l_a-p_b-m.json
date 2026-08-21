@@ -1,5 +1,5 @@
 {
-  "description": "Paper Section 4.2 scenario h-l_p-m_d-l_a-p_b-m (human=low, project=medium, debt=low, agent=pessimistic, bugimpact=medium); solve with the evolutionary search of Section 3.11",
+  "description": "Campaign scenario h-l_p-m_d-l_a-p_b-m (human=low, project=medium, debt=low, agent=pessimistic, bugimpact=medium)",
   "scenario_id": "h-l_p-m_d-l_a-p_b-m",
   "scenario": {
     "human": "config/human_low.json",

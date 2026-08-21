@@ -1,8 +1,7 @@
 """Tests for src/rng.py — hash stability and generator reproducibility."""
 
-import numpy as np
 
-from src.rng import _config_hash, generator_for, replication_seed
+from src.rng import _config_hash, generator_for
 
 
 class TestConfigHash:
@@ -38,7 +37,7 @@ class TestConfigHash:
         assert _config_hash(base_config) != _config_hash(cfg2)
 
     def test_differs_on_A(self, base_config):
-        from src.config import AGENT_ROLE_COUNT, TeamConfiguration
+        from src.config import TeamConfiguration
         A = list(base_config.A_dev)
         A[0] -= 1; A[2] += 1  # swap one agent between roles; sum unchanged
         cfg2 = TeamConfiguration(N=base_config.N, A_dev=tuple(A), A_qa=base_config.A_qa, R=base_config.R)
@@ -62,7 +61,7 @@ class TestGeneratorFor:
         assert g0.random(10).tolist() != g1.random(10).tolist()
 
     def test_config_independence(self, base_config):
-        from src.config import AGENT_ROLE_COUNT, TeamConfiguration
+        from src.config import TeamConfiguration
         A = list(base_config.A_dev); A[2] -= 1; A[3] += 1
         cfg2 = TeamConfiguration(N=base_config.N, A_dev=tuple(A), A_qa=base_config.A_qa, R=base_config.R)
         g1 = generator_for(42, base_config, 0)

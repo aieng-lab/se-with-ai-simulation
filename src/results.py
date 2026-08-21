@@ -1,12 +1,4 @@
-"""Persistence and DataFrame conversion for simulation results.
-
-Public API:
-    to_dataframe(trace)          -> pd.DataFrame   (K × T rows, MultiIndex)
-    save_result(result, agg, path)                  JSON summary
-    load_result(path)            -> (ConfigResult, AggregatedObjectives)
-    save_traces(trace, path)                        CSV of full time series
-    load_traces(path)            -> pd.DataFrame
-"""
+"""Persistence and DataFrame conversion for simulation results."""
 
 from __future__ import annotations
 
@@ -15,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
+from .config import AGENT_ROLE_COUNT, TeamConfiguration
 from .selection import AggregatedObjectives
 from .simulation import ConfigResult, ConfigTrace, ReplicationResult, SprintSnapshot
 
@@ -88,27 +80,22 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
     cfg = data["config"]
-    # Reconstruct TeamConfiguration; handle files written before F_freeze/A_qa existed.
     A_dev = tuple(cfg["A_dev"])
     if len(A_dev) != AGENT_ROLE_COUNT:
         raise ValueError(f"A_dev has length {len(A_dev)}, expected {AGENT_ROLE_COUNT}")
-    F_freeze = cfg.get("F_freeze", 1)
-    A_qa = tuple(cfg["A_qa"]) if "A_qa" in cfg else None  # None → defaults to A_dev
     config = TeamConfiguration(N=cfg["N"], A_dev=A_dev, R=cfg["R"],
-                               F_freeze=F_freeze, A_qa=A_qa)
+                               F_freeze=cfg["F_freeze"], A_qa=tuple(cfg["A_qa"]))
 
-    # The three cost drivers and the contribution counts are all optional, so a file
-    # written by a leaner producer still loads with them defaulted to zero.
     replications = tuple(
         ReplicationResult(value=r["value"], cost=r["cost"],
-                          cost_quality=r.get("cost_quality", 0.0),
-                          cost_human=r.get("cost_human", 0.0),
-                          cost_agent=r.get("cost_agent", 0.0),
-                          actions=tuple(r.get("actions", ())),
-                          impl_human=r.get("impl_human", 0.0),
-                          impl_agents=r.get("impl_agents", 0.0),
-                          fixes_human=r.get("fixes_human", 0.0),
-                          fixes_agent=r.get("fixes_agent", 0.0))
+                          cost_quality=r["cost_quality"],
+                          cost_human=r["cost_human"],
+                          cost_agent=r["cost_agent"],
+                          actions=tuple(r["actions"]),
+                          impl_human=r["impl_human"],
+                          impl_agents=r["impl_agents"],
+                          fixes_human=r["fixes_human"],
+                          fixes_agent=r["fixes_agent"])
         for r in data["replications"]
     )
     result = ConfigResult(config=config, replications=replications)
@@ -119,14 +106,14 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
         value_ci=tuple(ag["value_ci"]),
         cost_mean=ag["cost_mean"],
         cost_ci=tuple(ag["cost_ci"]),
-        cost_quality_mean=ag.get("cost_quality_mean", 0.0),
-        cost_human_mean=ag.get("cost_human_mean", 0.0),
-        cost_agent_mean=ag.get("cost_agent_mean", 0.0),
-        actions_mean=tuple(ag.get("actions_mean", ())),
-        impl_human_mean=ag.get("impl_human_mean", 0.0),
-        impl_agents_mean=ag.get("impl_agents_mean", 0.0),
-        fixes_human_mean=ag.get("fixes_human_mean", 0.0),
-        fixes_agent_mean=ag.get("fixes_agent_mean", 0.0),
+        cost_quality_mean=ag["cost_quality_mean"],
+        cost_human_mean=ag["cost_human_mean"],
+        cost_agent_mean=ag["cost_agent_mean"],
+        actions_mean=tuple(ag["actions_mean"]),
+        impl_human_mean=ag["impl_human_mean"],
+        impl_agents_mean=ag["impl_agents_mean"],
+        fixes_human_mean=ag["fixes_human_mean"],
+        fixes_agent_mean=ag["fixes_agent_mean"],
     )
     return result, agg
 

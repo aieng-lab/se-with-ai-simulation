@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import pytest
@@ -16,14 +15,13 @@ from src.campaign import (
     is_baseline_scenario,
     optimum_row,
     scenario_params_for_id,
-    scenario_row,
     search_dirs,
     team_config,
     tiers_from_scenario_id,
 )
 from src.config import (
     AGENT_ROLE_COUNT,
-    EVOLUTIONARY_MODE,
+    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     SCENARIO_GROUPS,
 )
@@ -51,7 +49,7 @@ class TestScenarioIds:
 
     def test_params_read_the_right_tiers(self):
         params = scenario_params_for_id("h-l_p-m_d-h_a-l_b-h")
-        # bugimpact high: omega_maj is the dollar cost of an escaped major bug (§4.1).
+        # bugimpact high: omega_maj is the dollar cost of an escaped major bug.
         assert params.omega_maj == 7_000_000.0
         assert params.omega_min == 250.0
 
@@ -87,10 +85,10 @@ def _objective(cost=1000.0, value=12.0, admissible=True) -> dict:
 
 @pytest.fixture
 def campaign(tmp_path) -> Path:
-    d = tmp_path / _SID / "evolutionary"
+    d = tmp_path / _SID / "search"
     d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps({
-        "scenario_id": _SID, "strategy": "evolutionary",
+        "scenario_id": _SID, "mode": "search",
         "horizon": {"path": "config/horizon_default.json", "T": 104,
                     "K_search": 100, "K_final": 1000, "master_seed": 42},
         "n_evaluated": 100, "n_simulated": 85, "best_admissible": True,
@@ -104,12 +102,12 @@ def campaign(tmp_path) -> Path:
         # The search's own K'-replication estimates of every simulated candidate …
         "objectives": {"N2_R4_00007": _objective(1200.0),
                        "N2_R4_00011": _objective(1250.0)},
-        # … and the K-replication estimates the report comes from (§3.10).
+        # … and the K-replication estimates the report comes from.
         "final_objectives": {"N2_R4_00007": _objective(1000.0),
                              "N2_R4_00011": _objective(1050.0)},
     }))
     (d / "convergence.json").write_text(json.dumps({
-        "scenario_id": _SID, "strategy": "evolutionary",
+        "scenario_id": _SID, "mode": "search",
         "n_elite": 10, "n_generations": 3, "n_generations_run": 3,
         "K_search": 100, "K_final": 1000,
         "elite_turnover": [0.5, 0.2, 0.1],
@@ -129,7 +127,7 @@ def campaign(tmp_path) -> Path:
 class TestSearchDirs:
     def test_finds_the_finished_search(self, campaign):
         found = search_dirs(campaign)
-        assert [(sid, strategy) for sid, strategy, _ in found] == [(_SID, "evolutionary")]
+        assert [(sid, mode) for sid, mode, _ in found] == [(_SID, "search")]
 
     def test_ignores_a_directory_without_a_summary(self, campaign):
         (campaign / _SID / HUMAN_ONLY_MODE).mkdir()
@@ -138,10 +136,10 @@ class TestSearchDirs:
 
 class TestOptimumRow:
     def _row(self, campaign):
-        d = campaign / _SID / "evolutionary"
+        d = campaign / _SID / "search"
         manifest = json.loads((d / "manifest.json").read_text())
         summary = json.loads((d / "search_summary.json").read_text())
-        return optimum_row(_SID, "evolutionary", manifest, summary)
+        return optimum_row(_SID, "search", manifest, summary)
 
     def test_describes_the_reported_optimum(self, campaign):
         row = self._row(campaign)
@@ -158,25 +156,6 @@ class TestOptimumRow:
         assert row["cost_agent_share"] == pytest.approx(0.2)
         assert (row["cost_quality_share"] + row["cost_human_share"]
                 + row["cost_agent_share"]) == pytest.approx(1.0)
-
-    def test_a_zero_cost_optimum_yields_nan_shares(self, campaign):
-        d = campaign / _SID / "evolutionary"
-        manifest = json.loads((d / "manifest.json").read_text())
-        summary = json.loads((d / "search_summary.json").read_text())
-        # The reported numbers come from the re-simulated set, so that is what has to
-        # carry the zero for the share columns to see it.
-        summary["final_objectives"]["N2_R4_00007"] = _objective(0.0)
-        row = optimum_row(_SID, "evolutionary", manifest, summary)
-        assert math.isnan(row["cost_agent_share"])
-
-    def test_falls_back_to_the_search_estimates_without_a_re_simulation(self, campaign):
-        """A result written before the two-stage selection has no `final_objectives`."""
-        d = campaign / _SID / "evolutionary"
-        manifest = json.loads((d / "manifest.json").read_text())
-        summary = json.loads((d / "search_summary.json").read_text())
-        del summary["final_objectives"]
-        row = optimum_row(_SID, "evolutionary", manifest, summary)
-        assert row["cost_mean"] == 1200.0
 
     def test_carries_every_tier_and_both_compositions(self, campaign):
         row = self._row(campaign)
@@ -204,11 +183,11 @@ class TestOptimumRow:
         assert row["T_qa"] == 104 // 4     # one freeze sprint per release cycle
 
     def test_no_optimum_yields_no_row(self, campaign):
-        d = campaign / _SID / "evolutionary"
+        d = campaign / _SID / "search"
         manifest = json.loads((d / "manifest.json").read_text())
         summary = json.loads((d / "search_summary.json").read_text())
         summary["best"] = None
-        assert optimum_row(_SID, "evolutionary", manifest, summary) is None
+        assert optimum_row(_SID, "search", manifest, summary) is None
 
 
 class TestBuildTables:
@@ -220,7 +199,7 @@ class TestBuildTables:
         assert scenarios.iloc[0]["K_final"] == 1000
 
     def test_the_optimum_is_reported_at_K_not_at_K_prime(self, campaign):
-        """`optima.csv` must carry the re-simulated estimates, not the search's (§3.10)."""
+        """`optima.csv` must carry the re-simulated estimates, not the search's."""
         optima, _, _, _ = build_tables(campaign)
         assert optima.iloc[0]["cost_mean"] == 1000.0        # final_objectives
         assert optima.iloc[0]["cost_mean"] != 1200.0        # objectives, at K'
@@ -241,14 +220,8 @@ class TestBuildTables:
         assert list(turnover["tau"]) == [0.5, 0.2, 0.1]
         assert list(turnover["incumbent_changed"]) == [True, False, False]
 
-    def test_a_search_without_convergence_json_yields_no_row(self, campaign):
-        (campaign / _SID / "evolutionary" / "convergence.json").unlink()
-        optima, scenarios, convergence, turnover = build_tables(campaign)
-        assert len(optima) == 1 and len(scenarios) == 1
-        assert convergence.empty and turnover.empty
-
     def test_convergence_summary_reports_every_stage(self, campaign):
-        """§5.1 asks for all four sizes of I*, and for both parsimony applications."""
+        """The summary reports all four sizes of I* and both parsimony applications."""
         _, _, convergence, _ = build_tables(campaign)
         text = convergence_summary(convergence)
         assert "Size of I* at the four stages" in text
@@ -283,7 +256,7 @@ class TestTeamConfig:
 
 
 # ---------------------------------------------------------------------------
-# The human-only baseline of paper §4.1
+# The human-only baseline
 # ---------------------------------------------------------------------------
 
 _BASELINE_SID = "h-m_p-m_d-X_a-X_b-m"
@@ -308,7 +281,7 @@ def campaign_with_baseline(campaign) -> Path:
     d = campaign / _BASELINE_SID / "human_only"
     d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps({
-        "scenario_id": _BASELINE_SID, "strategy": "human_only",
+        "scenario_id": _BASELINE_SID, "mode": "human_only",
         "horizon": {"path": "config/horizon_default.json", "T": 104,
                     "K_search": 100, "K_final": 1000, "master_seed": 42},
         "n_evaluated": 99, "n_simulated": 99, "best_admissible": True,
@@ -320,6 +293,20 @@ def campaign_with_baseline(campaign) -> Path:
         "throughput_floor": 11.76,
         "objectives": {"N2_R4_00003": _baseline_objective()},
         "final_objectives": {"N2_R4_00003": _baseline_objective()},
+    }))
+    # An enumeration runs no generations, but it still writes the record.
+    (d / "convergence.json").write_text(json.dumps({
+        "scenario_id": _BASELINE_SID, "mode": "human_only",
+        "n_elite": 10, "n_generations": 3, "n_generations_run": 0,
+        "K_search": 100, "K_final": 1000,
+        "elite_turnover": [], "incumbent_changed": [], "incumbent_turnover": None,
+        "best_cost": [],
+        "i_star": {"n_prelim": 1, "parsimony_removed_prelim": 0, "n_resimulated": 1,
+                   "n_discarded_throughput": 0, "n_after_resim": 1, "n_final": 1,
+                   "parsimony_removed": 0, "best_changed_by_resim": False,
+                   "rho_mean": 0.02, "rho_best": 0.02},
+        "throughput_floor": 11.76, "best_admissible": True, "value_ratio": 1.0,
+        "wall_clock_s": 20.0, "resimulation_s": 4.0,
     }))
     return campaign
 
@@ -341,20 +328,20 @@ class TestScenarioIdSentinel:
         assert params.r_arrival > 0 and params.r_bugs > 0
 
     def test_expected_modes_differ_by_scenario_kind(self):
-        """A baseline is enumerated once; every other scenario gets one search (§4.2)."""
+        """A baseline is enumerated once; every other scenario gets one search."""
         assert expected_modes(_BASELINE_SID) == (HUMAN_ONLY_MODE,)
-        assert expected_modes(_SID) == (EVOLUTIONARY_MODE,)
+        assert expected_modes(_SID) == (SEARCH_MODE,)
 
 
 class TestBaselineInTheTables:
     def test_search_dirs_picks_up_the_human_only_directory(self, campaign_with_baseline):
         found = {(sid, mode) for sid, mode, _ in search_dirs(campaign_with_baseline)}
         assert (_BASELINE_SID, "human_only") in found
-        assert (_SID, "evolutionary") in found
+        assert (_SID, "search") in found
 
     def test_optima_carries_the_baseline_row(self, campaign_with_baseline):
         optima, *_ = build_tables(campaign_with_baseline)
-        row = optima[optima["strategy"] == "human_only"].iloc[0]
+        row = optima[optima["mode"] == "human_only"].iloc[0]
         assert row["scenario_id"] == _BASELINE_SID
         assert row["cost_agent_mean"] == 0.0
         assert row["cost_agent_share"] == 0.0
@@ -362,7 +349,7 @@ class TestBaselineInTheTables:
 
     def test_team_config_round_trips_an_all_zero_row(self, campaign_with_baseline):
         optima, *_ = build_tables(campaign_with_baseline)
-        row = optima[optima["strategy"] == "human_only"].iloc[0]
+        row = optima[optima["mode"] == "human_only"].iloc[0]
         cfg = team_config(row)
         assert cfg.A_dev == (0,) * AGENT_ROLE_COUNT
         assert cfg.A_qa == (0,) * AGENT_ROLE_COUNT
@@ -375,17 +362,17 @@ class TestBaselineUplift:
         assert len(uplift) == 1
         row = uplift.iloc[0]
         assert row["scenario_id"] == _SID
-        assert row["strategy"] == "evolutionary"
+        assert row["mode"] == "search"
         assert row["baseline_scenario_id"] == _BASELINE_SID
         # baseline 5000 against the search optimum's 1000
         assert row["cost_ratio"] == pytest.approx(5.0)
 
-    def test_the_baseline_matches_every_debt_and_agent_combination(self, tmp_path):
+    def test_the_baseline_matches_every_debt_and_agent_combination(self):
         # One baseline is the reference for every (debt, agent) pair at its other tiers,
         # since neither group reaches a zero-agent team.
         import pandas as pd
 
-        base = {"strategy": "human_only", "scenario_id": _BASELINE_SID,
+        base = {"mode": "human_only", "scenario_id": _BASELINE_SID,
                 "tier_human": "medium", "tier_project": "medium",
                 "tier_bugimpact": "medium", "tier_debt": "unused",
                 "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
@@ -393,7 +380,7 @@ class TestBaselineUplift:
         rows = [base]
         for debt in ("low", "medium", "high"):
             for agent in ("low", "medium", "high", "pessimistic"):
-                rows.append({**base, "strategy": "evolutionary",
+                rows.append({**base, "mode": "search",
                              "scenario_id": f"h-m_p-m_d-{debt[0]}_a-{agent[0]}_b-m",
                              "tier_debt": debt, "tier_agent": agent,
                              "cost_mean": 200.0})

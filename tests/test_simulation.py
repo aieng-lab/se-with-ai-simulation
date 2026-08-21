@@ -44,7 +44,7 @@ class TestRunConfigurationBasic:
         assert long.replications[:s.K_search] == short.replications
 
     def test_k_offset_yields_a_disjoint_sample(self, base_config, base_params):
-        """The re-simulation of §3.10 must not reuse the replications that selected it.
+        """The re-simulation must not reuse the replications that selected the candidate.
 
         A member of the preliminary I* got there by having one of the lowest of thousands
         of noisy K'-replication estimates, so that estimate is biased low by the selection.
@@ -145,7 +145,7 @@ class TestCostAccounting:
             assert rep.cost == pytest.approx(0.0)
 
     def test_agent_cost_is_the_work_performed_times_unit_cost(self, base_config, base_params):
-        """Eq. (cost_agents): the bill is the inner product of work and c_token."""
+        """The agent bill is the inner product of the work vector and c_token."""
         from src.config import AGENT_ROLE_COUNT
         params = dataclasses.replace(
             base_params,
@@ -181,7 +181,7 @@ class TestCostAccounting:
         for k in (0, 1, 2, 6, 7):
             assert rep.actions[k] == pytest.approx(0.0)
         # k=4,5,6 have no countable unit of output and are charged flat per deployed
-        # instance per sprint (§3.7), so they bill even with nothing to do.
+        # instance per sprint, so they bill even with nothing to do.
         for k in (3, 4, 5):
             assert rep.actions[k] == pytest.approx(s.T)
 
@@ -223,7 +223,7 @@ class TestCostAccounting:
         params = dataclasses.replace(
             base_params, r_arrival=0.0, f_arch_chg=0.0, delta_min=1.0,
         )
-        # A proposal also *consumes* five features' worth of capacity (Eq. arch_impl), so
+        # A proposal also *consumes* five features' worth of capacity, so
         # implementing three needs floor(r_F * a_1) >= 15: with the fixture's r_F = 3
         # that is a_1 = 5.
         config = TeamConfiguration(
@@ -239,7 +239,7 @@ class TestCostAccounting:
         assert ARCH_IMPL_COST_UNITS == 5.0
 
     def test_architecture_implementation_capacity_costs_five_features(self, base_params):
-        """Eq. (arch_impl): the proposal cap is floor(r_F * delta_D * a_1 / 5)."""
+        """The proposal cap is floor(r_F * delta_D * a_1 / 5)."""
         from src.config import AGENT_ROLE_COUNT
         from src.sprint import ARCH_IMPL_COST_UNITS, step_sprint
         from src.state import SystemState
@@ -269,7 +269,6 @@ class TestCostAccounting:
         Also pins the billing identity for the two capped roles: the total work billed
         is exactly the cumulative count the transition wrote.
         """
-        from src.config import AGENT_ROLE_COUNT
         # r_test/r_doc far above the coverage demand, so the cap is what binds.
         params = dataclasses.replace(base_params, r_test=500.0, r_doc=500.0)
         config = TeamConfiguration(
@@ -290,7 +289,7 @@ class TestCostAccounting:
         assert last.N_test < params.r_test * s.T
 
     def test_capped_output_still_reaches_full_coverage(self, base_params):
-        """The cap is exactly where Eq. (coverage) already clipped, so it costs nothing.
+        """The cap sits exactly where the coverage formula already clipped, so it costs nothing.
 
         With the role staffed in every sprint the agent refills the deficit each sprint,
         so coverage sits at its ceiling and documentation coverage at 1.
@@ -308,7 +307,7 @@ class TestCostAccounting:
                 assert snap.N_doc == pytest.approx(snap.F_completed)
 
     def test_cost_split_sums_to_cost(self, base_config, base_params):
-        """The three cost drivers of §3.8 partition Eq. (cost_rep) exactly."""
+        """The three cost drivers partition the total cost exactly."""
         params = dataclasses.replace(base_params, c_salary=120_000.0)
         s = SimulationHorizon(T=8, K_search=3, K_final=3, master_seed=11)
         for rep in run_configuration(base_config, s, params).replications:
@@ -318,7 +317,7 @@ class TestCostAccounting:
             assert rep.cost_agent >= 0 and rep.cost_quality >= 0
 
     def test_escaped_bugs_are_priced_into_the_objective(self, base_params):
-        """Eq. (obj_Q): the omega weights are dollars, so they move `cost` directly."""
+        """The omega weights are dollars, so they move `cost` directly."""
         from src.simulation import escaped_bug_cost
         s = SimulationHorizon(T=12, K_search=3, K_final=3, master_seed=13)
         # Plenty of bugs and nobody to catch or repair them, so every injected bug ships.
@@ -343,8 +342,7 @@ class TestCostAccounting:
         assert escaped_bug_cost(pricey, 1, 2, 3) == pytest.approx(6e4)
 
     def test_refactoring_is_billed_per_deployed_instance(self, base_params):
-        """Table tab:work_units: u_4 = a_4, independent of the debt trajectory (§3.7)."""
-        from src.config import AGENT_ROLE_COUNT
+        """Table tab:work_units: u_4 = a_4, independent of the debt trajectory."""
         config = TeamConfiguration(
             N=3, A_dev=(1, 0, 0, 2, 0, 0, 0, 0), R=4, F_freeze=0,
         )
@@ -387,9 +385,7 @@ class TestContributionAccounting:
             assert rep.fixes_agent == pytest.approx(rep.actions[2])
             assert rep.fixes_human >= 0.0
 
-    def test_implemented_proposals_are_recoverable_from_the_billed_unit(
-        self, base_config, base_params
-    ):
+    def test_implemented_proposals_are_recoverable_from_the_billed_unit(self, base_params):
         """(u_1 - impl_agents) / ARCH_IMPL_COST_UNITS is a whole number of proposals."""
         from src.sprint import ARCH_IMPL_COST_UNITS
         # f_arch_chg > 0 so proposals actually flow through the review queue.
@@ -412,7 +408,7 @@ class TestContributionAccounting:
 
 
 class TestHumanOnlyBaselineCost:
-    """A zero-agent team (paper §4.1) has no token bill at all."""
+    """A zero-agent team has no token bill at all."""
 
     @staticmethod
     def _cfg(N=2):

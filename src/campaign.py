@@ -1,41 +1,30 @@
-"""Consolidate a §4.2 campaign into flat tables.
+"""Consolidate a campaign into flat tables.
 
-A campaign is a tree of finished searches, one per (scenario, result mode):
+A campaign is a tree of finished runs, one per (scenario, result mode):
 
-    <results-dir>/<scenario_id>/<mode>/{manifest,search_summary}.json
+    <results-dir>/<scenario_id>/<mode>/{manifest,search_summary,convergence}.json
 
-The mode is `evolutionary` for the 432 searches of §4.2 and `human_only` for the 36
-baselines of §4.1.  The tables call the column `strategy` for historical reasons.
-
-`build_tables` reads all of them into four DataFrames that `scripts/collect_results.py`
-writes out:
+`build_tables` reads all of them into four DataFrames:
 
 ``optima.csv``
-    One row per (scenario, strategy): the reported optimum `c*` — its five control
-    variables, the objective with its CI, the value it achieved, the three cost drivers
-    in dollars and as shares of the total, the per-role work counts and the contribution
-    split — plus the size of the indistinguishable set `I*` it is reported with (§3.10).
+    One row per (scenario, mode): the reported optimum `c*` — its five control variables,
+    the objective with its CI, the value it achieved, the three cost drivers in dollars
+    and as shares of the total, the per-role work counts and the contribution split —
+    plus the size of the indistinguishable set `I*` it is reported with.
 
 ``scenarios.csv``
-    One row per (scenario, strategy) describing the search effort: budget spend,
-    feasibility rejections, wall clock, and the Monte Carlo protocol it ran under.
+    One row per (scenario, mode) describing the search effort: budget spend, feasibility
+    rejections, wall clock, and the Monte Carlo protocol it ran under.
 
 ``convergence.csv``
-    One row per (scenario, strategy) with the search-convergence measures of §5.1: the
-    elite and incumbent turnover, the size of `I*` at each of the three stages of §3.10
-    with the counters that explain the shrinkage, and the relative CI half-width `rho` of
-    Eq. (rel_halfwidth).  Read from the per-search ``convergence.json``, so a result
-    directory written before that file existed simply contributes no row.
+    One row per (scenario, mode): the elite and incumbent turnover, the size of `I*` at
+    each stage of the selection with the counters that explain the shrinkage, and the
+    relative CI half-width `rho`.
 
 ``elite_turnover.csv``
-    Long format — one row per (scenario, strategy, generation) — carrying `tau_g` of
-    Eq. (elite_turnover) and whether the incumbent changed in that generation.  Long
-    rather than one column per generation because a search that exhausts its budget early
-    runs fewer than `G` generations.
-
-This is deliberately thin.  The §5 results analysis that used to live beside it was built
-on the three-objective Pareto frontier the model no longer has, and the paper does not yet
-specify its replacement; it will be rebuilt against the single-objective results.
+    Long format — one row per (scenario, mode, generation) — carrying the per-generation
+    turnover and whether the incumbent changed.  Long rather than one column per
+    generation, because a search that exhausts its budget early runs fewer generations.
 """
 
 from __future__ import annotations
@@ -48,7 +37,7 @@ import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
-    EVOLUTIONARY_MODE,
+    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     RESULT_MODES,
     SCENARIO_GROUPS,
@@ -111,7 +100,7 @@ def is_baseline_scenario(scenario_id: str) -> bool:
     """True for a human-only baseline scenario, i.e. one carrying the `X` sentinel.
 
     The baseline varies only `human`, `project` and `bugimpact`; `debt` and `agent` are
-    provably inert for a zero-agent team and are marked `d-X` / `a-X` rather than pinned.
+    inert for a zero-agent team and are marked `d-X` / `a-X` rather than pinned to a tier.
     """
     return UNUSED_TIER in tiers_from_scenario_id(scenario_id).values()
 
@@ -120,12 +109,11 @@ def expected_modes(scenario_id: str) -> tuple[str, ...]:
     """The result modes a scenario is supposed to carry.
 
     A baseline scenario is enumerated once and has no search counterpart; every other
-    scenario is solved by the evolutionary search (paper §4.2).  `build_tables` reports
-    missing results against this, so the 432 campaign scenarios are not counted as missing
-    a baseline nor the 36 baseline scenarios as missing a search.
+    scenario is searched once.  `build_tables` reports missing results against this, so a
+    campaign scenario is not counted as missing a baseline nor vice versa.
     """
     return ((HUMAN_ONLY_MODE,) if is_baseline_scenario(scenario_id)
-            else (EVOLUTIONARY_MODE,))
+            else (SEARCH_MODE,))
 
 
 def search_dirs(results_dir: Path) -> list[tuple[str, str, Path]]:
@@ -147,55 +135,61 @@ def team_config(row: "pd.Series | dict") -> TeamConfiguration:
                              F_freeze=int(row["F_freeze"]), A_qa=A_qa)
 
 
+def scenario_columns(scenario_id: str, mode: str) -> dict:
+    """The identifying columns every campaign table starts with."""
+    tiers = tiers_from_scenario_id(scenario_id)
+    row: dict = {"scenario_id": scenario_id}
+    row.update({f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS})
+    row["mode"] = mode
+    return row
+
+
+def composition_columns(obj: dict) -> dict:
+    """The two composition vectors of one objectives entry, unrolled one column per role."""
+    row = {f"a_dev_{k + 1}": obj["A_dev"][k] for k in range(AGENT_ROLE_COUNT)}
+    row.update({f"a_qa_{k + 1}": obj["A_qa"][k] for k in range(AGENT_ROLE_COUNT)})
+    row["n_sup_dev"] = supervised_agent_count(tuple(obj["A_dev"]))
+    row["n_sup_qa"] = supervised_agent_count(tuple(obj["A_qa"]))
+    return row
+
+
 def optimum_row(
     scenario_id: str,
-    strategy: str,
+    mode: str,
     manifest: dict,
     summary: dict,
     config_dir: str = "config",
 ) -> dict | None:
-    """The `optima.csv` row for one search; None when nothing was simulated.
+    """The `optima.csv` row for one run; None when nothing was simulated.
 
     `value_ratio` is the achieved throughput as a fraction of the arrival rate, so the
-    throughput constraint of Eq. (throughput_constraint) reads `value_ratio >= 1 - eps`
-    directly, independently of the scenario's `r_arrival`.
+    throughput constraint reads `value_ratio >= 1 - eps` directly, whatever the scenario's
+    `r_arrival`.  The three ``cost_*_share`` columns are the cost drivers as fractions of
+    the total and sum to 1 exactly.
 
-    The three ``cost_*_share`` columns are the drivers of Eq. (cost_rep) as fractions of
-    the total; they sum to 1 exactly, since the three means do sum to `cost_mean`.
-
-    Every figure comes from ``final_objectives`` — the K-replication estimates the
-    two-stage selection of §3.10 reports from — and falls back to the search's own
-    K'-replication ``objectives`` only for a result written before the re-simulation
-    existed.  `n_indistinguishable` is the *final* size of `I*`, i.e. after the tie-break at
-    K', the re-simulation and the second tie-break; ``convergence.csv`` has the other three.
+    Every number comes from ``final_objectives``, the `K_final` estimates the two-stage
+    selection reports from.  `n_indistinguishable` is likewise the *final* size of `I*`,
+    after both tie-breaks and the re-simulation; ``convergence.csv`` has the earlier ones.
     """
     best = summary.get("best")
     if best is None:
         return None
-    obj = summary.get("final_objectives", {}).get(best) or summary["objectives"][best]
-    tiers = tiers_from_scenario_id(scenario_id)
+    obj = summary["final_objectives"][best]
     params = scenario_params_for_id(scenario_id, config_dir)
     T = manifest["horizon"]["T"]
 
-    row: dict = {"scenario_id": scenario_id}
-    row.update({f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS})
+    row = scenario_columns(scenario_id, mode)
     row.update({
-        "strategy": strategy,
         "config_key": best,
         "N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"],
     })
-    A_dev, A_qa = obj["A_dev"], obj["A_qa"]
-    for k in range(AGENT_ROLE_COUNT):
-        row[f"a_dev_{k + 1}"] = A_dev[k]
-    for k in range(AGENT_ROLE_COUNT):
-        row[f"a_qa_{k + 1}"] = A_qa[k]
+    composition = composition_columns(obj)
+    row.update({k: v for k, v in composition.items() if k.startswith("a_")})
     T_dev, T_qa = phase_sprint_counts(team_config(row), T)
-    # A configuration with N > 0 always costs something, but a share column is the wrong
-    # place to discover otherwise: divide by NaN rather than raising here.
-    total = obj["cost_mean"] or float("nan")
+    total = obj["cost_mean"]
     row.update({
-        "n_sup_dev": supervised_agent_count(tuple(A_dev)),
-        "n_sup_qa": supervised_agent_count(tuple(A_qa)),
+        "n_sup_dev": composition["n_sup_dev"],
+        "n_sup_qa": composition["n_sup_qa"],
         "T_dev": T_dev,
         "T_qa": T_qa,
         "cost_mean": obj["cost_mean"],
@@ -227,18 +221,15 @@ def optimum_row(
 
 def scenario_row(
     scenario_id: str,
-    strategy: str,
+    mode: str,
     manifest: dict,
     summary: dict,
 ) -> dict:
-    """Search-effort figures for a single (scenario, strategy) pair."""
-    tiers = tiers_from_scenario_id(scenario_id)
+    """Search-effort figures for a single (scenario, mode) pair."""
     n_evaluated = manifest["n_evaluated"]
     n_simulated = manifest["n_simulated"]
-    row: dict = {"scenario_id": scenario_id}
-    row.update({f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS})
+    row = scenario_columns(scenario_id, mode)
     row.update({
-        "strategy": strategy,
         "n_evaluated": n_evaluated,
         "n_simulated": n_simulated,
         "n_infeasible": n_evaluated - n_simulated,
@@ -254,7 +245,7 @@ def scenario_row(
 
 
 #: The `i_star` counters of `SelectionReport.stats` that become `convergence.csv` columns,
-#: in the order the four stages of §3.10 produce them.  The four sizes §5.1 reports are
+#: in the order the selection stages produce them.  The four set sizes are
 #: `n_prelim` -> `n_resimulated` -> `n_after_resim` -> `n_final`.
 _I_STAR_COLUMNS: tuple[str, ...] = (
     "n_prelim",
@@ -270,20 +261,16 @@ _I_STAR_COLUMNS: tuple[str, ...] = (
 )
 
 
-def convergence_row(scenario_id: str, strategy: str, convergence: dict) -> dict:
-    """The `convergence.csv` row for one search: the §5.1 measures as scalars.
+def convergence_row(scenario_id: str, mode: str, convergence: dict) -> dict:
+    """The `convergence.csv` row for one run: the convergence measures as scalars.
 
-    The `tau_*` columns summarise the curve that `turnover_rows` carries in full: its first
-    and last value and the mean over the last ten generations, i.e. the level the elite
-    turnover of Eq. (elite_turnover) settles at.  They are None for an enumeration, which
-    has no generations.
+    The `tau_*` columns summarise the curve `turnover_rows` carries in full: its first and
+    last value and the mean over the last ten generations, i.e. the level the elite
+    turnover settles at.  They are None for an enumeration, which has no generations.
     """
-    tiers = tiers_from_scenario_id(scenario_id)
     tau = list(convergence.get("elite_turnover") or [])
-    row: dict = {"scenario_id": scenario_id}
-    row.update({f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS})
+    row = scenario_columns(scenario_id, mode)
     row.update({
-        "strategy": strategy,
         "n_generations_run": convergence.get("n_generations_run", len(tau)),
         "n_elite": convergence.get("n_elite"),
         "incumbent_turnover": convergence.get("incumbent_turnover"),
@@ -304,15 +291,15 @@ def convergence_row(scenario_id: str, strategy: str, convergence: dict) -> dict:
     return row
 
 
-def turnover_rows(scenario_id: str, strategy: str, convergence: dict) -> list[dict]:
-    """The `elite_turnover.csv` rows for one search: `tau_g` per generation, long format."""
+def turnover_rows(scenario_id: str, mode: str, convergence: dict) -> list[dict]:
+    """The `elite_turnover.csv` rows for one run: the turnover per generation, long format."""
     tau = convergence.get("elite_turnover") or []
     changed = convergence.get("incumbent_changed") or []
     best_cost = convergence.get("best_cost") or []
     return [
         {
             "scenario_id": scenario_id,
-            "strategy": strategy,
+            "mode": mode,
             "generation": g,
             "tau": value,
             "incumbent_changed": changed[g - 1] if g <= len(changed) else None,
@@ -326,12 +313,9 @@ def build_tables(
     results_dir: str | Path,
     config_dir: str = "config",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Read every finished search under `results_dir`.
+    """Read every finished run under `results_dir`.
 
-    Returns ``(optima, scenarios, convergence, turnover)``.  The last two are empty frames
-    when no search directory carries a ``convergence.json`` — the file is written by
-    `main._cmd_optimize` since the §5.1 reporting landed, so a partially re-run campaign
-    yields rows only for the searches that have it.
+    Returns ``(optima, scenarios, convergence, turnover)``.
     """
     results_dir = Path(results_dir)
     if not results_dir.is_dir():
@@ -344,18 +328,16 @@ def build_tables(
     s_rows: list[dict] = []
     c_rows: list[dict] = []
     t_rows: list[dict] = []
-    for scenario_id, strategy, d in searches:
+    for scenario_id, mode, d in searches:
         manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         summary = json.loads((d / "search_summary.json").read_text(encoding="utf-8"))
-        row = optimum_row(scenario_id, strategy, manifest, summary, config_dir)
+        row = optimum_row(scenario_id, mode, manifest, summary, config_dir)
         if row is not None:
             o_rows.append(row)
-        s_rows.append(scenario_row(scenario_id, strategy, manifest, summary))
-        conv_path = d / "convergence.json"
-        if conv_path.is_file():
-            convergence = json.loads(conv_path.read_text(encoding="utf-8"))
-            c_rows.append(convergence_row(scenario_id, strategy, convergence))
-            t_rows.extend(turnover_rows(scenario_id, strategy, convergence))
+        s_rows.append(scenario_row(scenario_id, mode, manifest, summary))
+        convergence = json.loads((d / "convergence.json").read_text(encoding="utf-8"))
+        c_rows.append(convergence_row(scenario_id, mode, convergence))
+        t_rows.extend(turnover_rows(scenario_id, mode, convergence))
     return (pd.DataFrame(o_rows), pd.DataFrame(s_rows),
             pd.DataFrame(c_rows), pd.DataFrame(t_rows))
 
@@ -369,28 +351,25 @@ BASELINE_JOIN_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
 def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
     """Cost of each search optimum against the human-only baseline at the same tiers.
 
-    One row per (campaign scenario, search strategy) that has a baseline sharing its
+    One row per (campaign scenario, search mode) that has a baseline sharing its
     `human` / `project` / `bugimpact` tiers.  `cost_ratio = cost_mean(baseline) /
     cost_mean(c*)` is the factor by which the agent-supported optimum changes the cost per
     feature: above 1 the agents are cheaper per feature than the human-only team.
 
     Since the baseline is inert in `debt` and `agent`, each baseline row is the reference
     for every combination of those two — with the full campaign that is 36 baselines
-    against 432 searched scenarios.  `best_admissible` is carried through from both
-    sides, because a ratio against an infeasible team is a different statement.
+    against 432 searched scenarios.
     """
-    if optima.empty or "strategy" not in optima:
+    if optima.empty or "mode" not in optima.columns:
         return pd.DataFrame()
 
-    base = optima[optima["strategy"] == HUMAN_ONLY_MODE]
-    search = optima[optima["strategy"] != HUMAN_ONLY_MODE]
+    base = optima[optima["mode"] == HUMAN_ONLY_MODE]
+    search = optima[optima["mode"] != HUMAN_ONLY_MODE]
     if base.empty or search.empty:
         return pd.DataFrame()
 
     join = [f"tier_{g}" for g in BASELINE_JOIN_GROUPS]
     keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "value_mean"]
-    if "best_admissible" in optima:
-        keep.append("best_admissible")
 
     merged = search.merge(
         base[keep].rename(columns=lambda c: c if c in join else f"baseline_{c}"),
@@ -398,24 +377,22 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
     )
     merged["cost_ratio"] = merged["baseline_cost_mean"] / merged["cost_mean"]
 
-    cols = (["scenario_id", "strategy"] + join
+    cols = (["scenario_id", "mode"] + join
             + ["cost_mean", "baseline_cost_mean", "cost_ratio", "baseline_scenario_id",
                "baseline_N", "baseline_R", "baseline_F_freeze", "baseline_value_mean"])
-    if "best_admissible" in optima:
-        cols += ["best_admissible", "baseline_best_admissible"]
-    return merged[[c for c in cols if c in merged]].sort_values(
-        ["scenario_id", "strategy"]).reset_index(drop=True)
+    return merged[cols].sort_values(
+        ["scenario_id", "mode"]).reset_index(drop=True)
 
 
 # ----------------------------------------------------------------------------
-# Search convergence summary (paper §5.1)
+# Search convergence summary
 # ----------------------------------------------------------------------------
 
 def _median_iqr_max(values: "pd.Series") -> str:
-    """`median [q1, q3], max = …` — the shape §5.1 asks for instead of a mean.
+    """`median [q1, q3], max = …`.
 
-    The sizes of `I*` and the relative half-widths are expected to be strongly skewed, so
-    the paper reports order statistics rather than a mean and a standard deviation.
+    Order statistics rather than a mean and a standard deviation: the sizes of `I*` and
+    the relative half-widths are strongly skewed.
     """
     v = pd.to_numeric(values, errors="coerce").dropna()
     if v.empty:
@@ -425,17 +402,16 @@ def _median_iqr_max(values: "pd.Series") -> str:
 
 
 def convergence_summary(convergence: "pd.DataFrame") -> str:
-    """The §5.1 numbers as a text block, one section per bullet of that subsection.
+    """Render `convergence.csv` as a text block, one section per group of measures.
 
-    Written beside the CSVs so the figures the paper needs and the numbers its prose needs
-    come out of the same consolidation step.  Everything here is a re-reading of
-    ``convergence.csv``; nothing is computed that the table does not already hold.
+    Everything here is a re-reading of the table; nothing is computed that it does not
+    already hold.
     """
     if convergence.empty:
         return "Search convergence (§5.1): no search carries a convergence record.\n"
     lines = [f"Search convergence (§5.1) over {len(convergence)} search(es)", "=" * 64]
 
-    searched = convergence[convergence["n_generations_run"].fillna(0) > 0]
+    searched = convergence[convergence["n_generations_run"] > 0]
     lines.append("")
     lines.append("Elite and incumbent turnover")
     if searched.empty:
@@ -455,16 +431,14 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
     lines.append(f"  after the second tie-break      {_median_iqr_max(convergence['n_final'])}")
 
     n = len(convergence)
-    changed = int(convergence["best_changed_by_resim"].fillna(False).astype(bool).sum())
-    discarded_total = int(pd.to_numeric(
-        convergence["n_discarded_throughput"], errors="coerce").fillna(0).sum())
-    discarded_searches = int((pd.to_numeric(
-        convergence["n_discarded_throughput"], errors="coerce").fillna(0) > 0).sum())
-    removed_prelim = pd.to_numeric(
-        convergence["parsimony_removed_prelim"], errors="coerce").fillna(0).sum()
-    prelim = pd.to_numeric(convergence["n_prelim"], errors="coerce").fillna(0).sum()
-    removed = pd.to_numeric(convergence["parsimony_removed"], errors="coerce").fillna(0).sum()
-    after = pd.to_numeric(convergence["n_after_resim"], errors="coerce").fillna(0).sum()
+    changed = int(convergence["best_changed_by_resim"].astype(bool).sum())
+    discarded = convergence["n_discarded_throughput"]
+    discarded_total = int(discarded.sum())
+    discarded_searches = int((discarded > 0).sum())
+    removed_prelim = convergence["parsimony_removed_prelim"].sum()
+    prelim = convergence["n_prelim"].sum()
+    removed = convergence["parsimony_removed"].sum()
+    after = convergence["n_after_resim"].sum()
     lines.append("")
     lines.append("What the three reduction steps did")
     # The first tie-break is the one that saves effort: every member it removes is a
@@ -485,15 +459,13 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
     else:
         lines.append("  parsimony removed at K          n/a (no admissible set)")
 
-    inadmissible = convergence[~convergence["best_admissible"].fillna(False).astype(bool)]
+    inadmissible = convergence[~convergence["best_admissible"].astype(bool)]
     lines.append("")
     lines.append(f"Inadmissible searches: {len(inadmissible)}/{n}")
     for _, row in inadmissible.sort_values("scenario_id").iterrows():
-        ratio = row.get("value_ratio")
-        # value_ratio is the achieved throughput over r_arrival, so 1 - epsilon is the bar;
-        # §5.1 wants the distance to the admissible region visible.
+        ratio = row["value_ratio"]
         ratio_txt = "n/a" if pd.isna(ratio) else f"{ratio:.3f} x r_arrival"
-        lines.append(f"  {row['scenario_id']:<24} {row['strategy']:<12} value = {ratio_txt}")
+        lines.append(f"  {row['scenario_id']:<24} {row['mode']:<12} value = {ratio_txt}")
 
     lines.append("")
     lines.append("Relative CI half-width rho after the re-simulation (Eq. rel_halfwidth)")

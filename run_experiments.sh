@@ -3,9 +3,9 @@
 # Run the full experiment campaign of paper Section 4.2.
 #
 # 432 scenarios (5 orthogonal parameter groups x 3 tiers, plus a fourth "very high"
-# tier for project and a fourth "pessimistic" tier for agent) are each solved once, with
-# the evolutionary search of paper Section 3.11, which spends a fixed budget of 10,000
-# candidate evaluations.  Jobs are independent, so they run in parallel and the
+# tier for project and a fourth "pessimistic" tier for agent) are each solved once by a
+# search spending a fixed budget of 10,000 candidate evaluations.  Jobs are
+# independent, so they run in parallel and the
 # simulator itself is single-threaded — but throughput does NOT scale to the core count.
 # Measured on an i7-1260P (4 P-cores + 8 E-cores, 28 W), one search of 10,000 candidates:
 #
@@ -36,7 +36,7 @@
 #     LIMIT=2 ./run_experiments.sh          # smoke test the first two jobs
 #     JOBS=14 ./run_experiments.sh          # pin the worker count
 #     FORCE=1 ./run_experiments.sh          # re-run jobs that already have results
-#     MODE=human_only ./run_experiments.sh  # enumerate the Section 4.1 baseline instead
+#     MODE=human_only ./run_experiments.sh  # enumerate the human-only baseline instead
 #     nohup ./run_experiments.sh > campaign.log 2>&1 &     # long unattended run
 #
 # Re-running is safe: a job whose search_summary.json already exists is skipped unless
@@ -56,10 +56,9 @@ cd "$(dirname "$0")"
 PYTHON=${PYTHON:-.venv/bin/python}
 CONFIG_DIR=${CONFIG_DIR:-config/search}
 OUT_ROOT=${OUT_ROOT:-results/experiments}
-# The search itself is not selectable (paper Section 3.11 describes one); MODE picks
-# between running it and enumerating the Section 4.1 zero-agent baseline, and names the
-# result subdirectory either way.
-MODE=${MODE:-evolutionary}
+# MODE picks between running the search and enumerating the zero-agent baseline, and
+# names the result subdirectory either way.
+MODE=${MODE:-search}
 SAMPLES=${SAMPLES:-best}
 START_STATE=${START_STATE:-config/startstate_default.json}
 PROGRESS_EVERY=${PROGRESS_EVERY:-500}
@@ -70,8 +69,8 @@ FORCE=${FORCE:-0}
 DRY_RUN=${DRY_RUN:-0}
 
 case "$MODE" in
-    evolutionary|human_only) ;;
-    *) echo "error: MODE must be 'evolutionary' or 'human_only', got '$MODE'" >&2; exit 1 ;;
+    search|human_only) ;;
+    *) echo "error: MODE must be 'search' or 'human_only', got '$MODE'" >&2; exit 1 ;;
 esac
 
 INDEX="$OUT_ROOT/index.tsv"
@@ -123,8 +122,7 @@ run_job() {
     local cfg=$1 id=$2
     local out="$OUT_ROOT/$id/$MODE"
     local started=$SECONDS
-    # Arrays do not survive `export`, so rebuild the mode flag from $MODE here.  MODE has
-    # already been validated above, so the only two cases are the ones below.
+    # Arrays do not survive `export`, so rebuild the mode flag from $MODE here.
     local mode_flags=()
     if [[ "$MODE" == human_only ]]; then
         mode_flags=(--human-only)
@@ -193,4 +191,4 @@ if (( n_fail > 0 )); then
     exit 1
 fi
 echo
-echo "Next: $PYTHON scripts/collect_results.py --results-dir $OUT_ROOT"
+echo "Next: $PYTHON -m src.main campaign $OUT_ROOT"

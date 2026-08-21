@@ -71,14 +71,14 @@ from src.visualization import (
 
 def _optima(
     combinations: "list[tuple[str, ...]] | None" = None,
-    strategies: tuple[str, ...] = ("evolutionary",),
+    modes: tuple[str, ...] = ("search",),
 ) -> pd.DataFrame:
-    """A synthetic `optima.csv`: one row per (scenario, strategy)."""
+    """A synthetic `optima.csv`: one row per (scenario, mode)."""
     combinations = (scenario_tier_combinations() if combinations is None
                     else combinations)
     rows = []
-    for i, (tiers, strategy) in enumerate(itertools.product(combinations, strategies)):
-        row = {"scenario_id": scenario_id(tiers), "strategy": strategy,
+    for i, (tiers, mode) in enumerate(itertools.product(combinations, modes)):
+        row = {"scenario_id": scenario_id(tiers), "mode": mode,
                "cost_mean": 100.0 * (i + 1)}
         row.update({f"tier_{g}": t for g, t in zip(SCENARIO_GROUPS, tiers)})
         # Shares that span three decades and reach zero, the way the real optima do.
@@ -92,9 +92,9 @@ def _optima(
     return pd.DataFrame(rows)
 
 
-def _few(strategies: tuple[str, ...] = ("evolutionary",)) -> pd.DataFrame:
+def _few(modes: tuple[str, ...] = ("search",)) -> pd.DataFrame:
     """A handful of scenarios — enough for the tests that do not read tier structure."""
-    return _optima(scenario_tier_combinations()[:6], strategies)
+    return _optima(scenario_tier_combinations()[:6], modes)
 
 
 @pytest.fixture(scope="module")
@@ -292,42 +292,47 @@ class TestAgentHumanRatioMatrix:
 
 class TestVisualizeCampaign:
     def test_all_three_matrices_are_written(self, tmp_path):
-        """One search (§3.11), so the per-mode loop runs once and writes three figures."""
-        visualize_campaign(_few(("evolutionary",)), tmp_path)
+        """One search, so three figures and no mode suffix on their names."""
+        visualize_campaign(_few(("search",)), tmp_path)
         assert sorted(p.name for p in tmp_path.glob("*.png")) == [
-            "agent_human_ratio_matrix_evolutionary.png",
-            "human_agent_matrix_evolutionary.png",
-            "quality_development_matrix_evolutionary.png",
+            "agent_human_ratio_matrix.png",
+            "human_agent_matrix.png",
+            "quality_development_matrix.png",
         ]
 
     def test_the_turnover_figure_is_added_when_the_curves_are_given(self, tmp_path):
-        visualize_campaign(_few(("evolutionary",)), tmp_path,
-                           turnover=_turnover(("evolutionary",)))
-        assert (tmp_path / "elite_turnover_evolutionary.png").is_file()
+        visualize_campaign(_few(("search",)), tmp_path,
+                           turnover=_turnover(("search",)))
+        assert (tmp_path / "elite_turnover.png").is_file()
 
     def test_a_mode_without_curves_gets_no_turnover_figure(self, tmp_path):
         """The human-only enumeration has no generations, so it contributes no rows."""
-        visualize_campaign(_few(("evolutionary",)), tmp_path,
+        visualize_campaign(_few(("search",)), tmp_path,
                            turnover=_turnover(("human_only",)))
-        assert not (tmp_path / "elite_turnover_evolutionary.png").is_file()
-        assert (tmp_path / "human_agent_matrix_evolutionary.png").is_file()
+        assert not (tmp_path / "elite_turnover.png").is_file()
+        assert (tmp_path / "human_agent_matrix.png").is_file()
 
     def test_channels_are_passed_through(self, tmp_path):
-        # A duplicated channel must surface, not be swallowed by the loop.
         with pytest.raises(ValueError, match="only one visual channel"):
             visualize_campaign(_few(), tmp_path, color_group="agent")
 
-    def test_a_table_without_strategies_is_rejected(self, tmp_path):
-        with pytest.raises(KeyError, match="strategy"):
-            visualize_campaign(_few().drop(columns=["strategy"]), tmp_path)
+    def test_a_table_without_a_mode_column_is_rejected(self, tmp_path):
+        with pytest.raises(KeyError, match="mode"):
+            visualize_campaign(_few().drop(columns=["mode"]), tmp_path)
+
+    def test_a_baseline_only_table_draws_nothing(self, tmp_path):
+        """Every row is a zero-agent baseline, so there is no search optimum to draw."""
+        with pytest.warns(UserWarning, match="no search optimum"):
+            visualize_campaign(_few(("human_only",)), tmp_path)
+        assert not list(tmp_path.glob("*.png"))
 
 
-def _turnover(strategies=("evolutionary",), n_searches=3, n_generations=5):
+def _turnover(modes=("search",), n_searches=3, n_generations=5):
     """A long-format elite_turnover table like the campaign's."""
     return pd.DataFrame([
-        {"scenario_id": f"s{i}", "strategy": strategy, "generation": g,
+        {"scenario_id": f"s{i}", "mode": mode, "generation": g,
          "tau": 1.0 / (g + i), "incumbent_changed": g <= 2, "best_cost": 1000.0 - g}
-        for strategy in strategies
+        for mode in modes
         for i in range(n_searches)
         for g in range(1, n_generations + 1)
     ])
@@ -342,7 +347,7 @@ def _curve(fig, label_prefix):
 
 
 class TestEliteTurnover:
-    """The §5.1 convergence figure: mean and median of tau_g and of `c*`'s cost drop."""
+    """The convergence figure: mean and median of tau_g and of `c*`'s cost drop."""
 
     def test_draws_a_figure(self):
         fig = plot_elite_turnover(_turnover(), title="turnover")
@@ -392,7 +397,7 @@ class TestEliteTurnover:
     def test_each_search_is_normalised_by_its_own_cost(self):
         """Costs span decades across scenarios; only the relative drop is comparable."""
         rows = [
-            {"scenario_id": name, "strategy": "evolutionary", "generation": g,
+            {"scenario_id": name, "mode": "search", "generation": g,
              "tau": 0.5, "incumbent_changed": False, "best_cost": cost}
             for name, costs in [("cheap", [10.0, 5.0]), ("dear", [1000.0, 500.0])]
             for g, cost in enumerate(costs, start=1)
@@ -409,17 +414,10 @@ class TestEliteTurnover:
         with pytest.raises(KeyError, match="tau"):
             plot_elite_turnover(_turnover().drop(columns=["tau"]))
 
-    def test_a_table_without_best_cost_keeps_the_turnover_curves(self):
-        """An `elite_turnover.csv` written before the column existed still plots."""
-        fig = plot_elite_turnover(_turnover().drop(columns=["best_cost"]))
-        assert len(fig.axes) == 1                    # and no empty second axis
-        assert len(fig.axes[0].lines) == 2
-        plt.close(fig)
-
     def test_a_curve_a_log_axis_cannot_show_says_so_in_its_label(self):
         """An incumbent that never moves gives a drop of 0, which a log axis omits."""
         rows = [
-            {"scenario_id": "flat", "strategy": "evolutionary", "generation": g,
+            {"scenario_id": "flat", "mode": "search", "generation": g,
              "tau": 0.5, "best_cost": 100.0}
             for g in (1, 2, 3)
         ]
@@ -431,7 +429,7 @@ class TestEliteTurnover:
     def test_the_mean_and_median_differ_on_a_skewed_sample(self):
         """One search improving while the others stand still must move only the mean."""
         rows = [
-            {"scenario_id": name, "strategy": "evolutionary", "generation": g,
+            {"scenario_id": name, "mode": "search", "generation": g,
              "tau": tau, "best_cost": cost}
             for name, taus, costs in [
                 ("a", [0.5, 0.1], [100.0, 100.0]),
@@ -456,7 +454,7 @@ class TestSaveFigure:
 
 
 # ---------------------------------------------------------------------------
-# The human-only baseline overlay (paper §4.1)
+# The human-only baseline overlay
 # ---------------------------------------------------------------------------
 
 def _baseline(n: int = 6) -> pd.DataFrame:
@@ -473,7 +471,7 @@ def _baseline(n: int = 6) -> pd.DataFrame:
                     for g, t in zip(SCENARIO_GROUPS, tiers))
         cost = 1000.0 * (len(rows) + 1)
         rows.append({
-            "scenario_id": scenario_id(sub), "strategy": "human_only",
+            "scenario_id": scenario_id(sub), "mode": "human_only",
             "cost_mean": cost,
             **{f"tier_{g}": t for g, t in zip(SCENARIO_GROUPS, sub)},
             # A team with no agents: zero bill, zero share.
@@ -613,16 +611,16 @@ class TestBaselineOverlay:
 
 class TestVisualizeCampaignWithBaseline:
     def test_the_baseline_gets_no_figure_set_of_its_own(self, tmp_path):
-        df = pd.concat([_few(("evolutionary",)), _baseline(3)], ignore_index=True)
+        df = pd.concat([_few(("search",)), _baseline(3)], ignore_index=True)
         visualize_campaign(df, tmp_path, fmt="png")
         written = {p.name for p in tmp_path.glob("*.png")}
         assert not any("human_only" in name for name in written)
-        assert "human_agent_matrix_evolutionary.png" in written
-        assert "agent_human_ratio_matrix_evolutionary.png" in written
+        assert "human_agent_matrix.png" in written
+        assert "agent_human_ratio_matrix.png" in written
 
     def test_a_campaign_without_a_baseline_still_works(self, tmp_path):
-        visualize_campaign(_few(("evolutionary",)), tmp_path, fmt="png")
-        assert (tmp_path / "human_agent_matrix_evolutionary.png").is_file()
+        visualize_campaign(_few(("search",)), tmp_path, fmt="png")
+        assert (tmp_path / "human_agent_matrix.png").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -726,10 +724,6 @@ class TestConstellationProfile:
         with pytest.raises(KeyError):
             plot_constellation_profile(_cells(), rows_group="debt")
 
-    def test_a_mismatched_label_list_is_rejected(self):
-        with pytest.raises(ValueError, match="labels"):
-            plot_constellation_profile(_cells(), labels=("only", "two"))
-
 
 class TestConstellationHeatmap:
     def test_one_panel_per_population(self, heatmap_fig):
@@ -799,9 +793,9 @@ class TestVisualizeConstellation:
 # The two-figure team-structure summary
 # ---------------------------------------------------------------------------
 
-def _summary_optima(strategies: tuple[str, ...] = ("evolutionary",)) -> pd.DataFrame:
+def _summary_optima(modes: tuple[str, ...] = ("search",)) -> pd.DataFrame:
     """A synthetic `optima.csv` with compositions the summary figures can compress."""
-    df = _optima(strategies=strategies)
+    df = _optima(modes=modes)
     rng = np.random.default_rng(0)
     for k in range(1, 9):
         df[f"a_dev_{k}"] = rng.integers(0, 4, len(df))
@@ -890,10 +884,6 @@ class TestTeamShape:
     def test_the_grouping_variables_are_validated(self, kwargs):
         with pytest.raises(ValueError):
             plot_team_shape(_summary_optima(), **kwargs)
-
-    def test_a_mismatched_label_list_is_rejected(self):
-        with pytest.raises(ValueError, match="labels"):
-            plot_team_shape(_summary_optima(), labels=("only", "two"))
 
 
 class TestTeamShapeWeighting:
@@ -1104,7 +1094,7 @@ class TestTeamDrivers:
         plt.close(fig)
 
     def test_the_two_halves_of_the_team_get_a_panel_each(self):
-        """Supervised and autonomous counts are bounded by different things (§3.3)."""
+        """Supervised and autonomous counts are bounded by different things."""
         frame = _team_quantities(_summary_optima())
         supervised = frame[[f"a_dev_{k}" for k in (1, 2, 3, 7, 8)]].sum(axis=1)
         autonomous = frame[[f"a_dev_{k}" for k in (4, 5, 6)]].sum(axis=1)
@@ -1143,15 +1133,6 @@ class TestTeamDrivers:
         df.loc[:, "a_dev_6"] = 0
         assert _team_quantities(df)["security_share"].isna().all()
 
-    def test_the_groups_are_validated(self):
-        with pytest.raises(ValueError, match="unknown"):
-            plot_team_drivers(_summary_optima(), groups=("project", "nonsense"))
-
-    def test_a_subset_of_groups_shortens_the_axis(self):
-        fig = plot_team_drivers(_summary_optima(), groups=("bugimpact",))
-        assert len(fig.axes[0].get_yticklabels()) == len(scenario_tiers("bugimpact"))
-        plt.close(fig)
-
 
 class TestVisualizeTeamSummary:
     def test_both_figures_are_written(self, tmp_path):
@@ -1163,8 +1144,8 @@ class TestVisualizeTeamSummary:
 
     def test_the_human_only_baseline_is_excluded(self, tmp_path):
         """A zero-agent team has no composition; it would divide the shares by zero."""
-        df = _summary_optima(("evolutionary", "human_only"))
-        df.loc[df["strategy"] == "human_only",
+        df = _summary_optima(("search", "human_only"))
+        df.loc[df["mode"] == "human_only",
                [f"a_dev_{k}" for k in range(1, 9)]] = 0
         visualize_team_summary(df, tmp_path, fmt="png")
         assert (tmp_path / "composition_agent_bill.png").is_file()

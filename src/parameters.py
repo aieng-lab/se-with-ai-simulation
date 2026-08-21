@@ -1,8 +1,6 @@
-"""Scenario-level parameters per paper/main.tex (§3).
+"""Scenario-level parameters: the numeric values held fixed across all T sprints.
 
-Holds the concrete numeric values held fixed across all T sprints. Values are
-composed from the five per-group scenario JSON files via
-`src.io.load_scenario_params` (see paper §4.1).
+Composed from the five per-group scenario JSON files by `io.load_scenario_params`.
 """
 
 from __future__ import annotations
@@ -14,8 +12,7 @@ from .config import AGENT_ROLE_COUNT
 
 @dataclass(frozen=True, slots=True)
 class ScenarioParameters:
-    """All scenario-level variables
-    """
+    """Every scenario-level parameter, grouped by what it governs."""
 
     # --- Arrival / productivity rates  ---
     r_arrival: float                 # Feature arrival rate (features/sprint)
@@ -32,23 +29,21 @@ class ScenarioParameters:
     H_monitoring_overhead: float     # Monitoring hours per agent
     H_review_time: float             # Hours per architecture review
     H_escalation_time: float         # Hours per escalation
-    h_feature: float                 # Human hours per feature (§3.5)
+    h_feature: float                 # Human hours per feature
     h_fix: float                     # Human hours per bug fixed
     c_comm: float                    # Per-peer communication overhead
     f_fix: float                     # Fraction of residual capacity used for bug fixing; 1-f_fix goes to coding
-    # The three below drive the human quality-assurance stage of the human-only baseline
-    # (paper §4.1, Eqs. hafter_qa / cov_qa / qa_human).  They are read only when the team
-    # has no agents at all (`config.is_human_only`), so they are inert for every
-    # agent-supported configuration of the §4.2 campaign.
+    # The three below drive the human quality-assurance stage, which is reached only when
+    # the team has no agents at all (`config.is_human_only`).
     f_qa: float                      # Share of net capacity reserved for QA in dev sprints
     h_qa: float                      # Human hours to review one implemented feature in full
     d_qa: float                      # Probability a fully reviewed bug is detected
 
     # --- Bug injection  ---
     r_bugs: float                    # Base bug injection rate per feature (agents)
-    # Absolute Poisson rate of bugs per human-implemented feature (paper Eq. Binj-human,
-    # Table tab:params:injection).  NOT a scale factor on r_bugs, and not amplified by the
-    # debt factor (2 - delta_D): human-written code injects at a fixed per-feature rate.
+    # Absolute Poisson rate of bugs per human-implemented feature.  NOT a scale factor on
+    # r_bugs, and not amplified by the debt factor: human-written code injects at a fixed
+    # per-feature rate.
     r_bugs_human: float
     theta_maj: float                 # Major bug fraction [0, 1)
     theta_sec: float                 # Security bug fraction [0, 1)
@@ -75,13 +70,12 @@ class ScenarioParameters:
     # --- Costs ---
     # Cost per unit of role-specific throughput (r_F/r_arch_chg/r_fix/1/1/1/r_test/r_doc
     # for roles 1-8), not per sprint.  Roles 4-6 have no countable unit of output, so
-    # their r_k is 1 and c_token is a flat fee per deployed instance per sprint (§3.7).
+    # their rate is 1 and c_token is a flat fee per deployed instance per sprint.
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Annual fully-loaded cost of one FTE
-    # Expected cost in dollars of a single escaped bug of each severity (Eq. obj_Q).
-    # These are absolute costs, not relative quality weights: escaped bugs are a cost
-    # driver of Eq. (cost_rep).  Defaults are the medium bugimpact tier of paper §4.1
-    # (tab:scenario:bugimpact); every scenario file supplies them explicitly.
+    # Expected dollar cost of a single escaped bug of each severity.  Absolute costs, not
+    # relative quality weights.  The defaults are the medium bugimpact tier; every
+    # scenario file supplies them explicitly.
     omega_min: float = 150.0         # Cost of one escaped minor bug
     omega_maj: float = 300_000.0     # Cost of one escaped major bug
     omega_sec: float = 1_000_000.0   # Cost of one escaped security bug

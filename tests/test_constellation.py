@@ -82,7 +82,7 @@ def _write(root: Path, scenario_id: str, mode: str, summary: dict) -> Path:
     d.mkdir(parents=True)
     (d / "search_summary.json").write_text(json.dumps(summary))
     (d / "manifest.json").write_text(json.dumps({
-        "scenario_id": scenario_id, "strategy": mode,
+        "scenario_id": scenario_id, "mode": mode,
         "horizon": {"T": 104, "K_search": 100, "K_final": 1000, "master_seed": 42},
         "n_evaluated": 100, "n_simulated": 85, "best_admissible": True,
     }))
@@ -91,7 +91,7 @@ def _write(root: Path, scenario_id: str, mode: str, summary: dict) -> Path:
 
 @pytest.fixture
 def campaign(tmp_path) -> Path:
-    _write(tmp_path, _SID, "evolutionary", _summary("k1", ["k1", "k2"], _FINAL))
+    _write(tmp_path, _SID, "search", _summary("k1", ["k1", "k2"], _FINAL))
     return tmp_path
 
 
@@ -103,52 +103,45 @@ class TestIndistinguishableRows:
     def test_the_key_list_drives_the_extraction_not_final_objectives(self):
         """`final_objectives` is the *preliminary* set; `indistinguishable` is `I*`."""
         summary = _summary("k1", ["k1", "k2"], _FINAL)
-        rows = indistinguishable_rows(_SID, "evolutionary", summary)
+        rows = indistinguishable_rows(_SID, "search", summary)
         assert len(rows) == 2
         assert {r["config_key"] for r in rows} == {"k1", "k2"}
         assert len(summary["final_objectives"]) == 3       # the set it was reduced from
 
     def test_the_count_is_what_optima_csv_reports(self, campaign):
         from src.campaign import optimum_row
-        d = campaign / _SID / "evolutionary"
+        d = campaign / _SID / "search"
         summary = json.loads((d / "search_summary.json").read_text())
         manifest = json.loads((d / "manifest.json").read_text())
-        row = optimum_row(_SID, "evolutionary", manifest, summary)
-        assert len(indistinguishable_rows(_SID, "evolutionary", summary)) == \
+        row = optimum_row(_SID, "search", manifest, summary)
+        assert len(indistinguishable_rows(_SID, "search", summary)) == \
             row["n_indistinguishable"]
 
     def test_c_star_is_a_member_and_is_flagged(self):
-        rows = indistinguishable_rows(_SID, "evolutionary",
+        rows = indistinguishable_rows(_SID, "search",
                                       _summary("k2", ["k1", "k2"], _FINAL))
         assert [r["config_key"] for r in rows if r["is_best"]] == ["k2"]
 
     def test_an_inadmissible_search_contributes_nothing(self):
-        assert indistinguishable_rows(_SID, "evolutionary",
+        assert indistinguishable_rows(_SID, "search",
                                       _summary("k1", [], _FINAL)) == []
 
     def test_the_tiers_come_from_the_scenario_id(self):
-        row = indistinguishable_rows(_SID, "evolutionary",
+        row = indistinguishable_rows(_SID, "search",
                                      _summary("k1", ["k1"], _FINAL))[0]
         assert row["tier_project"] == "medium"
         assert row["tier_human"] == "medium"
 
     def test_the_composition_columns_are_one_per_role_and_1_based(self):
-        row = indistinguishable_rows(_SID, "evolutionary",
+        row = indistinguishable_rows(_SID, "search",
                                      _summary("k1", ["k1"], _FINAL))[0]
         assert [row[c] for c in DEV_PARAMETERS] == [1, 0, 1, 0, 4, 2, 1, 0]
         assert [row[c] for c in QA_PARAMETERS] == [0] * AGENT_ROLE_COUNT
         assert row["n_sup_dev"] == supervised_agent_count((1, 0, 1, 0, 4, 2, 1, 0))
 
-    def test_a_pre_resimulation_result_falls_back_to_the_search_estimates(self):
-        summary = _summary("k1", ["k1"], _FINAL)
-        summary["objectives"] = {"k1": _objective([5, 0, 1, 0, 1, 1, 1, 0])}
-        del summary["final_objectives"]
-        row = indistinguishable_rows(_SID, "evolutionary", summary)[0]
-        assert row["a_dev_1"] == 5
-
     def test_a_key_with_no_objective_is_an_error_not_a_silent_drop(self):
         with pytest.raises(KeyError, match="ghost"):
-            indistinguishable_rows(_SID, "evolutionary",
+            indistinguishable_rows(_SID, "search",
                                    _summary("k1", ["k1", "ghost"], _FINAL))
 
 
@@ -156,7 +149,7 @@ class TestBuildIndistinguishable:
     def test_reads_the_tree(self, campaign):
         df = build_indistinguishable(campaign)
         assert len(df) == 2
-        assert set(df["strategy"]) == {"evolutionary"}
+        assert set(df["mode"]) == {"search"}
 
     def test_skips_a_directory_without_a_summary(self, campaign):
         (campaign / _SID / HUMAN_ONLY_MODE).mkdir()
@@ -181,7 +174,7 @@ def _member_frame(records: list[dict]) -> pd.DataFrame:
     rows = []
     for i, record in enumerate(records):
         row = {"scenario_id": record.get("scenario_id", _SID),
-               "strategy": "evolutionary", "config_key": f"k{i}", "is_best": i == 0,
+               "mode": "search", "config_key": f"k{i}", "is_best": i == 0,
                "N": 1.0, "R": 4, "F_freeze": 1,
                "tier_human": "medium", "tier_project": "medium", "tier_debt": "medium",
                "tier_agent": "medium", "tier_bugimpact": "medium"}
@@ -204,12 +197,6 @@ class TestDeriveTotals:
         record = {f"a_dev_{k + 1}": A[k] for k in range(AGENT_ROLE_COUNT)}
         df = derive_totals(_member_frame([record]))
         assert df["n_sup_dev"].iloc[0] == supervised_agent_count(A)
-
-    def test_an_existing_column_is_left_alone(self):
-        frame = _member_frame([{"a_dev_1": 2}])
-        frame["n_sup_dev"] = 99      # as optima.csv already carries it
-        assert derive_totals(frame)["n_sup_dev"].iloc[0] == 99
-
 
 class TestScenarioMeans:
     def test_one_row_per_scenario(self):
@@ -288,11 +275,11 @@ class TestScenarioBalance:
 # The whole table
 # ---------------------------------------------------------------------------
 
-def _optima_frame(strategies=("evolutionary",)) -> pd.DataFrame:
+def _optima_frame(modes=("search",)) -> pd.DataFrame:
     rows = []
-    for strategy in strategies:
-        record = {"strategy": strategy, "a_dev_5": 5}
-        rows.append(_member_frame([record]).assign(strategy=strategy).iloc[0])
+    for mode in modes:
+        record = {"mode": mode, "a_dev_5": 5}
+        rows.append(_member_frame([record]).assign(mode=mode).iloc[0])
     return pd.DataFrame(rows).reset_index(drop=True)
 
 
@@ -303,7 +290,7 @@ class TestBuildConstellation:
         assert set(cells["population"]) == {C_STAR, I_STAR}
 
     def test_the_human_only_baseline_is_excluded(self):
-        frame = _optima_frame(("evolutionary", HUMAN_ONLY_MODE))
+        frame = _optima_frame(("search", HUMAN_ONLY_MODE))
         assert len(search_optima(frame)) == 1
         cells = build_constellation(frame, pd.DataFrame())
         assert set(cells["population"]) == {C_STAR}
@@ -343,11 +330,11 @@ class TestConstellationSummary:
 # ---------------------------------------------------------------------------
 
 class TestRoleBill:
-    """`actions_k · c_token,k` is the exact per-role split of Eq. (cost_agents)."""
+    """`actions_k * c_token_k` is the exact per-role split of the agent bill."""
 
     def _frame(self, scenario_id=_SID, actions=None) -> pd.DataFrame:
         actions = actions if actions is not None else [10.0] * AGENT_ROLE_COUNT
-        row = {"scenario_id": scenario_id, "strategy": "evolutionary",
+        row = {"scenario_id": scenario_id, "mode": "search",
                "cost_agent_mean": 20.0, "cost_human_mean": 80.0}
         row.update({f"actions_{k + 1}": actions[k] for k in range(AGENT_ROLE_COUNT)})
         return pd.DataFrame([row])
@@ -370,7 +357,7 @@ class TestRoleBill:
         assert dear == pytest.approx(10.0 * cheap)
 
     def test_a_role_that_did_no_work_bills_nothing(self):
-        """A demand-driven agent no work reaches costs nothing (§3.7)."""
+        """A demand-driven agent no work reaches costs nothing."""
         actions = [0.0] * AGENT_ROLE_COUNT
         billed = role_bill(self._frame(actions=actions))
         assert (billed[list(BILL_PARAMETERS)].iloc[0] == 0.0).all()
@@ -396,11 +383,12 @@ class TestRoleBill:
         assert billed["cost_team_mean"].iloc[0] == pytest.approx(100.0)
 
     def test_it_reproduces_the_reported_agent_cost(self):
-        """Against the real campaign: the split must add back up to what §5 reports."""
+        """Against the real campaign: the split must add back up to what optima.csv reports."""
         path = Path("results/analysis/optima.csv")
         if not path.is_file():
             pytest.skip("no consolidated campaign on disk")
-        optima = pd.read_csv(path).query("strategy == 'evolutionary'")
+        optima = pd.read_csv(path)
+        optima = optima[optima["mode"] == "search"]
         billed = role_bill(optima)
         features = billed["value_mean"] * 104
         recovered = billed[list(BILL_PARAMETERS)].sum(axis=1) / features

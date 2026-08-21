@@ -110,7 +110,6 @@ class TestReleaseBugQueue:
         state = SystemState(F_backlog=50, B_rel_min=10, B_rel_maj=5)
         rel_min_before = state.B_rel_min
         rel_maj_before = state.B_rel_maj
-        kno_min_before = state.B_kno_min
         step_sprint(0, state, base_config, base_params, rng)
         # B_rel should have decreased (or stayed same if cap_min=0)
         assert state.B_rel_min <= rel_min_before
@@ -390,10 +389,10 @@ class TestAutonomousRolesSkipOversight:
         assert dataclasses.asdict(a) == dataclasses.asdict(b)
 
     def test_extra_refactoring_agents_do_not_change_the_run(self, base_config, base_params):
-        """Role 4 is autonomous since paper §3.3, so it must not move H_after_mon.
+        """Role 4 is autonomous, so it must not move H_after_mon.
 
         `r_refactor = 0` strips the one legitimate effect the role has — the debt it
-        removes in Eq. (debt_update) — leaving only the oversight question.  Its bill is
+        removes from D_tech — leaving only the oversight question.  Its bill is
         not part of the state, so a run with 40 of them must be bit-identical.
         """
         params = dataclasses.replace(base_params, alpha_size=0.0, rho_esc=0.5,
@@ -423,10 +422,10 @@ class TestAutonomousRolesSkipOversight:
 
 
 class TestCapacityIsNeverNegative:
-    """A configuration can clear Eq. (feas_monitoring) and still be over-subscribed.
+    """A configuration can clear the feasibility check and still be over-subscribed.
 
     The gate holds only at doc_cov = 1, so before documentation accumulates the
-    monitoring load can exceed H_net.  H_after_mon is clamped at 0 (Eq. hafter_mon),
+    monitoring load can exceed H_net.  H_after_mon is clamped at 0,
     which must keep every derived budget non-negative — an unclamped budget used to
     run the review, escalation and bug queues *backwards*.
     """
@@ -480,7 +479,7 @@ class TestCapacityIsNeverNegative:
 
 
 class TestImplementationIsCappedByDemand:
-    """impl_agents + impl_human == impl (Eq. impl), so no bugs are injected for
+    """impl_agents + impl_human == impl, so no bugs are injected for
     features that were never implemented."""
 
     def test_human_capacity_far_beyond_the_backlog(self, base_config, base_params):
@@ -519,7 +518,7 @@ class TestImplementationIsCappedByDemand:
 
 
 class TestEscalationsScaleWithAgentWork:
-    """Eq. (qesc): esc_new ~ Poisson(rho_esc * (2 - delta_D) * W_agent), where
+    """esc_new ~ Poisson(rho_esc * (2 - delta_D) * W_agent), where
     W_agent is the agent work completed this sprint, not the deployed headcount."""
 
     def _cfg(self, n_impl=1, n_fix=0):
@@ -560,7 +559,7 @@ class TestEscalationsScaleWithAgentWork:
         assert total_escalations(20.0) > total_escalations(2.0)
 
     def test_debt_amplifies_the_escalation_rate(self, base_params):
-        """The (2 - delta_D) factor of Eq. (qesc).
+        """The (2 - delta_D) factor of the escalation rate.
 
         Tested on the Poisson rate directly rather than on Q_esc: debt also throttles
         throughput (so W_agent shrinks) and a growing Q_esc feeds back into D_esc, so
@@ -641,7 +640,7 @@ class TestContributionAccounting:
     """
 
     def test_implementation_split_accounts_for_every_feature(self, base_config, base_params):
-        """Eq. (impl): impl_human' + impl_agents is exactly what F_completed gained."""
+        """impl_human' + impl_agents is exactly what F_completed gained."""
         p = dataclasses.replace(base_params, r_arrival=3.0, Gamma_doc=0.0)
         rng = np.random.default_rng(21)
         state = SystemState(F_backlog=40)
@@ -652,7 +651,7 @@ class TestContributionAccounting:
             assert actions.impl_human + actions.impl_agents == pytest.approx(implemented)
 
     def test_demand_below_human_capacity_leaves_the_agents_nothing(self, base_params):
-        """Humans are served first (Eq. impl_human_capped), so a thin arrival stream
+        """Humans are served first, so a thin arrival stream
         never reaches the implementation agent."""
         # One feature per sprint, and a human budget far above it.
         p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=0.1, f_fix=0.0,
@@ -704,7 +703,7 @@ class TestContributionAccounting:
             assert actions.fixes_agent == pytest.approx(actions.units[2])
 
     def test_feature_freeze_moves_humans_off_features_onto_bugs(self, base_params):
-        """Eq. (fixhuman_freeze): impl_human is zero in a freeze sprint, fixes are not."""
+        """impl_human is zero in a freeze sprint; the fixes are not."""
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
                                 h_feature=0.1, h_fix=1.0, f_fix=0.0, Gamma_doc=0.0)
         # R=2 with F_freeze=1 makes t=1 a freeze sprint and t=0 a development one.
@@ -728,7 +727,7 @@ class TestContributionAccounting:
                                 delta_min=1.0, h_feature=1e9, Gamma_doc=0.0)
         cfg = TeamConfiguration(N=2, A_dev=_A(k1=4), R=8, F_freeze=0)
         # Capacity is floor(r_F * 1.0 * 4) = 12.  A proposal costs five features of it
-        # (Eq. arch_impl), so both queued proposals are implemented and the remaining
+        #, so both queued proposals are implemented and the remaining
         # 12 - 10 = 2 features' worth goes to the backlog.
         state = SystemState(F_backlog=5, Q_arch_impl=2)
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(27))
@@ -739,11 +738,11 @@ class TestContributionAccounting:
 
 
 # ---------------------------------------------------------------------------
-# Human bug injection is a fixed per-feature rate (paper Eq. Binj-human)
+# Human bug injection is a fixed per-feature rate
 # ---------------------------------------------------------------------------
 
 class TestHumanBugInjectionIsFixedRate:
-    """Eq. (Binj-human): human-written code is not amplified by the debt factor."""
+    """Human-written code is not amplified by the debt factor."""
 
     @staticmethod
     def _human_only_cfg(N=4):
@@ -760,7 +759,7 @@ class TestHumanBugInjectionIsFixedRate:
     def test_debt_tier_does_not_change_the_human_bug_count(self, base_params):
         # With no agents, D_tech and the architecture queue still grow, so delta_D moves;
         # under the old multiplicative rate that would change the injected count.  It must
-        # not now: the two debt extremes of §4.1 give the identical stream.
+        # not now: the two debt extremes give the identical stream.
         mild = self._bugs_after(base_params, delta_min=0.94)
         harsh = self._bugs_after(base_params, delta_min=0.60)
         assert mild == harsh
@@ -771,11 +770,11 @@ class TestHumanBugInjectionIsFixedRate:
         assert high > low
 
     def test_agent_stream_is_still_debt_amplified(self, base_params):
-        # The agent half of Eq. (Binj-agent) keeps the (2 - delta_D) factor, so an
+        # The agent injection stream keeps the (2 - delta_D) factor, so an
         # agent-supported team must still respond to the debt tier.  Implementers only —
         # no detection agents, so every injected bug stays in B_hid — with R past the
         # horizon so no release empties it and f_fix = 0 so no human drains it.
-        # delta_D also throttles the implementation capacity (Eq. impl_agents), which would
+        # delta_D also throttles the implementation capacity, which would
         # confound a bug count: heavy debt means fewer features and so fewer bugs whatever
         # the rate.  So give the implementers capacity far past the backlog, which makes
         # impl equal to the demand in both runs, and vary only the debt carried in.
@@ -798,11 +797,11 @@ class TestHumanBugInjectionIsFixedRate:
 
 
 # ---------------------------------------------------------------------------
-# The human-only baseline of paper §4.1
+# The human-only baseline
 # ---------------------------------------------------------------------------
 
 class TestHumanOnlyCapacityReservation:
-    """Eq. (hafter_qa): f_qa of net capacity is reserved, in dev sprints only."""
+    """f_qa of net capacity is reserved, in dev sprints only."""
 
     @staticmethod
     def _cfg(F_freeze, N=4):
@@ -830,7 +829,7 @@ class TestHumanOnlyCapacityReservation:
         assert reserved == free
 
     def test_dev_sprint_bug_fixing_is_also_reduced(self, base_params):
-        # The paper puts H_after_qa in *both* the implementation and the bug-fixing
+        # H_after_qa feeds *both* the implementation and the bug-fixing
         # equations, so the reservation is not paid out of coding time alone.
         state_full = SystemState(F_backlog=10_000, B_kno_min=5_000)
         state_res = SystemState(F_backlog=10_000, B_kno_min=5_000)
@@ -915,7 +914,7 @@ class TestHumanOnlyDetection:
 
 
 class TestHumanOnlyDebtIsInert:
-    """§4.1 runs "without debt dynamics" — and that is already true, not enforced."""
+    """The baseline runs without debt dynamics — already true, not enforced anywhere."""
 
     def test_all_debt_parameters_leave_the_run_unchanged(self, base_params):
         zero = (0,) * AGENT_ROLE_COUNT
@@ -936,7 +935,7 @@ class TestHumanOnlyDebtIsInert:
         assert a == b
 
     def test_all_agent_parameters_leave_the_run_unchanged(self, base_params):
-        # The other half of the §4.1 claim: the baseline is independent of the agent tier,
+        # The other half of the claim: the baseline is independent of the agent tier,
         # which is what lets its grid drop that dimension entirely.
         zero = (0,) * AGENT_ROLE_COUNT
         cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1)

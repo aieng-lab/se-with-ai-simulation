@@ -1,13 +1,14 @@
-"""Tests for src/search_configurations.py — composition sampling and mutation.
+"""Tests for src/search.py — composition sampling and mutation.
 
-The invariant under test is the throughput saturation bound a-bar_k (paper §3.11.1),
+The invariant under test is the per-role throughput saturation bound,
 which caps each *supervised* role.  The three autonomous roles of K_aut = {4,5,6} are
 outside it: the two detection services (Code Review, Security Audit) are subject to no
 bound at all and are merely sampled from {0, ..., floor(r_arrival)}, and the Refactoring
 Agent is capped by a-bar_4 = floor(r_arrival / 2) in the sampler *and* in the mutation
 operator.  The "adjust service" mutation moves those three by +/- 2**j over their sampling
-range (§3.11.4), which is what `TestServiceStep` covers.  The one collective limit on the supervised roles, the human-capacity condition
-of Eq. (feas_monitoring), is applied by the feasibility gate after the draw, not by the
+range, which is what `TestServiceStep` covers.  The one collective limit on the
+supervised roles, the human-capacity condition, is applied by the feasibility gate
+after the draw, not by the
 sampler.
 """
 
@@ -30,14 +31,14 @@ from src.config import (
     supervised_agent_count,
 )
 from src.io import load_scenario_params
-from src.search_configurations import (
+from src.search import (
     _QA_SUPERVISED_INDICES,
     _REFACTOR_INDEX,
     _mutate,
     _service_step,
     _random_draws,
-    _run_evolutionary_search,
-    _run_human_only,
+    run_search,
+    run_human_only,
     _sample_dev_composition,
     _sample_qa_composition,
     human_only_grid,
@@ -45,7 +46,6 @@ from src.search_configurations import (
     review_sample_max,
     saturation_bounds,
     two_stage_selection,
-    write_samples,
 )
 from src.selection import indistinguishable_set, parsimony_key, throughput_floor
 
@@ -83,7 +83,7 @@ def medium_params():
 
 
 class TestSaturationBounds:
-    def test_matches_the_paper_formula(self, medium_params):
+    def test_matches_the_bound_formula(self, medium_params):
         """a-bar_k = ceil(sigma*lambda_k/eta_k), Eqs. (workload), (sat_rates), (sat_bound)."""
         p = medium_params
         sigma = 2.0
@@ -101,7 +101,7 @@ class TestSaturationBounds:
         assert set(saturation_bounds(medium_params, 2.0)) == set(SUPERVISED_ROLE_INDICES)
 
     def test_the_refactoring_role_has_no_saturation_bound(self, medium_params):
-        """Eq. (sat_bound) ranges over K_sup, which no longer contains role 4 (§3.3)."""
+        """The bounds range over the supervised roles, which do not include role 4."""
         assert _REFACTOR_INDEX not in saturation_bounds(medium_params, 2.0)
 
     def test_impl_role_is_always_reachable(self, medium_params):
@@ -180,7 +180,7 @@ class TestCompositionSampling:
         assert counts.max() < len(draws) / 4
 
     def test_refactoring_is_drawn_within_its_own_smaller_bound(self, medium_params):
-        """Paper §3.11.2 step 6: a_.,4 ~ U{0, ..., a-bar_4}, half the review range."""
+        """The Refactoring Agent is drawn from U{0, ..., bound}, half the review range."""
         rng = np.random.default_rng(22)
         bounds = saturation_bounds(medium_params, 2.0)
         draws = [
@@ -197,13 +197,13 @@ class TestCompositionSampling:
         assert review_sample_max(_Params()) == 12
 
     def test_refactoring_bound_is_half_the_arrival_rate(self):
-        """a-bar_4 = floor(r_arrival / 2): one agent per two features arriving (§3.11.2)."""
+        """a-bar_4 = floor(r_arrival / 2): one agent per two features arriving."""
         class _Params:
             r_arrival = 12.7
 
         assert refactoring_bound(_Params()) == 6
 
-    def test_refactoring_bound_at_the_paper_project_tiers(self):
+    def test_refactoring_bound_at_the_four_project_tiers(self):
         """3 / 12 / 75 / 1000 issues per week give a-bar_4 = 1 / 6 / 37 / 500."""
         expected = {3.0: 1, 12.0: 6, 75.0: 37, 1000.0: 500}
         for r, want in expected.items():
@@ -327,7 +327,7 @@ class TestMutation:
         assert peak > 1
 
     def test_refactoring_stays_within_its_bound_under_mutation(self, search_cfg):
-        """§3.11.4: "the refactoring service is restricted by a-bar_4"."""
+        """The mutation operator honours the Refactoring Agent's cap, unlike the review ones."""
         rng = np.random.default_rng(71)
         cap = 2
         parent = self._parent()
@@ -392,7 +392,7 @@ class TestMutation:
 
 
 # ---------------------------------------------------------------------------
-# Search drivers: budget accounting (paper §4.2) and sample retention
+# Search drivers: budget accounting and sample retention
 # ---------------------------------------------------------------------------
 
 # A deliberately wasteful search range.  The debt-low tier has Gamma_doc = 0, so
@@ -400,9 +400,9 @@ class TestMutation:
 # capacity from 16 supervised agents per FTE on.  At the quarter-FTE staffing level
 # that threshold is already crossed by 4 supervised agents, which the saturation
 # bounds comfortably allow, so a fair share of the draws is rejected by the
-# human-capacity condition of Eq. (feas_monitoring) — the one rejection path, and
-# what makes the budget accounting of §4.2 observable.  The `debt` tier is `high` because
-# that is where Gamma_doc = 0 (paper tab:scenario:debt), i.e. documentation buys no
+# human-capacity condition — the one rejection path, and
+# what makes the budget accounting observable.  The `debt` tier is `high` because
+# that is where Gamma_doc = 0, i.e. documentation buys no
 # monitoring relief and the condition bites at its hardest.
 _WASTEFUL_TIERS = {group: "medium" for group in SCENARIO_GROUPS} | {"debt": "high"}
 
@@ -439,25 +439,24 @@ class TestSearchBudget:
     def test_infeasible_candidates_are_charged_and_labelled(self, wasteful_cfg,
                                                             tiny_horizon,
                                                             wasteful_params):
-        """A draw rejected by Eq. (feas_monitoring) still consumes one evaluation (§4.2)."""
+        """A draw rejected by the feasibility check still consumes one evaluation."""
         from dataclasses import replace
         cfg = replace(wasteful_cfg, N_values=(0.25,))
-        outcome = _run_evolutionary_search(
+        outcome = run_search(
             cfg, tiny_horizon, wasteful_params, np.random.default_rng(3),
             progress_every=0,
         )
         rejected = [e for e in outcome.manifest.values() if not e["feasible"]]
         assert rejected, "the wasteful range must produce rejections"
-        assert all(e["failed_step"] == 1 for e in rejected)
         # The manifest must still describe the candidate that was thrown away.
         assert all({"N", "R", "F_freeze", "A_dev", "A_qa"} <= e.keys() for e in rejected)
         assert outcome.n_evaluated - outcome.n_simulated == len(rejected)
 
-    def test_evolutionary_search_stays_within_its_budget(
+    def test_search_stays_within_its_budget(
         self, wasteful_cfg, tiny_horizon, wasteful_params
     ):
-        """Infeasible offspring consume budget too, so §4.2's E is a hard ceiling."""
-        outcome = _run_evolutionary_search(
+        """Infeasible offspring consume budget too, so `budget` is a hard ceiling."""
+        outcome = run_search(
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(0),
             progress_every=0,
         )
@@ -466,10 +465,10 @@ class TestSearchBudget:
         # charged some infeasible candidates against the budget.
         assert outcome.n_simulated < outcome.n_evaluated
 
-    def test_evolutionary_search_never_evaluates_a_duplicate(
+    def test_search_never_evaluates_a_duplicate(
         self, wasteful_cfg, tiny_horizon, wasteful_params
     ):
-        outcome = _run_evolutionary_search(
+        outcome = run_search(
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(2),
             progress_every=0,
         )
@@ -479,11 +478,11 @@ class TestSearchBudget:
         assert len(keys) == len(set(keys))
 
 class TestHumanOnlyEnumeration:
-    """The human-only baseline of paper §4.1 is enumerated, not searched."""
+    """The human-only baseline is enumerated, not searched."""
 
     @staticmethod
     def _full_range_cfg():
-        # The §4.2 search range, which the paper says gives 99 configurations.
+        # The campaign search range, which gives 99 configurations.
         return SearchConfiguration(
             scenario_paths={
                 group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
@@ -496,7 +495,7 @@ class TestHumanOnlyEnumeration:
             seed=7,
         )
 
-    def test_paper_range_gives_99_configurations(self):
+    def test_campaign_range_gives_99_configurations(self):
         grid = human_only_grid(self._full_range_cfg())
         # 11 staffing levels x 9 valid (R, F_freeze) pairs: R=1 admits only F=0, R=2
         # admits {0,1}, and R=4 and R=13 admit all three.
@@ -520,22 +519,18 @@ class TestHumanOnlyEnumeration:
     def test_run_evaluates_exactly_the_grid(self, search_cfg, medium_params):
         settings = SimulationHorizon(T=3, K_search=2, K_final=2, master_seed=42)
         cfg = dataclasses.replace(search_cfg, human_only=True)
-        outcome = _run_human_only(cfg, settings, medium_params,
-                                  np.random.default_rng(0), progress_every=0)
+        outcome = run_human_only(cfg, settings, medium_params, progress_every=0)
         grid = human_only_grid(cfg)
         assert outcome.n_evaluated == len(grid)
         # A zero-agent team never fails the monitoring gate, so all of them simulate.
         assert outcome.n_simulated == len(grid)
         assert all(c.A_dev == (0,) * AGENT_ROLE_COUNT for _, c, _ in outcome.aggs)
 
-    def test_run_ignores_the_rng(self, search_cfg, medium_params):
-        # Deterministic: `rng` is accepted only to match the search's signature.
+    def test_run_is_deterministic(self, search_cfg, medium_params):
         settings = SimulationHorizon(T=3, K_search=2, K_final=2, master_seed=42)
         cfg = dataclasses.replace(search_cfg, human_only=True)
-        a = _run_human_only(cfg, settings, medium_params, np.random.default_rng(0),
-                            progress_every=0)
-        b = _run_human_only(cfg, settings, medium_params, np.random.default_rng(999),
-                            progress_every=0)
+        a = run_human_only(cfg, settings, medium_params, progress_every=0)
+        b = run_human_only(cfg, settings, medium_params, progress_every=0)
         assert [k for k, _, _ in a.aggs] == [k for k, _, _ in b.aggs]
         assert ([agg.cost_mean for _, _, agg in a.aggs]
                 == [agg.cost_mean for _, _, agg in b.aggs])
@@ -543,8 +538,7 @@ class TestHumanOnlyEnumeration:
     def test_manifest_carries_no_search_bookkeeping(self, search_cfg, medium_params):
         settings = SimulationHorizon(T=3, K_search=2, K_final=2, master_seed=42)
         cfg = dataclasses.replace(search_cfg, human_only=True)
-        outcome = _run_human_only(cfg, settings, medium_params,
-                                  np.random.default_rng(0), progress_every=0)
+        outcome = run_human_only(cfg, settings, medium_params, progress_every=0)
         for entry in outcome.manifest.values():
             assert "generation" not in entry
 
@@ -556,7 +550,7 @@ class TestHumanOnlyEnumeration:
 
 
 # ---------------------------------------------------------------------------
-# The "adjust service" step sizes (paper §3.11.4)
+# The "adjust service" step sizes
 # ---------------------------------------------------------------------------
 
 class TestServiceStep:
@@ -590,7 +584,7 @@ class TestServiceStep:
         """The point of the exponential steps: counts in the tens are reachable fast.
 
         With +/-1 steps a service count of 30 needs 30 accepted mutations of that one
-        role; the powers of two get there in a handful, which is what §3.11.4 means by
+        role; the powers of two get there in a handful, which is the point of
         navigating the large range of possible counts efficiently.
         """
         rng = np.random.default_rng(3)
@@ -605,7 +599,7 @@ class TestServiceStep:
         assert peak >= 8, f"the review services only reached {peak} in 200 mutations"
 
     def test_the_refactoring_cap_clips_rather_than_skipping_the_mutation(self, search_cfg):
-        """A step that would overshoot a-bar_4 is clipped to it (§3.11.4), not discarded."""
+        """A step that would overshoot a-bar_4 is clipped to it, not discarded."""
         rng = np.random.default_rng(4)
         cap = 3
         A_dev = [0] * AGENT_ROLE_COUNT
@@ -621,7 +615,7 @@ class TestServiceStep:
 
 
 # ---------------------------------------------------------------------------
-# The two-stage selection of paper §3.10
+# Two-stage selection
 # ---------------------------------------------------------------------------
 
 class TestTwoStageSelection:
@@ -637,7 +631,7 @@ class TestTwoStageSelection:
         cfg = replace(search_cfg, budget=40, n_samples_initial=20, n_generations=2,
                       n_offspring=10, n_elite=5)
         horizon = self._horizon()
-        outcome = _run_evolutionary_search(
+        outcome = run_search(
             cfg, horizon, medium_params, np.random.default_rng(seed), progress_every=0,
         )
         report = two_stage_selection(outcome, cfg, horizon, medium_params,
@@ -691,7 +685,7 @@ class TestTwoStageSelection:
         genuinely dominated; the configurations themselves are real, since the survivor is
         re-simulated at K.
         """
-        from src.search_configurations import SearchOutcome, _config_key
+        from src.search import SearchOutcome, _config_key
         from src.selection import AggregatedObjectives
         horizon = self._horizon()
         floor = throughput_floor(medium_params, search_cfg.epsilon)
@@ -736,9 +730,9 @@ class TestTwoStageSelection:
 
         The pool is built by hand from a single hopelessly under-powered team: at the
         very-high project tier features arrive at 1000 per sprint and one implementation
-        agent cannot come near the floor, which is the situation §3.10 calls inadmissible.
+        agent cannot come near the floor, i.e. the inadmissible case.
         """
-        from src.search_configurations import SearchOutcome, _config_key, _evaluate
+        from src.search import SearchOutcome, _config_key, _evaluate
         cfg = SearchConfiguration(
             scenario_paths={group: f"config/{group}_medium.json"
                             for group in SCENARIO_GROUPS} | {
@@ -762,7 +756,7 @@ class TestTwoStageSelection:
 
         report = two_stage_selection(outcome, cfg, horizon, params, progress_every=0)
         assert not report.best_admissible
-        assert report.keep_keys == []          # §3.10: no c*, so I* is empty
+        assert report.keep_keys == []          # no c*, so I* is empty
         assert report.best_key is not None     # the least-violating one is still reported
         assert report.stats["n_prelim"] == 0
         assert report.stats["parsimony_removed_prelim"] == 0
@@ -771,7 +765,7 @@ class TestTwoStageSelection:
         assert len(report.final_results[report.best_key].replications) == horizon.K_final
 
     def test_an_empty_pool_reports_nothing(self, search_cfg, medium_params):
-        from src.search_configurations import SearchOutcome
+        from src.search import SearchOutcome
         report = two_stage_selection(SearchOutcome(manifest={}, aggs=[], results={}),
                                      search_cfg, self._horizon(), medium_params,
                                      progress_every=0)
@@ -781,11 +775,11 @@ class TestTwoStageSelection:
 
 
 class TestConvergenceRecording:
-    """The per-generation record §5.1 reports from (Eq. elite_turnover)."""
+    """The per-generation convergence record."""
 
     def test_one_turnover_value_per_generation_run(self, wasteful_cfg, tiny_horizon,
                                                    wasteful_params):
-        outcome = _run_evolutionary_search(
+        outcome = run_search(
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(1),
             progress_every=0,
         )
@@ -798,18 +792,18 @@ class TestConvergenceRecording:
     def test_the_incumbent_never_gets_worse(self, wasteful_cfg, tiny_horizon,
                                             wasteful_params):
         """The population is an archive and the elite is its best, so cost is monotone."""
-        outcome = _run_evolutionary_search(
+        outcome = run_search(
             wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(4),
             progress_every=0,
         )
         # Only comparable while the incumbent is admissible throughout; the preference
-        # relation of §3.11.3 puts a violator behind every admissible candidate, so a
+        # preference relation puts a violator behind every admissible candidate, so a
         # switch out of the violating region can raise the cost legitimately.
         costs = outcome.best_cost
         assert costs == sorted(costs, reverse=True) or len(set(costs)) <= len(costs)
 
     def test_incumbent_turnover_is_the_share_of_generations_with_a_change(self):
-        from src.search_configurations import SearchOutcome
+        from src.search import SearchOutcome
         outcome = SearchOutcome(manifest={}, aggs=[], results={},
                                 incumbent_changed=[True, False, False, True])
         assert outcome.incumbent_turnover == pytest.approx(0.5)
@@ -817,9 +811,9 @@ class TestConvergenceRecording:
     def test_an_enumeration_records_no_generations(self, search_cfg, medium_params):
         from dataclasses import replace
         cfg = replace(search_cfg, human_only=True, N_values=(1.0,), R_values=(2,))
-        outcome = _run_human_only(
+        outcome = run_human_only(
             cfg, SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0),
-            medium_params, np.random.default_rng(0), progress_every=0,
+            medium_params, progress_every=0,
         )
         assert outcome.elite_turnover == []
         assert outcome.incumbent_changed == []

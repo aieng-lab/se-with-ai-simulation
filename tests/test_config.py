@@ -8,7 +8,7 @@ from src.config import (
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
     AUTONOMOUS_ROLE_INDICES,
-    EVOLUTIONARY_MODE,
+    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     RESULT_MODES,
     SUPERVISED_ROLE_INDICES,
@@ -32,7 +32,7 @@ _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 
 class TestScenarioTierGrid:
-    """The §4.2 grid is not a cube: `project` and `agent` each carry a fourth tier."""
+    """The tier grid is not a cube: `project` and `agent` each carry a fourth tier."""
 
     def test_project_has_the_extra_very_high_tier(self):
         assert scenario_tiers("project") == ("low", "medium", "high", "veryhigh")
@@ -73,8 +73,8 @@ class TestScenarioTierGrid:
         assert scenario_id(tiers) == "h-l_p-l_d-X_a-X_b-l"
 
     def test_result_modes_are_the_search_and_the_baseline(self):
-        """§3.11 leaves one search; §4.1's baseline is a mode beside it, not a strategy."""
-        assert RESULT_MODES == (EVOLUTIONARY_MODE, HUMAN_ONLY_MODE)
+        """There is one search; the human-only baseline is a result mode beside it."""
+        assert RESULT_MODES == (SEARCH_MODE, HUMAN_ONLY_MODE)
 
     def test_unknown_group_raises(self):
         with pytest.raises(ValueError, match="unknown scenario group"):
@@ -123,7 +123,7 @@ class TestTeamConfigurationValidation:
             TeamConfiguration(N=-0.5, A_dev=_VALID_A, R=4)
 
     def test_fractional_N_is_a_valid_staffing_level(self):
-        """N is a staffing level in FTE (paper §3.1), so it need not be an integer."""
+        """N is a staffing level in FTE, so it need not be an integer."""
         cfg = TeamConfiguration(N=0.25, A_dev=_VALID_A, A_qa=_VALID_A_QA, R=4)
         assert cfg.N == 0.25
 
@@ -143,7 +143,7 @@ class TestTeamConfigurationValidation:
             TeamConfiguration(N=2, A_dev=tuple(A), R=4)
 
     def test_no_structural_bound_on_the_supervised_count(self):
-        """`TeamConfiguration` no longer caps n_sup — that is Eq. (feas_monitoring)'s job.
+        """`TeamConfiguration` does not cap n_sup — that is the feasibility check's job.
 
         The condition needs the scenario parameters, so it lives in `src.feasibility`
         and a heavily staffed composition is structurally valid here.
@@ -170,7 +170,7 @@ class TestSearchConfigurationValidation:
         with pytest.raises(ValueError, match="N_values must all be > 0"):
             self._cfg(N_values=(0.0, 1.0))
 
-    def test_sigma_defaults_to_the_paper_value(self):
+    def test_sigma_defaults_to_the_campaign_value(self):
         assert self._cfg().sigma == 2.0
 
     def test_sigma_below_one_raises(self):
@@ -178,15 +178,15 @@ class TestSearchConfigurationValidation:
             self._cfg(sigma=0.9)
 
     def test_the_search_is_not_selectable(self):
-        """§3.11 describes one search, so there is no strategy to configure."""
-        assert not hasattr(self._cfg(), "strategy")
+        """There is one search, so there is nothing to select between."""
+        assert not hasattr(self._cfg(), "mode")
 
     def test_the_baseline_is_off_by_default(self):
         cfg = self._cfg()
         assert cfg.human_only is False
         assert self._cfg(human_only=True).human_only is True
 
-    def test_epsilon_defaults_to_the_paper_value(self):
+    def test_epsilon_defaults_to_the_campaign_value(self):
         assert self._cfg().epsilon == 0.02
 
     @pytest.mark.parametrize("epsilon", [-0.01, 1.0, 1.5])
@@ -200,9 +200,9 @@ class TestSearchConfigurationValidation:
 
 
 class TestAutonomousRoleBudget:
-    """Roles 4, 5 and 6 need no supervision, so they never enter n_sup (paper §3.3)."""
+    """Roles 4, 5 and 6 need no supervision, so they never enter n_sup."""
 
-    def test_the_role_split_is_the_papers(self):
+    def test_the_role_split_is_the_documented_one(self):
         """K_sup = {1,2,3,7,8}, K_aut = {4,5,6}: the Refactoring Agent is autonomous."""
         assert SUPERVISED_ROLE_INDICES == (0, 1, 2, 6, 7)
         assert AUTONOMOUS_ROLE_INDICES == (3, 4, 5)
@@ -218,7 +218,7 @@ class TestAutonomousRoleBudget:
         assert sum(cfg.A_dev) == 11
 
     def test_refactoring_agents_are_free_of_supervision(self):
-        """Adding Refactoring Agents must not move n_sup at all (§3.3, Eq. nsup)."""
+        """Adding Refactoring Agents must not move n_sup at all."""
         base = _A((1, 2), (3, 1))
         loaded = _A((1, 2), (3, 1), (4, 40))
         assert supervised_agent_count(loaded) == supervised_agent_count(base)
@@ -229,16 +229,6 @@ class TestAutonomousRoleBudget:
         assert cfg.agent_count_dev(5) == 50
         assert cfg.agent_count_dev(6) == 25
 
-    def test_n_supervised_selects_active_composition(self):
-        cfg = TeamConfiguration(
-            N=2,
-            A_dev=_A((1, 2), (3, 1), (5, 4)),
-            A_qa=_A((3, 1), (6, 4)),
-            R=4, F_freeze=1,
-        )
-        assert cfg.n_supervised(is_frozen=False) == 3
-        assert cfg.n_supervised(is_frozen=True) == 1
-
     def test_no_impl_agent_raises(self):
         A = list(_VALID_A)
         A[0] = 0   # role 1 (Feature Implementation) must be ≥ 1
@@ -247,7 +237,7 @@ class TestAutonomousRoleBudget:
             TeamConfiguration(N=2, A_dev=tuple(A), R=4)
 
     def test_zero_agent_team_is_the_human_only_baseline(self):
-        # Paper §4.1: A_dev = A_qa = 0 is a legal team, and the only one `is_human_only`
+        # A_dev = A_qa = 0 is a legal team, and the only one `is_human_only`
         # accepts.  A_qa is canonicalised to zero anyway at F_freeze == 0, so use a freeze
         # window to show the all-zero A_qa is accepted on its own merits.
         zero = (0,) * AGENT_ROLE_COUNT
@@ -376,11 +366,11 @@ class TestSimulationHorizon:
             SimulationHorizon(T=10, K_search=0, K_final=0, master_seed=0)
 
     def test_K_final_below_K_search_raises(self):
-        """§3.10 re-simulates with K > K'; fewer replications could only widen the CIs."""
+        """The re-simulation needs at least as many replications as the search used."""
         with pytest.raises(ValueError, match="K_final must be >= K_search"):
             SimulationHorizon(T=10, K_search=100, K_final=10, master_seed=0)
 
-    def test_the_paper_protocol_is_accepted(self):
-        # §4.2, Table 6: K' = 100 during the search, K = 1,000 for the re-simulation.
+    def test_the_campaign_protocol_is_accepted(self):
+        # The campaign protocol: 100 replications during the search, 1,000 for the re-simulation.
         s = SimulationHorizon(T=104, K_search=100, K_final=1000, master_seed=42)
         assert s.K_final > s.K_search

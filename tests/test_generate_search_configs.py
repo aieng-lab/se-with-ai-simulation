@@ -1,4 +1,4 @@
-"""Tests for scripts/generate_search_configs.py — the 432-scenario grid of paper §4.2."""
+"""Tests for scripts/generate_search_configs.py — the 432-scenario grid."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class TestGeneratedGrid:
             cfg = load_search_config(path)
             assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
             # Only the scenario differs; horizon, range, budget and seed are shared so
-            # that result differences are attributable to the scenario alone (§4.2).
+            # that result differences are attributable to the scenario alone.
             assert cfg.horizon_path == reference.horizon_path
             assert cfg.N_values == reference.N_values
             assert cfg.R_values == reference.R_values
@@ -122,7 +122,7 @@ class TestOverwriteGuard:
 
 
 class TestBaselineGrid:
-    """`--baseline` writes the 36 human-only scenarios of paper §4.1."""
+    """`--baseline` writes the 36 human-only scenarios"""
 
     @pytest.fixture(scope="class")
     def baseline_dir(self, script, tmp_path_factory):

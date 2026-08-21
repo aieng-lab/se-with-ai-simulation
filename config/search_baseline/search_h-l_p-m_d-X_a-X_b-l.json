@@ -1,5 +1,5 @@
 {
-  "description": "Paper Section 4.1 human-only baseline h-l_p-m_d-X_a-X_b-l (human=low, project=medium, bugimpact=low); debt and agent are inert for a zero-agent team and are marked X",
+  "description": "Human-only baseline h-l_p-m_d-X_a-X_b-l (human=low, project=medium, bugimpact=low); debt and agent are inert for a zero-agent team and are marked X",
   "scenario_id": "h-l_p-m_d-X_a-X_b-l",
   "scenario": {
     "human": "config/human_low.json",

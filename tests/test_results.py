@@ -86,8 +86,8 @@ class TestSaveLoadResult:
             assert getattr(loaded_agg, field) == pytest.approx(getattr(small_agg, field))
         assert loaded_agg.actions_mean == pytest.approx(small_agg.actions_mean)
 
-    def test_load_result_without_the_reported_extras(self, tmp_path):
-        """A file carrying only the objective and the constraint still loads, with zeros."""
+    def test_load_result_with_a_missing_field_raises(self, tmp_path):
+        """Every field save_result writes is required; there is no lean variant."""
         import json
         lean = {"config": {"N": 1, "A_dev": [1] * 8, "R": 4, "F_freeze": 0,
                            "A_qa": [0] * 8},
@@ -96,15 +96,8 @@ class TestSaveLoadResult:
                                "cost_mean": 3.0, "cost_ci": [3.0, 3.0]}}
         p = tmp_path / "lean.json"
         p.write_text(json.dumps(lean))
-        result, agg = load_result(p)
-
-        rep = result.replications[0]
-        assert (rep.cost_quality, rep.cost_human, rep.cost_agent) == (0.0, 0.0, 0.0)
-        assert (rep.impl_human, rep.impl_agents) == (0.0, 0.0)
-        assert (rep.fixes_human, rep.fixes_agent) == (0.0, 0.0)
-        assert agg.cost_quality_mean == 0.0 and agg.fixes_agent_mean == 0.0
-        # The objective and the constrained quantity still come through.
-        assert rep.value == pytest.approx(1.0) and rep.cost == pytest.approx(3.0)
+        with pytest.raises(KeyError):
+            load_result(p)
 
     def test_load_wrong_A_length_raises(self, tmp_path):
         import json
@@ -132,3 +125,22 @@ class TestSaveLoadTraces:
         loaded_df = load_traces(path)
         assert list(loaded_df.columns) == list(original_df.columns)
         assert (loaded_df["F_completed"] == original_df["F_completed"]).all()
+
+
+class TestTrajectoryFieldNames:
+    """Every field the CLI and the trajectory figure ask for must actually be persisted."""
+
+    def test_analyze_fields_are_snapshot_fields(self):
+        from src.main import ANALYZE_TRAJECTORY_FIELDS
+        from src.results import _SNAPSHOT_FIELDS
+        missing = set(ANALYZE_TRAJECTORY_FIELDS) - set(_SNAPSHOT_FIELDS)
+        assert not missing, f"{sorted(missing)} are not persisted"
+
+    def test_trajectory_plot_fields_are_snapshot_fields(self):
+        from src.results import _SNAPSHOT_FIELDS
+        from src.visualization import _DEFAULT_TRAJECTORY_FIELDS, _TRAJECTORY_LABELS
+        # B_kno is derived from B_kno_min + B_kno_maj inside plot_trajectories.
+        derived = {"B_kno"}
+        missing = set(_DEFAULT_TRAJECTORY_FIELDS) - set(_SNAPSHOT_FIELDS) - derived
+        assert not missing, f"{sorted(missing)} are neither persisted nor derived"
+        assert set(_DEFAULT_TRAJECTORY_FIELDS) <= set(_TRAJECTORY_LABELS)

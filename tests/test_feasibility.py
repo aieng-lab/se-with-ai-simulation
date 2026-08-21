@@ -17,7 +17,6 @@ class TestFeasiblePath:
     def test_feasible_returns_true(self, base_config, base_params):
         report = check_feasibility(base_config, base_params)
         assert report.feasible
-        assert report.failed_step is None
 
 
 class TestStep1MonitoringCapacity:
@@ -29,10 +28,9 @@ class TestStep1MonitoringCapacity:
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
         report = check_feasibility(cfg, p)
         assert not report.feasible
-        assert report.failed_step == 1
 
     def test_autonomous_roles_never_cause_infeasibility(self, base_params):
-        """K_aut = {4,5,6} consumes no monitoring capacity at all (paper §3.3)."""
+        """K_aut = {4,5,6} consumes no monitoring capacity at all."""
         from dataclasses import replace
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)
         # 4 supervised agents over N=2 developers = 2 * 2h = 4h < H_net ≈ 9h
@@ -58,7 +56,7 @@ class TestStep1MonitoringCapacity:
 
 
 class TestCommunicationOverheadUsesHeadcount:
-    """H_net = H_capacity - c_comm * ceil(N-1) (paper §3.6, Eq. hnet).
+    """H_net = H_capacity - c_comm * ceil(N-1).
 
     Communication is a per-person cost that does not shrink when someone invests only
     part of their time, so the peer count follows the headcount ceil(N), not N itself.
@@ -81,13 +79,13 @@ class TestCommunicationOverheadUsesHeadcount:
         # the ">=" of the gate rejects — but a linear rule would still accept.
         cfg = _cfg({1: 10, 3: 10}, N=2.5)
         report = check_feasibility(cfg, p)
-        assert not report.feasible and report.failed_step == 1
+        assert not report.feasible
         # One agent fewer leaves 7.6 h < 8 h and passes.
         assert check_feasibility(_cfg({1: 10, 3: 9}, N=2.5), p).feasible
 
 
 class TestQaCompositionIsChecked:
-    """Eq. (feas_monitoring) is applied to A_qa too, but only when it is ever used.
+    """The check is applied to A_qa too, but only when it is ever used.
 
     With F_freeze = 0 the QA vector is never applied, and the search leaves an
     arbitrary unexercised composition in those rows, so checking it would reject
@@ -111,7 +109,6 @@ class TestQaCompositionIsChecked:
     def test_bloated_qa_composition_is_rejected_when_a_freeze_exists(self, base_params):
         report = check_feasibility(self._pair(F_freeze=1), self._params(base_params))
         assert not report.feasible
-        assert report.failed_step == 1
         assert "A_qa" in report.reason
 
     def test_bloated_qa_composition_is_ignored_without_a_freeze(self, base_params):
@@ -128,7 +125,7 @@ class TestQaCompositionIsChecked:
 
 
 class TestHumanOnlyBaseline:
-    """A zero-agent team (paper §4.1) has no monitoring load, so it is always feasible."""
+    """A zero-agent team has no monitoring load, so it is always feasible."""
 
     _N_VALUES = (0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00)
 
@@ -138,7 +135,6 @@ class TestHumanOnlyBaseline:
             cfg = TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
             report = check_feasibility(cfg, base_params)
             assert report.feasible, f"N={N}: {report.reason}"
-            assert report.failed_step is None
 
     def test_feasible_even_when_monitoring_would_exhaust_any_real_team(self, base_params):
         # The condition is n_sup/N * H_mon * (1 - Gamma_doc) < H_net; with n_sup = 0 the

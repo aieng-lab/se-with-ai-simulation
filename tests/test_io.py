@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from src.config import SCENARIO_GROUPS
 from src.io import (
-    SCENARIO_GROUPS,
     _flatten_scenario,
     _parse_value,
     load_initial_state,
@@ -43,12 +43,9 @@ class TestParseValue:
     def test_scalar_float(self):
         assert _parse_value("x", 3.14) == pytest.approx(3.14)
 
-    def test_legacy_value_dict(self):
-        assert _parse_value("x", {"value": 2.5}) == pytest.approx(2.5)
-
-    def test_dict_without_value_raises(self):
-        with pytest.raises(ValueError, match="'value' key"):
-            _parse_value("x", {"dist": "lognormal", "mean": 1.0})
+    def test_dict_raises(self):
+        with pytest.raises(TypeError):
+            _parse_value("x", {"value": 2.5})
 
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError):
@@ -82,7 +79,7 @@ class TestFlattenScenario:
 
 class TestLoadSimulationHorizon:
     def test_default_horizon_loads(self):
-        # The Monte Carlo protocol of paper §4.2, Table 6: two years of weekly sprints.
+        # The campaign's Monte Carlo protocol: two years of weekly sprints.
         s = load_simulation_horizon("config/horizon_default.json")
         assert (s.T == 104 and s.K_search == 100 and s.K_final == 1000
                 and s.master_seed == 42)
@@ -101,7 +98,7 @@ class TestLoadSimulationHorizon:
             load_simulation_horizon(p)
 
     def test_a_horizon_with_only_the_old_K_key_raises(self, tmp_path):
-        """Both replication counts of §3.10 are required; there is no silent default."""
+        """Both replication counts are required; there is no silent default."""
         p = tmp_path / "h.json"
         p.write_text('{"T": 52, "K": 100, "master_seed": 42}')
         with pytest.raises(KeyError):
@@ -136,7 +133,7 @@ class TestLoadScenarioParams:
         assert isinstance(params, ScenarioParameters)
 
     def test_pessimistic_agent_tier_is_low_capability_at_ten_times_the_high_price(self):
-        """The `agent` group's fourth tier is defined, not measured (paper §4.1).
+        """The `agent` group's fourth tier is defined, not measured.
 
         Its whole content is "the low tier's capability at ten times the high tier's
         price", so pinning it against the two files it is derived from is what catches a
@@ -172,7 +169,7 @@ class TestLoadScenarioParams:
         assert (low.d_test, med.d_test, high.d_test) == pytest.approx((0.60, 0.75, 0.77))
 
     def test_refactoring_throughput_tracks_the_debt_a_work_item_adds(self):
-        """Paper §4.2.4: one Refactoring Agent removes the debt of one feature/bug fix.
+        """One Refactoring Agent removes the debt of one feature or one bug fix.
 
         `r_refactor` is therefore calibrated against `delta_impl` / `delta_fix` and takes
         the same 0.02 / 0.06 / 0.13 by agent tier — it is *not* the tier-invariant 0.10
@@ -203,7 +200,7 @@ class TestLoadScenarioParams:
         assert gammas == pytest.approx([0.40, 0.34, 0.0])
 
     def test_groups_can_be_mixed(self):
-        """The five groups are orthogonal, so tiers combine freely (paper §4.1)."""
+        """The five groups are orthogonal, so tiers combine freely."""
         params = load_scenario_params(
             tier_paths("medium", project="config/project_high.json")
         )
@@ -267,11 +264,11 @@ class TestLoadSearchConfig:
         cfg = load_search_config("config/search_default.json")
         assert set(cfg.scenario_paths) == set(SCENARIO_GROUPS)
         assert cfg.horizon_path == "config/horizon_default.json"
-        # The template runs the search; the §4.1 baseline is opted into per config.
+        # The template runs the search; the baseline is opted into per config.
         assert cfg.human_only is False
 
-    def test_default_search_config_matches_paper_search_range(self):
-        # Paper §4.2, Table 6: search range, and the E = 10,000 evaluation budget split
+    def test_default_search_config_matches_the_campaign_range(self):
+        # The campaign search range, and the 10,000-evaluation budget split
         # 10 % / 90 % between the initial pool and the generation loop.
         cfg = load_search_config("config/search_default.json")
         # Staffing levels from a one-day-per-week part-timer to a two-pizza team;

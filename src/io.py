@@ -1,14 +1,4 @@
-"""Load configuration from JSON files.
-
-All scenario parameters are fixed constants; no sampling occurs.
-
-Public API:
-    load_simulation_horizon(path)          -> SimulationHorizon
-    load_team_config(path)                 -> TeamConfiguration
-    load_scenario_params(group_paths)      -> ScenarioParameters
-    load_search_config(path)               -> SearchConfiguration
-    load_initial_state(path)               -> SystemState
-"""
+"""Load configuration from JSON files."""
 
 from __future__ import annotations
 
@@ -28,31 +18,14 @@ from .config import (
 from .parameters import ScenarioParameters
 from .state import SystemState
 
-__all__ = [
-    "SCENARIO_GROUPS",
-    "load_initial_state",
-    "load_scenario_params",
-    "load_search_config",
-    "load_simulation_horizon",
-    "load_team_config",
-]
-
-
 def _parse_value(key: str, value: Any) -> float:
-    """Extract a plain float from a JSON value (scalar or legacy fixed-dict)."""
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, dict):
-        # Legacy {"dist": "fixed", "value": x} or {"value": x}
-        if "value" in value:
-            return float(value["value"])
-        raise ValueError(
-            f"Parameter {key!r}: dict must have a 'value' key, got {list(value.keys())}"
+    """Coerce a scenario parameter to a float, rejecting anything that is not a number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"Cannot parse value for {key!r}: expected a number, "
+            f"got {type(value).__name__}"
         )
-    raise TypeError(
-        f"Cannot parse value for {key!r}: expected number or dict, "
-        f"got {type(value).__name__}"
-    )
+    return float(value)
 
 
 def _flatten_scenario(scenario_dict: dict) -> dict[str, Any]:
@@ -107,12 +80,11 @@ def load_team_config(path: str | Path) -> TeamConfiguration:
 
 
 def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParameters:
-    """Compose ScenarioParameters from one JSON file per scenario group (paper §4.1).
+    """Compose ScenarioParameters from one JSON file per scenario group.
 
-    ``group_paths`` must have exactly one entry per element of SCENARIO_GROUPS.
-    The groups partition the parameter set, so each field must be defined in
-    exactly one file. Every value must be a plain number (or a legacy
-    ``{"value": x}`` dict); no distribution metadata is accepted.
+    ``group_paths`` must have exactly one entry per element of SCENARIO_GROUPS.  The
+    groups partition the parameter set, so each field must be defined in exactly one
+    file, and every value must be a plain number.
     """
     missing_groups = sorted(set(SCENARIO_GROUPS) - group_paths.keys())
     unknown_groups = sorted(group_paths.keys() - set(SCENARIO_GROUPS))

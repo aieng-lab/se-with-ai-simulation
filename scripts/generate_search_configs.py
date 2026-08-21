@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the 432 scenario search configurations of paper §4.2.
+"""Generate one search configuration per campaign scenario.
 
-The five orthogonal scenario groups (paper §4.1) each come in a low / medium / high
-tier; `project` carries a fourth "very high" tier and `agent` a fourth "pessimistic"
-one, so combining them freely yields 3^3 * 4 * 4 = 432 scenarios.  Every generated file
-is `config/search_default.json` with its five `scenario` entries repointed at one tier
-combination; the search range, budgets, horizon, and seed are inherited unchanged so
-that all 432 searches share the experimental setup.
-
-Each scenario is solved once, with the evolutionary search of paper §3.11.
+The five scenario groups each come in a low / medium / high tier; `project` carries a
+fourth "very high" tier and `agent` a fourth "pessimistic" one, so combining them freely
+yields 3^3 * 4 * 4 = 432 scenarios.  Every generated file is the template with its five
+`scenario` entries repointed at one tier combination; the search range, budgets, horizon
+and seed are inherited unchanged, so all 432 searches share the experimental setup.
 
 Usage
 -----
@@ -52,10 +49,7 @@ def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
     sid = scenario_id(tiers)
     tier_list = ", ".join(f"{g}={t}" for g, t in zip(SCENARIO_GROUPS, tiers))
     config = dict(template)
-    config["description"] = (
-        f"Paper Section 4.2 scenario {sid} ({tier_list}); "
-        f"solve with the evolutionary search of Section 3.11"
-    )
+    config["description"] = f"Campaign scenario {sid} ({tier_list})"
     config["scenario_id"] = sid
     config["scenario"] = {
         group: f"config/{group}_{tier}.json"
@@ -67,7 +61,7 @@ def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
 
 
 def baseline_tier_combinations() -> list[tuple[str, ...]]:
-    """Tier tuples of the human-only baseline grid (paper §4.1), in SCENARIO_GROUPS order.
+    """Tier tuples of the human-only baseline grid, in SCENARIO_GROUPS order.
 
     `debt` and `agent` are held at UNUSED_TIER, so the product runs over the other three
     groups only: 3 human x 4 project x 3 bugimpact = 36 scenarios.
@@ -82,15 +76,15 @@ def baseline_tier_combinations() -> list[tuple[str, ...]]:
 def build_baseline_config(template: dict, tiers: tuple[str, ...]) -> dict:
     """Like `build_config`, but for a human-only baseline scenario.
 
-    Points `debt` and `agent` at their `_unused.json` placeholders and pins the mode to
-    ``human_only``, whose 99-point grid is enumerated exhaustively rather than searched.
+    Points `debt` and `agent` at their `_unused.json` placeholders and sets `human_only`,
+    which enumerates the 99-point zero-agent grid instead of searching.
     """
     config = build_config(template, tiers)
     tier_list = ", ".join(
         f"{g}={t}" for g, t in zip(SCENARIO_GROUPS, tiers) if t != UNUSED_TIER
     )
     config["description"] = (
-        f"Paper Section 4.1 human-only baseline {config['scenario_id']} ({tier_list}); "
+        f"Human-only baseline {config['scenario_id']} ({tier_list}); "
         f"debt and agent are inert for a zero-agent team and are marked X"
     )
     config["search"] = {**config["search"], "human_only": True}
@@ -105,8 +99,8 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Output directory (default: {DEFAULT_OUT_DIR}, "
                              f"or {BASELINE_OUT_DIR} with --baseline)")
     parser.add_argument("--baseline", action="store_true",
-                        help="Write the 36 human-only baseline scenarios of Section 4.1 "
-                             "instead of the 432 campaign scenarios")
+                        help="Write the 36 human-only baseline scenarios instead of the "
+                             "432 campaign scenarios")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing files instead of failing")
     args = parser.parse_args(argv)
@@ -145,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         shape = " x ".join(str(len(scenario_tiers(g))) for g in SCENARIO_GROUPS)
         print(f"Wrote {written} search configurations to {out_dir}/ "
-              f"({shape} = {expected} scenarios, one evolutionary search each)")
+              f"({shape} = {expected} scenarios, one search each)")
     print(f"Template: {args.template}")
     return 0
 

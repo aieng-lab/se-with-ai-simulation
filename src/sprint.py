@@ -12,17 +12,15 @@ Within-sprint ordering:
   Step 9  General maintenance (technical debt + documentation update)
   Step 10 Release event
 
-Bug fixing precedes the escalation queue because the escalation arrival rate is
-driven by the agent work completed this sprint, which includes the agent-phase
-bug fixes (paper §3.6, Eq. qesc).
+Bug fixing precedes the escalation queue because the escalation arrival rate is driven by
+the agent work completed this sprint, which includes the agent-phase bug fixes.
 
 Detection is unified: Code Review, Security Audit, and the Test suite all act
 within the same sprint as injection. There is no CI/CD latency buffer.
 
-A team with no agents at all (`config.is_human_only`) is the human-only baseline of
-paper §4.1 and takes a different path in two places: it reserves f_qa of its net capacity
-in Step 1 (Eq. hafter_qa), and its Step 5 detection is a single human review stage
-(Eqs. cov_qa / qa_human) in place of Test -> CR -> SA.  The two paths are mutually
+A team with no agents at all (`config.is_human_only`) takes a different path in two
+places: it reserves f_qa of its net capacity in Step 1, and its Step 5 detection is a
+single human review stage in place of Test -> CR -> SA.  The two paths are mutually
 exclusive, so an agent-supported team's transition and RNG stream are untouched by it.
 """
 
@@ -47,12 +45,8 @@ if TYPE_CHECKING:
 
 
 #: Cost of implementing one approved architecture proposal, in units of one feature
-#: implementation (paper §3.6, Eqs. (arch_impl)/(impl_agents), and §3.7,
-#: Table tab:work_units).  Implementing a proposal needs the same code-base-wide analysis
-#: that makes producing one five times as expensive as a feature (c_token,2 = 5 *
-#: c_token,1 across every tier of §4.1), so it costs five features in *both* senses: it
-#: consumes five features' worth of the implementation agents' capacity, and it is billed
-#: at five features.
+#: implementation.  It counts five features in both senses: it consumes five features'
+#: worth of the implementation agents' capacity, and it is billed at five.
 ARCH_IMPL_COST_UNITS = 5.0
 
 
@@ -60,27 +54,23 @@ ARCH_IMPL_COST_UNITS = 5.0
 class SprintActions:
     """Work completed in one sprint: the billable agent vector plus who-did-what counts.
 
-    `units` holds the work units of each agent role, indexed k=1..8.  Each entry is
-    denominated in the same unit as that role's throughput rate r_k
-    (features for k=1, change requests for k=2, bugs for k=3, debt for k=4, deployed
-    instances for the flat-rate services k=5,6, tests for k=7, documents for k=8), so
-    the agent cost of paper Eq. (cost_agents) is the plain inner product with
-    `c_token`.  The state vector of §3.4 stays 21-dimensional: these counts are
-    returned rather than stored.
+    `units` holds the work each agent role completed, indexed k=1..8, each entry in the
+    same unit as that role's throughput rate: features for k=1, change requests for k=2,
+    bugs for k=3, deployed instances for the flat-rate roles k=4,5,6, tests for k=7,
+    documents for k=8.  The agent bill is therefore the plain inner product with
+    `c_token`.  These counts are returned rather than stored in the state vector.
 
-    The four scalars are *contribution accounting*, not billing — nothing reads them
-    for cost, and `units` stays the sole billable vector.  They exist because the
-    human/agent split of the work is otherwise unrecoverable downstream: `units[0]`
-    conflates agent features with implemented architecture proposals, and human work
-    appears in no entry at all (human cost is the headcount term of Eq. (cost_human),
-    independent of what the humans produced).  Paper symbols, all §3.6:
+    The four scalars are contribution accounting, not billing — `units` stays the sole
+    billable vector.  They exist because the human/agent split of the work is otherwise
+    unrecoverable downstream: `units[0]` conflates agent features with implemented
+    architecture proposals, and human work appears in no entry at all, since human cost
+    is a headcount term independent of what the humans produced.
 
-        impl_human   impl_human'(t), Eq. (impl_human_capped) — features *delivered* by
-                     humans, i.e. after the demand cap, not the budget of Eq. (implhuman)
-        impl_agents  impl_agents(t), Eq. (impl_agents)
-        fixes_human  sum of the per-tier n^H_i(t) of Eq. (human_fixes)
-        fixes_agent  fixes_agent(t) — deliberately duplicates `units[2]`, so that the
-                     human/agent pair reads symmetrically at the call site
+        impl_human   features delivered by humans, after the demand cap
+        impl_agents  features delivered by agents
+        fixes_human  bugs repaired by humans, summed over the severity tiers
+        fixes_agent  bugs repaired by agents; duplicates `units[2]`, so the human/agent
+                     pair reads symmetrically at the call site
 
     Recording `impl_agents` also un-conflates `units[0]`: the implemented proposals come
     back as `(units[0] - impl_agents) / ARCH_IMPL_COST_UNITS`.
@@ -122,8 +112,8 @@ def step_sprint(
 ) -> SprintActions:
     """Advance `state` from sprint t-1 to sprint t (in place).
 
-    Implements the ten-step transition in canonical order and returns the work each
-    agent role actually completed, which is what Eq. (cost_agents) bills.
+    Runs the ten-step transition in order and returns the work each agent role actually
+    completed, which is what the agent bill is computed from.
     """
 
     # ------------------------------------------------------------------
@@ -131,9 +121,8 @@ def step_sprint(
     # ------------------------------------------------------------------
     is_frozen = (t % config.R) >= (config.R - config.F_freeze)
     A_active = config.active_A(is_frozen)
-    # Only the supervised roles K_sup = {1,2,3,7,8} consume human oversight; the two
-    # detection services (k=5,6) and the Refactoring Agent (k=4) run autonomously and are
-    # exempt (see config.SUPERVISED_ROLE_INDICES / AUTONOMOUS_ROLE_INDICES).
+    # Only the supervised roles consume human oversight; the two detection services and
+    # the Refactoring Agent run autonomously and are exempt.
     n_supervised = supervised_agent_count(A_active)
 
     # ------------------------------------------------------------------
@@ -161,12 +150,12 @@ def step_sprint(
     # Monitoring overhead is proportional to actual supervised agents per FTE.
     # The feasibility gate only guarantees a positive remainder at doc_cov = 1, so
     # monitoring can still exhaust the budget early in a run; the clamp at 0 means
-    # such a sprint produces no productive human work (paper §3.6, Eq. hafter_mon)
-    # rather than a negative budget that would run the queues backwards.
+    # such a sprint produces no productive human work rather than a negative budget that
+    # would run the queues backwards.
     agents_per_fte = n_supervised / config.N
     H_after_mon = max(0.0, H_net - agents_per_fte * H_mon_eff)
 
-    # Architecture reviews served this sprint (eq. rev_done, H_after_rev).
+    # Architecture reviews served this sprint.
     # The residuals are clamped at 0: mathematically they cannot be negative, since the
     # floor bounds the served item count by the budget, but `k * H_x_time / N` is not
     # exactly the quantity that was floored and can exceed the budget by an ulp — with
@@ -178,16 +167,14 @@ def step_sprint(
     rev_done = min(math.floor(H_after_mon * config.N / params.H_review_time), state.Q_rev)
     H_after_rev = max(0.0, H_after_mon - rev_done * params.H_review_time / config.N)
 
-    # Escalations served this sprint (eq. esc_done, H_after_esc)
+    # Escalations served this sprint.
     esc_done = min(math.floor(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
     H_after_esc = max(0.0, H_after_rev - esc_done * params.H_escalation_time / config.N)
 
-    # Human-only baseline (paper §4.1, Eq. hafter_qa): with no agents to supervise, the
-    # developers instead reserve f_qa of their net capacity to review what they wrote, and
-    # both the coding and the bug-fixing budgets are taken from the remainder.  Freeze
-    # sprints implement nothing, so there is nothing to review and nothing is reserved.
-    # An agent-supported team never enters this branch, so its capacity cascade — and the
-    # RNG stream that follows from it — is unchanged.
+    # With no agents to supervise, the developers instead reserve f_qa of their net
+    # capacity to review what they wrote, and both the coding and the bug-fixing budgets
+    # come out of the remainder.  Freeze sprints implement nothing, so there is nothing to
+    # review and nothing is reserved.
     human_only = is_human_only(config)
     H_after_qa = H_after_esc
     if human_only and not is_frozen:
@@ -211,7 +198,7 @@ def step_sprint(
     # arch_impl_done consumes agent capacity but does NOT count toward F_completed, and
     # each proposal costs ARCH_IMPL_COST_UNITS features' worth of that capacity — the
     # same code-base-wide analysis that makes producing a proposal five times as
-    # expensive as a feature (Eq. arch_impl).
+    # expensive as a feature.
     arch_impl_cap = int(total_impl_cap // ARCH_IMPL_COST_UNITS)
     arch_impl_done = min(state.Q_arch_impl, arch_impl_cap)
     # Demand is served by the humans first; the agents fill whatever is left. Capping
@@ -241,8 +228,8 @@ def step_sprint(
     # ------------------------------------------------------------------
     r_bugs_eff = params.r_bugs * (2.0 - delta_D)
 
-    # Agent-written code injects at the debt-amplified rate (Eq. Binj-agent); human-written
-    # code injects at a fixed per-feature rate (Eq. Binj-human), independent of the debt.
+    # Agent-written code injects at the debt-amplified rate; human-written code injects at
+    # a fixed per-feature rate, independent of the debt.
     bugs_raw = int(rng.poisson(impl_agents * r_bugs_eff))
     bugs_human_raw = int(rng.poisson(impl_human * params.r_bugs_human))
     bugs_total = bugs_raw + bugs_human_raw
@@ -257,17 +244,14 @@ def step_sprint(
     bugs_min = remaining - bugs_maj
 
     if human_only:
-        # Human quality assurance (paper §4.1, Eqs. cov_qa / qa_human) replaces the three
-        # agentic stages below.  It is not an extra stage: with no agents those three
-        # detect nothing at all (Phi(., 0) = 0 kills review and audit, and N_test never
-        # grows so cov_test = 0), which is exactly why the baseline needs this path.
+        # Human quality assurance replaces the three agentic stages below rather than
+        # adding to them: with no agents those three detect nothing at all, since review
+        # and audit are gated on the agent count and N_test never grows.
         #
-        # cov_qa matches the capacity reserved by Eq. (hafter_qa) against the review the
-        # sprint demands — h_qa hours for each implemented feature — and is the share
-        # of features that can be reviewed in full.  f_qa is calibrated so that it is 1 in
-        # steady state; it drops below only when the team implements more than its own
-        # reservation covers.  There is no human security-audit analogue, so security bugs
-        # are caught at the same d_qa as any other class.
+        # cov_qa is the share of features that can be reviewed in full: the capacity
+        # reserved above against the h_qa hours each implemented feature demands.  There
+        # is no human security-audit analogue, so security bugs are caught at the same
+        # d_qa as any other class.
         cov_qa = min(1.0, params.f_qa * config.N * H_net
                           / (params.h_qa * max(1, impl)))
         p_qa = cov_qa * params.d_qa
@@ -309,7 +293,7 @@ def step_sprint(
         det_maj = test_det_maj + CR_det_maj
         det_sec = test_det_sec + CR_det_sec + SA_det_sec
 
-    # Detected bugs enter the known queues, the rest the hidden ones (Eq. bkno_update).
+    # Detected bugs enter the known queues, the rest the hidden ones.
     # The draws above are over this sprint's *injections*, not the standing hidden queue.
     state.B_kno_min += det_min
     state.B_kno_maj += det_maj
@@ -367,8 +351,8 @@ def step_sprint(
     # the debt update below that is driven by all repairs regardless of who made them.
     fixes_agent = (rel_fixes_min + rel_fixes_maj + rel_fixes_sec
                  + fixes_min     + fixes_maj     + fixes_sec)
-    # Sum^6_i n^H_i(t) of Eq. (human_fixes), written out rather than derived as
-    # total_fixes - fixes_agent so that it mirrors the agent sum above.
+    # Written out rather than derived as total_fixes - fixes_agent, so that it mirrors
+    # the agent sum above.
     fixes_human = (h_rel_fixes_min + h_rel_fixes_maj + h_rel_fixes_sec
                  + h_fixes_min    + h_fixes_maj    + h_fixes_sec)
     total_fixes = fixes_human + fixes_agent
@@ -394,13 +378,12 @@ def step_sprint(
     D_raw = (state.D_tech
              + params.delta_impl * impl
              + params.delta_fix * total_fixes)
-    # r_refactor is denominated in D_tech units (§4.2.4): one agent removes the debt that
-    # one feature or one bug fix adds, so it is calibrated against delta_impl / delta_fix
-    # and takes the same 0.02 / 0.06 / 0.13 values by agent tier.  Nothing throttles the
-    # removal apart from the clip at 0 — the Refactoring Agent has no queue, is not slowed
-    # by delta_D, and removes debt even in a sprint that created none.  There is no
-    # countable artefact here, which is why k=4 is billed per deployed instance rather
-    # than per unit of output (see the units vector below).
+    # r_refactor is denominated in D_tech units: one agent removes the debt that one
+    # feature or one bug fix adds, so it is on the same scale as delta_impl and delta_fix.
+    # Nothing throttles the removal apart from the clip at 0 — the Refactoring Agent has
+    # no queue, is not slowed by delta_D, and removes debt even in a sprint that created
+    # none.  It produces no countable artefact, which is why it is billed per deployed
+    # instance (see the units vector below).
     D_new = max(0.0, min(1.0,
         D_raw - params.r_refactor * A_active[3],   # Refactoring Agent (k=4, index 3)
     ))
@@ -432,13 +415,13 @@ def step_sprint(
         state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
 
     # ------------------------------------------------------------------
-    # Billable work completed this sprint, by role (paper Eq. cost_agents)
+    # Billable work completed this sprint, by role
     # ------------------------------------------------------------------
-    # Roles 1-3 and 7-8 are demand-driven and idle when no work reaches them: through the
-    # queues they drain, and through the coverage caps above.  Three roles have no discrete
-    # unit of output and are charged per deployed instance per sprint (r_4 = r_5 = r_6 = 1,
-    # §3.7): the two review services, and the Refactoring Agent, whose output is a
-    # reduction of the normalised D_tech rather than a countable artefact.
+    # Roles 1-3 and 7-8 are demand-driven and idle when no work reaches them, through the
+    # queues they drain and through the coverage caps above.  Three roles have no discrete
+    # unit of output and are charged per deployed instance per sprint: the two review
+    # services, and the Refactoring Agent, whose output is a reduction of the normalised
+    # D_tech rather than a countable artefact.
     return SprintActions(
         units=(
             # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each
