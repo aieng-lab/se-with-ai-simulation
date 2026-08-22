@@ -86,8 +86,7 @@ class ReplicationTrace:
 class ConfigTrace:
     """A ConfigResult plus the per-sprint history of each of its replications."""
 
-    config: TeamConfiguration
-    replications: tuple[ReplicationResult, ...]
+    result: ConfigResult
     traces: tuple[ReplicationTrace, ...]
 
 
@@ -158,18 +157,15 @@ def run_configuration(
         raise ValueError(f"k_offset must be >= 0, got {k_offset}")
 
     for k in range(k_offset, k_offset + n_replications):
-        result, trace = _run_replication(config, settings, params, k, capture_traces, initial_state)
-        rep_results.append(result)
+        rep, trace = _run_replication(config, settings, params, k, capture_traces, initial_state)
+        rep_results.append(rep)
         if trace is not None:
             rep_traces.append(trace)
 
+    result = ConfigResult(config=config, replications=tuple(rep_results))
     if capture_traces:
-        return ConfigTrace(
-            config=config,
-            replications=tuple(rep_results),
-            traces=tuple(rep_traces),
-        )
-    return ConfigResult(config=config, replications=tuple(rep_results))
+        return ConfigTrace(result=result, traces=tuple(rep_traces))
+    return result
 
 
 def _run_replication(

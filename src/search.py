@@ -25,7 +25,8 @@ Output layout
 Supervised role counts are bounded per role by `saturation_bounds` and collectively by
 the human-capacity check in `src.feasibility`, which runs after the draw.  The autonomous
 roles are outside both: `review_sample_max` is only a sampling range, and only the
-Refactoring Agent carries a real cap, `refactoring_bound`.
+Refactoring Agent carries a real cap, `refactoring_bound`.  `role_limits` bundles the
+three into the `RoleLimits` the sampler and the mutation operator work from.
 """
 
 from __future__ import annotations
@@ -130,20 +131,44 @@ def refactoring_bound(params: ScenarioParameters) -> int:
     return int(params.r_arrival // 2)
 
 
+@dataclass(frozen=True, slots=True)
+class RoleLimits:
+    """The per-role ranges the sampler and the mutation operator draw within.
+
+    `supervised` is `saturation_bounds`, keyed by role index; `review` and `refactor` are
+    the autonomous roles' ranges.  Built once per search by `role_limits`.
+    """
+
+    supervised: dict[int, int]
+    review: int
+    refactor: int
+
+    def upper(self, idx: int) -> int:
+        """The top of the sampling range of autonomous role `idx`."""
+        return self.refactor if idx == _REFACTOR_INDEX else self.review
+
+
+def role_limits(params: ScenarioParameters, sigma: float) -> RoleLimits:
+    """The sampling ranges `params` implies at monitoring headroom `sigma`."""
+    return RoleLimits(
+        supervised=saturation_bounds(params, sigma),
+        review=review_sample_max(params),
+        refactor=refactoring_bound(params),
+    )
+
+
 def _sample_composition(
     rng: np.random.Generator,
-    bounds: dict[int, int],
-    review_max: int,
-    refactor_max: int,
+    limits: RoleLimits,
     *,
     qa: bool,
 ) -> tuple[int, ...]:
     """Draw a full 8-role composition, each role independently and uniformly.
 
-    Every supervised role is drawn from `U{0, ..., bounds[k]}` and every autonomous one
-    from `U{0, ..., review_max}` (or `refactor_max` for the Refactoring Agent).  Two
-    structural constraints are met by construction: a dev-phase composition draws role 1
-    from `U{1, ...}` so that `a_dev,1 >= 1`, and a QA-phase one leaves roles 1-2 at zero.
+    A supervised role is drawn from `U{0, ..., limits.supervised[k]}` and an autonomous
+    one from `U{0, ..., limits.upper(k)}`.  Two structural constraints are met by
+    construction: a dev-phase composition draws role 1 from `U{1, ...}` so that
+    `a_dev,1 >= 1`, and a QA-phase one leaves roles 1-2 at zero.
 
     The human-capacity condition is not enforced here; a draw that violates it is
     rejected later by the feasibility gate.
@@ -151,10 +176,9 @@ def _sample_composition(
     A = [0] * AGENT_ROLE_COUNT
     for idx in (_QA_SUPERVISED_INDICES if qa else SUPERVISED_ROLE_INDICES):
         lo = 0 if (qa or idx != 0) else 1
-        A[idx] = int(rng.integers(lo, bounds[idx] + 1))
+        A[idx] = int(rng.integers(lo, limits.supervised[idx] + 1))
     for idx in AUTONOMOUS_ROLE_INDICES:
-        upper = refactor_max if idx == _REFACTOR_INDEX else review_max
-        A[idx] = int(rng.integers(0, upper + 1))
+        A[idx] = int(rng.integers(0, limits.upper(idx) + 1))
     return tuple(A)
 
 
@@ -172,16 +196,14 @@ def _pick(indices: tuple[int, ...], rng: np.random.Generator) -> int:
     return indices[int(rng.integers(len(indices)))]
 
 
-def _service_step(idx: int, rng: np.random.Generator,
-                  review_max: int, refactor_max: int) -> int:
+def _service_step(idx: int, rng: np.random.Generator, limits: RoleLimits) -> int:
     """One signed "adjust service" step for autonomous role `idx`.
 
     The size is `2**j` with `j` uniform over `{0, ..., floor(log2 range)}` and the sign
-    uniform; `range` is `review_max` for the detection services and `refactor_max` for the
-    Refactoring Agent.  Exponentially spaced, so the search can traverse counts in the
-    hundreds.  A range of 0 leaves only `j = 0`.
+    uniform, `range` being the role's own sampling range.  Exponentially spaced, so the
+    search can traverse counts in the hundreds.  A range of 0 leaves only `j = 0`.
     """
-    s = refactor_max if idx == _REFACTOR_INDEX else review_max
+    s = limits.upper(idx)
     max_exponent = int(math.log2(s)) if s >= 1 else 0
     step = 1 << int(rng.integers(max_exponent + 1))
     return step * int(rng.choice([-1, 1]))
@@ -190,20 +212,18 @@ def _service_step(idx: int, rng: np.random.Generator,
 def _mutate_composition(
     A: list[int],
     mutable: tuple[int, ...],
-    bounds: dict[int, int],
+    limits: RoleLimits,
     rng: np.random.Generator,
     min_impl: bool,
-    review_max: int,
-    refactor_max: int,
 ) -> None:
     """Apply one elementary mutation to `A` in place.
 
-    `mutable` are the supervised role indices that may be changed, each capped by
-    `bounds[i]`; the three operations over them move, add or remove one agent.  The
+    `mutable` are the supervised role indices that may be changed, each capped by its
+    saturation bound; the three operations over them move, add or remove one agent.  The
     autonomous roles are not part of that pool and get a separate "adjust service"
     operation instead: `+/- 2**j` from `_service_step`, floored at zero and additionally
-    capped at `refactor_max` for the Refactoring Agent.  The two detection services stay
-    uncapped, so a mutation may take them past `review_max`.
+    capped for the Refactoring Agent.  The two detection services are uncapped, so a
+    mutation may take them past their sampling range.
 
     A step that lands back on the parent value is a no-op for `_mutate` to retry.  With
     `min_impl`, the Feature Implementation role is protected from being drained to zero.
@@ -211,16 +231,16 @@ def _mutate_composition(
     op = int(rng.integers(4))   # 0=move, 1=add, 2=remove, 3=adjust service +/-2**j
     if op == 3:
         idx = _pick(AUTONOMOUS_ROLE_INDICES, rng)
-        target = A[idx] + _service_step(idx, rng, review_max, refactor_max)
+        target = A[idx] + _service_step(idx, rng, limits)
         if idx == _REFACTOR_INDEX:
-            target = min(target, refactor_max)
+            target = min(target, limits.refactor)
         A[idx] = max(0, target)
         return
 
     floor = 1 if min_impl else 0
     donors = [i for i in mutable if A[i] > 0 and (i != 0 or A[i] > floor)]
     # Only roles still below their saturation bound can receive an agent.
-    recipients = tuple(i for i in mutable if A[i] < bounds[i])
+    recipients = tuple(i for i in mutable if A[i] < limits.supervised[i])
     if op == 1 and recipients:
         A[_pick(recipients, rng)] += 1
     elif op == 2 and donors:
@@ -230,7 +250,7 @@ def _mutate_composition(
         A[src] -= 1
         # Re-check the bound, excluding the donor: moving an agent to the role it came
         # from is a no-op, and the donor is always below its bound after the decrement.
-        recipients = tuple(i for i in mutable if i != src and A[i] < bounds[i])
+        recipients = tuple(i for i in mutable if i != src and A[i] < limits.supervised[i])
         if recipients:
             A[_pick(recipients, rng)] += 1
         else:
@@ -241,9 +261,7 @@ def _mutate(
     config: TeamConfiguration,
     rng: np.random.Generator,
     search_cfg: SearchConfiguration,
-    bounds: dict[int, int],
-    review_max: int,
-    refactor_max: int,
+    limits: RoleLimits,
 ) -> TeamConfiguration:
     """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
 
@@ -283,16 +301,14 @@ def _mutate(
 
         elif mutation_type == 2:
             # Exactly one elementary op, maintaining the bounds and A_dev[0] >= 1.
-            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, bounds,
-                                rng, min_impl=True, review_max=review_max,
-                                refactor_max=refactor_max)
+            _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, limits,
+                                rng, min_impl=True)
 
         else:
             # One elementary op restricted to the supervised QA roles (indices 0-1 stay
             # at 0) plus the autonomous services.
-            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, bounds,
-                                rng, min_impl=False, review_max=review_max,
-                                refactor_max=refactor_max)
+            _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, limits,
+                                rng, min_impl=False)
 
         try:
             child = TeamConfiguration(N=N, A_dev=tuple(A_dev), R=config.R,
@@ -313,7 +329,7 @@ def _random_draws(
     search_cfg: SearchConfiguration,
     rng: np.random.Generator,
     n_samples: int,
-    params: ScenarioParameters,
+    limits: RoleLimits,
 ) -> list[TeamConfiguration]:
     """Draw `n_samples` random (N, A_dev, R, F_freeze, A_qa) candidates.
 
@@ -321,9 +337,6 @@ def _random_draws(
     nothing is discarded here; the only rejection path is the human-capacity check
     `SearchOutcome.record` applies.
     """
-    review_max = review_sample_max(params)
-    refactor_max = refactoring_bound(params)
-    bounds = saturation_bounds(params, search_cfg.sigma)
     draws: list[TeamConfiguration] = []
     for _ in range(n_samples):
         N = float(rng.choice(search_cfg.N_values))
@@ -332,10 +345,10 @@ def _random_draws(
         # real parameter at all.  Restricted to the admissible values for this R; the list
         # is never empty, since SearchConfiguration requires 0 in F_freeze_values.
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
-        A_dev = _sample_composition(rng, bounds, review_max, refactor_max, qa=False)
+        A_dev = _sample_composition(rng, limits, qa=False)
         # With no freeze window the QA composition is never applied, so drawing one would
         # only attach meaningless coordinates to the candidate.
-        A_qa = (_sample_composition(rng, bounds, review_max, refactor_max, qa=True)
+        A_qa = (_sample_composition(rng, limits, qa=True)
                 if F_freeze > 0 else (0,) * AGENT_ROLE_COUNT)
         draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
                                        F_freeze=F_freeze, A_qa=A_qa))
@@ -490,9 +503,7 @@ def run_search(
     n_elite     = search_cfg.n_elite
     budget      = search_cfg.budget
     keep_samples = search_cfg.samples != "none"
-    bounds = saturation_bounds(params, search_cfg.sigma)
-    review_max = review_sample_max(params)
-    refactor_max = refactoring_bound(params)
+    limits = role_limits(params, search_cfg.sigma)
     floor = throughput_floor(params, search_cfg.epsilon)
 
     outcome = SearchOutcome()
@@ -505,7 +516,7 @@ def run_search(
         seen.add(cfg)
 
     print(f"Random initialisation ({n_initial} samples) …", flush=True)
-    init_draws = _random_draws(search_cfg, rng, min(n_initial, budget), params)
+    init_draws = _random_draws(search_cfg, rng, min(n_initial, budget), limits)
     for i, cfg in enumerate(init_draws):
         evaluate_new(cfg, generation=0)
         _progress(i + 1, len(init_draws), outcome, progress_every)
@@ -543,7 +554,7 @@ def run_search(
                     break
                 attempts += 1
                 parent = pool[int(rng.integers(len(pool)))]
-                child = _mutate(parent, rng, search_cfg, bounds, review_max, refactor_max)
+                child = _mutate(parent, rng, search_cfg, limits)
                 if child in seen:
                     continue
                 evaluate_new(child, generation=gen)

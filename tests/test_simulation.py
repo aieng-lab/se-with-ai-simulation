@@ -85,7 +85,7 @@ class TestTraceCapture:
         s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=42)
         no_trace = run_configuration(base_config, s, base_params)
         with_trace = run_configuration(base_config, s, base_params, capture_traces=True)
-        for a, b in zip(no_trace.replications, with_trace.replications):
+        for a, b in zip(no_trace.replications, with_trace.result.replications):
             assert a.value == b.value and a.cost == b.cost
             assert a.cost_quality == b.cost_quality
 
@@ -154,7 +154,7 @@ class TestCostAccounting:
         )
         s = SimulationHorizon(T=4, K_search=1, K_final=1, master_seed=0)
         trace = run_configuration(base_config, s, params, capture_traces=True)
-        rep = trace.replications[0]
+        rep = trace.result.replications[0]
         F_completed = trace.traces[0].snapshots[-1].F_completed
 
         # Unit token costs, so C_agents is just the total work performed.
@@ -276,7 +276,7 @@ class TestCostAccounting:
         )
         s = SimulationHorizon(T=10, K_search=1, K_final=1, master_seed=4)
         trace = run_configuration(config, s, params, capture_traces=True)
-        rep = trace.replications[0]
+        rep = trace.result.replications[0]
 
         for snap in trace.traces[0].snapshots:
             assert snap.N_test <= params.c_test_ceil * snap.F_completed + 1e-9

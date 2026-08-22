@@ -129,7 +129,7 @@ class TestSaveLoadTraces:
 
 
 class TestTrajectoryFieldNames:
-    """Every field the CLI and the trajectory figure ask for must actually be persisted."""
+    """Every field the CLI tabulates must actually be persisted."""
 
     @staticmethod
     def _snapshot_fields() -> set[str]:
@@ -142,11 +142,3 @@ class TestTrajectoryFieldNames:
         from src.main import ANALYZE_TRAJECTORY_FIELDS
         missing = set(ANALYZE_TRAJECTORY_FIELDS) - self._snapshot_fields()
         assert not missing, f"{sorted(missing)} are not persisted"
-
-    def test_trajectory_plot_fields_are_snapshot_fields(self):
-        from src.visualization import _DEFAULT_TRAJECTORY_FIELDS, _TRAJECTORY_LABELS
-        # B_kno is derived from B_kno_min + B_kno_maj inside plot_trajectories.
-        derived = {"B_kno"}
-        missing = set(_DEFAULT_TRAJECTORY_FIELDS) - self._snapshot_fields() - derived
-        assert not missing, f"{sorted(missing)} are neither persisted nor derived"
-        assert set(_DEFAULT_TRAJECTORY_FIELDS) <= set(_TRAJECTORY_LABELS)

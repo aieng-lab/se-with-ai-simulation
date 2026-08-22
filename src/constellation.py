@@ -171,9 +171,8 @@ def role_bill(optima: pd.DataFrame, config_dir: str = "config") -> pd.DataFrame:
     figure.  `cost_team_mean` is the developers and the agents together.
     """
     frame = optima.copy()
-    prices = {}
-    for scenario_id in frame["scenario_id"].unique():
-        prices[scenario_id] = scenario_params_for_id(scenario_id, config_dir).c_token
+    prices = {scenario_id: scenario_params_for_id(scenario_id, config_dir).c_token
+              for scenario_id in frame["scenario_id"].unique()}
     price = np.array([prices[s] for s in frame["scenario_id"]], dtype=float)
     actions = frame[[f"actions_{k}" for k in range(1, AGENT_ROLE_COUNT + 1)]].to_numpy(
         dtype=float)
@@ -185,9 +184,9 @@ def role_bill(optima: pd.DataFrame, config_dir: str = "config") -> pd.DataFrame:
     # to apportion; its eight shares are zero rather than a division by zero.
     total = bill.sum(axis=1)
     share = np.divide(bill, total[:, None], out=np.zeros_like(bill), where=total[:, None] > 0)
-    reported = frame["cost_agent_mean"].to_numpy(dtype=float)[:, None]
+    reported = frame["cost_agent_mean"].to_numpy(dtype=float)
     for k, column in enumerate(AGENT_COST_PARAMETERS):
-        frame[column] = share[:, k] * reported[:, 0]
+        frame[column] = share[:, k] * reported
     # The two cost drivers the composition controls; `cost_quality_mean` is not one.
     frame["cost_team_mean"] = frame["cost_human_mean"] + frame["cost_agent_mean"]
     return frame
@@ -268,17 +267,13 @@ def cell_statistics(
     long = long.merge(counts.reset_index(), on=cell_columns, how="left")
     long = long.merge(members.reset_index(), on=cell_columns, how="left")
     long.insert(0, "population", population)
-    return _sorted_cells(long, groups, parameters)
+    return _sorted_cells(long, groups)
 
 
-def _sorted_cells(
-    long: pd.DataFrame,
-    groups: tuple[str, ...],
-    parameters: list[str],
-) -> pd.DataFrame:
+def _sorted_cells(long: pd.DataFrame, groups: tuple[str, ...]) -> pd.DataFrame:
     """Order the long table by tier (mild→extreme) and by parameter block."""
     tier_order = {name: i for i, name in enumerate(ALL_SCENARIO_TIERS)}
-    parameter_order = {name: i for i, name in enumerate(parameters)}
+    parameter_order = {name: i for i, name in enumerate(CONSTELLATION_PARAMETERS)}
     tier_columns = [f"tier_{g}" for g in groups]
     out = long.sort_values(
         tier_columns + ["parameter"],

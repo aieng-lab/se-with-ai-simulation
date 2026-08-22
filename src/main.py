@@ -90,7 +90,7 @@ from .campaign import baseline_uplift, build_tables, convergence_summary
 from .constellation import (CELL_GROUPS, build_constellation,
                             build_indistinguishable, constellation_summary,
                             role_bill)
-from .simulation import ConfigResult, ConfigTrace, run_configuration
+from .simulation import ConfigTrace, run_configuration
 from .visualization import (visualize_campaign, visualize_constellation,
                             visualize_multi, visualize_single, visualize_team_summary)
 
@@ -168,7 +168,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     if args.traces:
         trace = run_configuration(config, horizon, params, capture_traces=True,
                                   initial_state=initial_state)
-        cr = ConfigResult(config=config, replications=trace.replications)
+        cr = trace.result
     else:
         cr = run_configuration(config, horizon, params, initial_state=initial_state)
 
@@ -645,6 +645,19 @@ def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
     )
 
 
+def _constellation_figures(cells: pd.DataFrame, optima: pd.DataFrame, out_dir: Path,
+                           args: argparse.Namespace) -> None:
+    """Map the subcommand's `--rows` / `--cols` flags onto the two figure sets.
+
+    The team-summary figures read the per-scenario `optima` rather than the aggregated
+    `cells`: their shares are formed within a scenario, which an aggregate cannot undo.
+    """
+    visualize_constellation(cells, out_dir, args.format,
+                            rows_group=args.rows, cols_group=args.cols)
+    visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
+                           block_group=args.cols, bar_group=args.rows)
+
+
 def _cmd_constellation(args: argparse.Namespace) -> None:
     """What the optimal teams are made of, cut along two scenario groups.
 
@@ -663,13 +676,8 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     if args.figures_only:
         cells = _read_table(cells_path, "cell statistic(s)",
                             "run the constellation analysis without --figures-only first.")
-        visualize_constellation(cells, out_dir, args.format,
-                                rows_group=args.rows, cols_group=args.cols)
-        # These two read the per-scenario table rather than the cell statistics: their
-        # shares are formed within a scenario, which an aggregate cannot undo.
         optima = _read_table(optima_path, "reported optima", optima_hint)
-        visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
-                               block_group=args.cols, bar_group=args.rows)
+        _constellation_figures(cells, optima, out_dir, args)
         print("\nDone.")
         return
 
@@ -701,10 +709,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     summary_path.write_text(summary, encoding="utf-8")
     print(f"  {summary_path}")
 
-    visualize_constellation(cells, out_dir, args.format,
-                            rows_group=args.rows, cols_group=args.cols)
-    visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
-                           block_group=args.cols, bar_group=args.rows)
+    _constellation_figures(cells, optima, out_dir, args)
     print("\nDone.")
 
 
@@ -754,7 +759,7 @@ def main(argv: list[str] | None = None) -> None:
                          help="Output directory for optimization results")
     p_optimize.add_argument(
         "--human-only", action="store_true",
-        help="Enumerate the 99-point zero-agent baseline grid instead of searching "
+        help="Enumerate the zero-agent baseline grid instead of searching "
              "(also settable in the search config)",
     )
     p_optimize.add_argument(

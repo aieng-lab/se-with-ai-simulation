@@ -5,7 +5,7 @@ files and returns a matplotlib Figure; the caller decides how to save it.
 
 Per-search plots
 ----------------
-    plot_cost_vs_value, plot_cost_split, plot_trajectories, plot_comparison_optima
+    plot_cost_vs_value, plot_cost_split, plot_comparison_optima
 
 Campaign plots
 --------------
@@ -69,7 +69,6 @@ from .constellation import (
     PARAMETER_BLOCKS,
     POPULATIONS,
 )
-from .results import load_traces
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -87,7 +86,7 @@ _BAR_LIMIT = 60
 
 
 # ---------------------------------------------------------------------------
-# 1. The search landscape: cost against the constrained quantity
+# The search landscape: cost against the constrained quantity
 # ---------------------------------------------------------------------------
 
 def plot_cost_vs_value(
@@ -147,7 +146,7 @@ def plot_cost_vs_value(
 
 
 # ---------------------------------------------------------------------------
-# 2. What the cost is made of
+# What the cost is made of
 # ---------------------------------------------------------------------------
 
 _COST_DRIVERS: tuple[tuple[str, str], ...] = (
@@ -194,72 +193,7 @@ def plot_cost_split(
 
 
 # ---------------------------------------------------------------------------
-# 3. State trajectories
-# ---------------------------------------------------------------------------
-
-#: Fields plot_trajectories draws.  All but `B_kno` are persisted snapshot columns;
-#: `B_kno` is summed from the three severities, matching `SystemState.B_kno`.
-_DEFAULT_TRAJECTORY_FIELDS = ["F_completed", "D_tech", "B_kno", "N_doc"]
-_B_KNO_COLUMNS = ("B_kno_min", "B_kno_maj", "B_kno_sec")
-_TRAJECTORY_LABELS = {
-    "F_completed": "Cumulative features\n(F_completed)",
-    "D_tech":      "Technical debt\n(D_tech)",
-    "B_kno":       "Known bugs\n(B_kno, all severities)",
-    "N_doc":       "Documentation written\n(N_doc)",
-}
-
-
-def plot_trajectories(
-    traces_per_config: "dict[str, pd.DataFrame]",
-    highlight_keys: list[str],
-    title: str = "",
-) -> "Figure":
-    """Mean trajectory per sprint for the given configs, with a shaded quantile band.
-
-    Each trace DataFrame must have a (replication, sprint) MultiIndex and one column per
-    state field.  `B_kno` is summed from the per-severity columns when it is absent.
-    """
-    fields = _DEFAULT_TRAJECTORY_FIELDS
-    wanted = set(highlight_keys)
-    config_colors = {k: cm.tab10(i % 10) for i, k in enumerate(wanted)}
-
-    with plt.style.context(_STYLE):
-        fig, axes = plt.subplots(len(fields), 1, figsize=(10, 3 * len(fields)),
-                                 sharex=True)
-        if title:
-            fig.suptitle(title, fontsize=12)
-
-        for key, df in traces_per_config.items():
-            if key not in wanted:
-                continue
-            color = config_colors[key]
-
-            if "B_kno" not in df.columns and all(c in df.columns for c in _B_KNO_COLUMNS):
-                df = df.assign(B_kno=df[list(_B_KNO_COLUMNS)].sum(axis=1))
-
-            for ax, field in zip(axes, fields):
-                if field not in df.columns:
-                    continue
-                g = df.groupby("sprint")[field]
-                sprints = g.mean().index
-                mean  = g.mean().values
-                lo    = g.quantile(0.10).values
-                hi    = g.quantile(0.90).values
-                ax.plot(sprints, mean, color=color, linewidth=1.5, label=key)
-                ax.fill_between(sprints, lo, hi, color=color, alpha=0.12)
-
-        for ax, field in zip(axes, fields):
-            ax.set_ylabel(_TRAJECTORY_LABELS[field], fontsize=8)
-            ax.tick_params(labelsize=7)
-
-        axes[-1].set_xlabel("Sprint", fontsize=9)
-        axes[0].legend(fontsize=7, loc="upper left")
-        fig.tight_layout()
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# 4. Cross-experiment comparison of the reported optima
+# Cross-experiment comparison of the reported optima
 # ---------------------------------------------------------------------------
 
 def plot_comparison_optima(
@@ -305,7 +239,7 @@ def plot_comparison_optima(
 
 
 # ---------------------------------------------------------------------------
-# 4b. Search convergence
+# Search convergence
 # ---------------------------------------------------------------------------
 
 def _drop_label(values: np.ndarray) -> str:
@@ -435,14 +369,12 @@ def plot_elite_turnover(
 
 
 # ---------------------------------------------------------------------------
-# 5. The campaign in one figure: all five scenario groups at once
+# The campaign in one figure: all five scenario groups at once
 # ---------------------------------------------------------------------------
 
 #: One visual style per tier, in mild -> extreme order so the legends read that way.
-#: `veryhigh` and `pessimistic` share the fourth slot: they are the fourth tier of
-#: `project` and of `agent` respectively, and no group holds both, so no channel ever has
-#: to draw them side by side.  The four marker shapes stay apart when overplotted at
-#: small sizes, and the areas are spaced by a roughly constant ratio in marker *width*.
+#: `veryhigh` and `pessimistic` share the fourth slot; no scenario group holds both, so
+#: no channel ever has to draw them side by side.
 class _TierStyle(NamedTuple):
     color: tuple
     marker: str
@@ -459,9 +391,8 @@ _TIER_STYLES: dict[str, _TierStyle] = {
 }
 
 #: The baseline reuses the tier shape and size wherever the channel's group is one it
-#: varies; on a group it holds at UNUSED_TIER it falls back to the fixed star below.
-#: Its colour is fixed on every layout — with shape and size shared, colour is the only
-#: channel left that says "no agents".
+#: varies; on a group it holds at UNUSED_TIER it falls back to the fixed star below.  Its
+#: colour is fixed on every layout, so black is what identifies it.
 _BASELINE_COLOR = "black"
 _BASELINE_MARKER = "*"
 _BASELINE_SIZE = 90.0
@@ -631,10 +562,9 @@ def _density_style(n: int) -> tuple[float, float]:
 _LEGEND_WIDTH_IN = 2.1
 _LEGEND_GAP_IN = 0.25
 
-#: Font sizes (points) for the tier grid.  Chosen against the size the figure is read at
-#: rather than drawn at: it is 17-20 inches wide and is placed at a text column's width,
-#: about a third of that.  Enlarging the figure instead would cancel out, so the type
-#: grows inside the same inches and the panel geometry stays fixed.
+#: Font sizes (points) for the tier grid.  The figure is 17-20 inches wide and is read
+#: reduced to a text column's width, so these are sized against the printed result; keep
+#: the panel geometry fixed when changing them.
 _MATRIX_FONT: dict[str, int] = {
     "suptitle": 17,
     "column":   15,   # the facet tier heading, on the top row only
@@ -828,8 +758,7 @@ def _draw_matrix(
                             b_cell, marker_group, size_group):
                         b_area = (_TIER_STYLES[b_size].area if b_size else _BASELINE_SIZE) * scale
                         # At the panel's alpha like every other point, so the overlay does
-                        # not mask the optima it is the reference for.  The label makes it
-                        # identifiable on the axes; the figure legend uses proxies.
+                        # not mask the optima it is the reference for.
                         ax.scatter(*_clipped_xy(b_sub, x_col, y_col, x_floor, y_floor),
                                    s=b_area, zorder=5, alpha=alpha,
                                    label=_BASELINE_LABEL,
@@ -845,9 +774,7 @@ def _draw_matrix(
                 ax.tick_params(axis="both", which="both",
                                labelsize=_MATRIX_FONT["tick"])
                 # Inside the panel rather than on the title line, which on the top row
-                # already carries the centred facet heading.  Two stacked titles are not
-                # available: matplotlib repositions every title on each draw and `pad`
-                # moves all of them together.
+                # already carries the centred facet heading.
                 ax.text(0.985, 0.015, f"n = {len(cell)}", transform=ax.transAxes,
                         ha="right", va="bottom", fontsize=_MATRIX_FONT["count"],
                         color="0.35", zorder=6)
@@ -887,17 +814,13 @@ def _draw_matrix(
                 Line2D([], [], linestyle="none", marker="o", markersize=8,
                        color=_BASELINE_COLOR, label=_BASELINE_LABEL)
             )
-        # The legend column is a fixed width in *inches*, not a figure fraction: a group
-        # with four tiers on the column axis widens the figure, and a fraction would hand
-        # the extra inch to the legends rather than to the panels.
+        # A fixed width in inches, not a figure fraction: an extra facet column widens
+        # the figure, and that inch must go to the panels rather than to the legends.
         right = 1.0 - _LEGEND_WIDTH_IN / fig.get_figwidth()
         fig.tight_layout(rect=(0.0, 0.0, right, 1.0))
-        # Stack the three legends by their *measured* heights.  A per-entry guess cannot
-        # do it: an entry is as tall as its marker (the size channel's largest is 18 pt
-        # against the 8 pt text), the tier counts differ per channel, and the conversion
-        # to the figure fraction the anchor speaks depends on the number of facet rows.
+        # Stacked by their measured heights: an entry is as tall as its marker and the
+        # tier counts differ per channel, so a per-entry estimate does not place them.
         anchor_y = 0.97
-        # One legend per per-point channel, and the baseline rides in the colour one.
         channel_names = ("colour", "shape", "size")
         for i, (group, handles) in enumerate(legend_specs):
             title = f"{group} ({channel_names[i]})"
@@ -1089,7 +1012,7 @@ def plot_agent_human_ratio_matrix(
 
 
 # ---------------------------------------------------------------------------
-# 6. What the optimal teams are made of, by two scenario groups
+# What the optimal teams are made of, by two scenario groups
 # ---------------------------------------------------------------------------
 
 # The two populations of `src.constellation`, and the colours they keep across both
@@ -1378,7 +1301,7 @@ def visualize_constellation(
 
 
 # ---------------------------------------------------------------------------
-# 7. The summary of team structure
+# The summary of team structure
 # ---------------------------------------------------------------------------
 #
 # `plot_constellation_profile` / `_heatmap` report every control variable; these two
@@ -1898,19 +1821,6 @@ def _load_manifest(result_dir: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
-def _load_traces(
-    result_dir: Path,
-    config_keys: list[str],
-) -> "dict[str, pd.DataFrame]":
-    """Load traces.csv for each config that has one."""
-    out = {}
-    for key in config_keys:
-        tfile = result_dir / "samples" / f"{key}_traces.csv"
-        if tfile.exists():
-            out[key] = load_traces(tfile)
-    return out
-
-
 def _scenario_label(result_dir: Path, manifest: dict) -> str:
     """Human-readable scenario name: the scenario id if present, else the directory."""
     scenario_id = manifest.get("scenario_id", "")
@@ -1961,18 +1871,6 @@ def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
         fig = plot_cost_split(objectives, keep_keys,
                               title=f"{title_base} — cost drivers of the reported optima")
         save_figure(fig, out_dir, "cost_split", fmt)
-
-    traces = _load_traces(result_dir, keep_keys)
-    if traces:
-        fig = plot_trajectories(traces, keep_keys,
-                                title=f"{title_base} — state trajectories")
-        save_figure(fig, out_dir, "trajectories", fmt)
-    else:
-        warnings.warn(
-            f"No traces.csv found in {result_dir}. Re-run with --traces to enable "
-            f"trajectory plots.",
-            stacklevel=2,
-        )
 
 
 def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:

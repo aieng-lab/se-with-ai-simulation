@@ -68,8 +68,13 @@ def aggregate_config_result(
     Only `cost` and `value` are bootstrapped; the remaining fields take part in no
     comparison and are reported as plain means.
     """
-    value_arr = np.array([r.value for r in result.replications])
-    cost_arr  = np.array([r.cost  for r in result.replications])
+    reps = result.replications
+
+    def mean_of(field: str) -> float:
+        return float(np.mean([getattr(r, field) for r in reps]))
+
+    value_arr = np.array([r.value for r in reps])
+    cost_arr  = np.array([r.cost  for r in reps])
 
     K = len(value_arr)
     boot_seed = (master_seed ^ config_hash(result.config) ^ _BOOTSTRAP_SALT) & 0xFFFF_FFFF_FFFF_FFFF
@@ -79,22 +84,23 @@ def aggregate_config_result(
     value_boot = value_arr[idx].mean(axis=1)
     cost_boot  = cost_arr[idx].mean(axis=1)
 
-    reps = result.replications
-    actions_arr = np.array([r.actions for r in reps], dtype=float) if reps and reps[0].actions else None
+    # `actions` is optional on ReplicationResult, so it may be absent entirely.
+    actions = (tuple(np.array([r.actions for r in reps], dtype=float).mean(axis=0))
+               if reps and reps[0].actions else ())
 
     return AggregatedObjectives(
         value_mean=float(value_arr.mean()),
         value_ci=(float(np.percentile(value_boot, 2.5)), float(np.percentile(value_boot, 97.5))),
         cost_mean=float(cost_arr.mean()),
         cost_ci=(float(np.percentile(cost_boot, 2.5)), float(np.percentile(cost_boot, 97.5))),
-        cost_quality_mean=float(np.mean([r.cost_quality for r in reps])),
-        cost_human_mean=float(np.mean([r.cost_human for r in reps])),
-        cost_agent_mean=float(np.mean([r.cost_agent for r in reps])),
-        actions_mean=tuple(actions_arr.mean(axis=0)) if actions_arr is not None else (),
-        impl_human_mean=float(np.mean([r.impl_human for r in reps])),
-        impl_agents_mean=float(np.mean([r.impl_agents for r in reps])),
-        fixes_human_mean=float(np.mean([r.fixes_human for r in reps])),
-        fixes_agent_mean=float(np.mean([r.fixes_agent for r in reps])),
+        cost_quality_mean=mean_of("cost_quality"),
+        cost_human_mean=mean_of("cost_human"),
+        cost_agent_mean=mean_of("cost_agent"),
+        actions_mean=actions,
+        impl_human_mean=mean_of("impl_human"),
+        impl_agents_mean=mean_of("impl_agents"),
+        fixes_human_mean=mean_of("fixes_human"),
+        fixes_agent_mean=mean_of("fixes_agent"),
     )
 
 

@@ -76,7 +76,7 @@ scripts/
 run_experiments.sh      campaign driver: 432 searches in parallel, resumable (§4.2);
                         MODE=human_only runs the 36 §4.1 baselines instead
 
-tests/                  pytest suite (573 tests, ~120 s — the campaign figures dominate)
+tests/                  pytest suite (572 tests, ~125 s — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
     experiments/        the campaign re-run of 2026-08-20: 432 `search` +
                         36 `human_only` scenario dirs, current as of that date.
@@ -543,9 +543,11 @@ python -m src.main visualize results/run1 results/run2 --out results/comparison
 ```
 `visualize_single` writes `cost_vs_value` (every evaluated candidate against the throughput
 floor, with `c*` and `I*` highlighted and `c*`'s cost CI drawn — the search problem of §3.9
-in one picture), `cost_split` (the three cost drivers of the reported optima), and
-`trajectories` where `samples/<key>_traces.csv` exists. `visualize_multi` adds
-`comparison_optima`, one point per scenario.
+in one picture) and `cost_split` (the three cost drivers of the reported optima).
+`visualize_multi` adds `comparison_optima`, one point per scenario. There is **no
+per-candidate trajectory figure**: `optimize` never writes per-sprint traces, so the
+`plot_trajectories` that used to look for `samples/<key>_traces.csv` was unreachable and
+has been removed. Traces exist only via `run --traces`, and `analyze` tabulates them.
 
 **Run tests:**
 ```bash

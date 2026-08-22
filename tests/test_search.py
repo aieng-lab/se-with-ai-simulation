@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -40,9 +41,11 @@ from src.search import (
     run_search,
     run_human_only,
     _sample_composition,
+    RoleLimits,
     human_only_grid,
     refactoring_bound,
     review_sample_max,
+    role_limits,
     saturation_bounds,
     two_stage_selection,
 )
@@ -54,9 +57,15 @@ REFACTOR_MAX = 6   # floor(r_arrival / 2), i.e. a-bar_4 of the same scenario
 #: The two review services, i.e. the autonomous roles that carry no cap at all.
 REVIEW_INDICES = tuple(i for i in AUTONOMOUS_ROLE_INDICES if i != _REFACTOR_INDEX)
 
-#: Generous stand-in bounds: large enough that a-bar_k is not the binding constraint in
-#: the tests that are about something else.
-WIDE_BOUNDS = {i: 4 for i in SUPERVISED_ROLE_INDICES}
+#: Generous stand-in limits: the supervised bounds are large enough that a-bar_k is not
+#: the binding constraint in the tests that are about something else.
+WIDE_LIMITS = RoleLimits(supervised={i: 4 for i in SUPERVISED_ROLE_INDICES},
+                         review=REVIEW_MAX, refactor=REFACTOR_MAX)
+
+
+def _limits(bounds: dict[int, int]) -> RoleLimits:
+    """The medium scenario's autonomous ranges over the given supervised bounds."""
+    return replace(WIDE_LIMITS, supervised=bounds)
 
 
 @pytest.fixture
@@ -108,7 +117,6 @@ class TestSaturationBounds:
         assert min(saturation_bounds(medium_params, 1.0).values()) >= 1
 
     def test_grows_with_the_arrival_rate(self):
-        from dataclasses import replace
         low = load_scenario_params(
             {g: f"config/{g}_{'low' if g == 'project' else 'medium'}.json"
              for g in SCENARIO_GROUPS}
@@ -123,7 +131,6 @@ class TestSaturationBounds:
         assert any(hi[k] > lo[k] for k in lo)
 
     def test_rejects_a_zero_throughput_rate(self, medium_params):
-        from dataclasses import replace
         with pytest.raises(ValueError, match="eta"):
             saturation_bounds(replace(medium_params, r_doc=0.0), 2.0)
 
@@ -137,7 +144,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(0)
         bounds = saturation_bounds(medium_params, 2.0)
         for _ in range(300):
-            A = _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)
+            A = _sample_composition(rng, _limits(bounds), qa=False)
             assert len(A) == AGENT_ROLE_COUNT
             assert A[0] >= 1
             assert all(A[i] <= bounds[i] for i in SUPERVISED_ROLE_INDICES)
@@ -146,7 +153,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(1)
         bounds = saturation_bounds(medium_params, 2.0)
         for _ in range(300):
-            A = _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=True)
+            A = _sample_composition(rng, _limits(bounds), qa=True)
             assert A[0] == 0 and A[1] == 0
             assert all(A[i] <= bounds[i] for i in _QA_SUPERVISED_INDICES)
 
@@ -156,7 +163,7 @@ class TestCompositionSampling:
         bounds = {i: 3 for i in SUPERVISED_ROLE_INDICES}
         seen = {i: set() for i in SUPERVISED_ROLE_INDICES}
         for _ in range(400):
-            A = _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)
+            A = _sample_composition(rng, _limits(bounds), qa=False)
             for i in SUPERVISED_ROLE_INDICES:
                 seen[i].add(A[i])
         assert seen[0] == {1, 2, 3}, "the impl role is drawn from {1,...,a-bar_1}"
@@ -167,7 +174,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(2)
         bounds = saturation_bounds(medium_params, 2.0)
         draws = [
-            _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)[i]
+            _sample_composition(rng, _limits(bounds), qa=False)[i]
             for _ in range(400)
             for i in REVIEW_INDICES
         ]
@@ -183,7 +190,7 @@ class TestCompositionSampling:
         rng = np.random.default_rng(22)
         bounds = saturation_bounds(medium_params, 2.0)
         draws = [
-            _sample_composition(rng, bounds, REVIEW_MAX, REFACTOR_MAX, qa=False)[_REFACTOR_INDEX]
+            _sample_composition(rng, _limits(bounds), qa=False)[_REFACTOR_INDEX]
             for _ in range(400)
         ]
         assert min(draws) == 0 and max(draws) == REFACTOR_MAX
@@ -216,7 +223,8 @@ class TestRandomDraws:
         """The sampler builds only valid candidates, so nothing is discarded here."""
         rng = np.random.default_rng(3)
         bounds = saturation_bounds(medium_params, search_cfg.sigma)
-        draws = _random_draws(search_cfg, rng, 300, medium_params)
+        draws = _random_draws(
+            search_cfg, rng, 300, role_limits(medium_params, search_cfg.sigma))
         assert len(draws) == 300
         for cfg in draws:
             assert cfg.A_dev[0] >= 1
@@ -228,7 +236,8 @@ class TestRandomDraws:
     def test_review_services_are_capped_by_nothing(self, search_cfg, medium_params):
         """The services answer to neither a-bar_k nor the supervised count."""
         rng = np.random.default_rng(4)
-        draws = _random_draws(search_cfg, rng, 300, medium_params)
+        draws = _random_draws(
+            search_cfg, rng, 300, role_limits(medium_params, search_cfg.sigma))
         assert any(sum(cfg.A_dev) > supervised_agent_count(cfg.A_dev) * 2
                    for cfg in draws)
 
@@ -236,7 +245,8 @@ class TestRandomDraws:
         """a-bar_4 binds in both phases, and it is the *only* thing that binds role 4."""
         rng = np.random.default_rng(41)
         cap = refactoring_bound(medium_params)
-        draws = _random_draws(search_cfg, rng, 400, medium_params)
+        draws = _random_draws(
+            search_cfg, rng, 400, role_limits(medium_params, search_cfg.sigma))
         assert all(c.A_dev[_REFACTOR_INDEX] <= cap for c in draws)
         assert all(c.A_qa[_REFACTOR_INDEX] <= cap for c in draws)
         assert max(c.A_dev[_REFACTOR_INDEX] for c in draws) == cap
@@ -245,7 +255,8 @@ class TestRandomDraws:
                                                                 medium_params):
         """A_qa is only a parameter when F_freeze > 0; otherwise it must be zero."""
         rng = np.random.default_rng(31)
-        draws = _random_draws(search_cfg, rng, 600, medium_params)
+        draws = _random_draws(
+            search_cfg, rng, 600, role_limits(medium_params, search_cfg.sigma))
         no_freeze = [c for c in draws if c.F_freeze == 0]
         assert no_freeze, "the sampler must still produce F_freeze == 0 candidates"
         assert all(c.A_qa == (0,) * AGENT_ROLE_COUNT for c in no_freeze)
@@ -257,7 +268,8 @@ class TestRandomDraws:
             self, search_cfg, medium_params):
         """Two draws are either the same configuration or genuinely different models."""
         rng = np.random.default_rng(32)
-        draws = _random_draws(search_cfg, rng, 800, medium_params)
+        draws = _random_draws(
+            search_cfg, rng, 800, role_limits(medium_params, search_cfg.sigma))
         models = {(c.N, c.R, c.F_freeze, c.A_dev,
                    c.A_qa if c.F_freeze > 0 else None) for c in draws}
         assert len(models) == len(set(draws))
@@ -276,7 +288,7 @@ class TestMutation:
         rng = np.random.default_rng(5)
         parent = self._parent()
         for _ in range(500):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+            child = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             assert child.A_dev[0] >= 1
             assert child.A_qa[0] == 0 and child.A_qa[1] == 0
             parent = child   # chain mutations to explore further from the start
@@ -286,7 +298,7 @@ class TestMutation:
         bounds = {i: 2 for i in SUPERVISED_ROLE_INDICES}
         parent = self._parent()
         for _ in range(1000):
-            parent = _mutate(parent, rng, search_cfg, bounds, REVIEW_MAX, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, replace(WIDE_LIMITS, supervised=bounds))
             for i in SUPERVISED_ROLE_INDICES:
                 assert parent.A_dev[i] <= bounds[i], f"A_dev role index {i} overran u_k"
                 assert parent.A_qa[i] <= bounds[i], f"A_qa role index {i} overran u_k"
@@ -297,7 +309,7 @@ class TestMutation:
         parent = self._parent()
         seen_N = set()
         for _ in range(400):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             seen_N.add(parent.N)
         assert len(seen_N) > 1, "N must move at all"
         assert seen_N <= set(search_cfg.N_values)
@@ -308,7 +320,7 @@ class TestMutation:
         parent = self._parent()
         seen = {i: set() for i in AUTONOMOUS_ROLE_INDICES}
         for _ in range(500):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+            child = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             for i in AUTONOMOUS_ROLE_INDICES:
                 seen[i].add(child.A_dev[i])
             parent = child
@@ -321,7 +333,7 @@ class TestMutation:
         parent = self._parent()
         peak = 0
         for _ in range(2000):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             peak = max(peak, max(parent.A_dev[i] for i in REVIEW_INDICES))
         assert peak > 1
 
@@ -332,7 +344,7 @@ class TestMutation:
         parent = self._parent()
         peak = 0
         for _ in range(2000):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, cap)
+            parent = _mutate(parent, rng, search_cfg, replace(WIDE_LIMITS, refactor=cap))
             assert parent.A_dev[_REFACTOR_INDEX] <= cap
             assert parent.A_qa[_REFACTOR_INDEX] <= cap
             peak = max(peak, parent.A_dev[_REFACTOR_INDEX])
@@ -344,7 +356,7 @@ class TestMutation:
         A_dev[0] = 1   # already at the floor
         parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         for _ in range(300):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             assert parent.A_dev[0] >= 1
 
     def test_qa_is_not_mutated_while_the_freeze_window_is_closed(self, search_cfg):
@@ -361,7 +373,7 @@ class TestMutation:
         assert parent.A_qa == (0,) * AGENT_ROLE_COUNT
         saw_open_window = False
         for _ in range(400):
-            child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+            child = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             if parent.F_freeze == 0 and child.F_freeze == 0:
                 assert child.A_qa == (0,) * AGENT_ROLE_COUNT
             saw_open_window |= child.F_freeze > 0
@@ -381,7 +393,7 @@ class TestMutation:
             parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
                                        R=4, F_freeze=f_freeze)
             for _ in range(300):
-                child = _mutate(parent, rng, search_cfg, WIDE_BOUNDS, REVIEW_MAX, REFACTOR_MAX)
+                child = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
                 if child != parent:
                     def model(c):
                         return (c.N, c.R, c.F_freeze, c.A_dev,
@@ -439,7 +451,6 @@ class TestSearchBudget:
                                                             tiny_horizon,
                                                             wasteful_params):
         """A draw rejected by the feasibility check still consumes one evaluation."""
-        from dataclasses import replace
         cfg = replace(wasteful_cfg, N_values=(0.25,))
         outcome = run_search(
             cfg, tiny_horizon, wasteful_params, np.random.default_rng(3),
@@ -544,7 +555,8 @@ class TestHumanOnlyEnumeration:
     def test_the_search_can_never_reach_a_zero_agent_team(self, search_cfg,
                                                           medium_params):
         # The enumerator is the sole producer: both samplers keep the a_1 >= 1 floor.
-        draws = _random_draws(search_cfg, np.random.default_rng(5), 200, medium_params)
+        draws = _random_draws(search_cfg, np.random.default_rng(5), 200,
+                              role_limits(medium_params, search_cfg.sigma))
         assert all(c.A_dev[0] >= 1 for c in draws)
 
 
@@ -559,7 +571,7 @@ class TestServiceStep:
         rng = np.random.default_rng(0)
         # log2(12) -> j in {0,1,2,3}, so |m| in {1,2,4,8}
         allowed = {s * (1 << j) for j in range(4) for s in (-1, 1)}
-        seen = {_service_step(REVIEW_INDICES[0], rng, REVIEW_MAX, REFACTOR_MAX)
+        seen = {_service_step(REVIEW_INDICES[0], rng, WIDE_LIMITS)
                 for _ in range(2000)}
         assert seen <= allowed
         assert seen == allowed, "every exponent and both signs must be reachable"
@@ -569,14 +581,14 @@ class TestServiceStep:
         # a-bar_4 = 6 -> j in {0,1,2}, so |m| in {1,2,4} — strictly less reach than the
         # review services get from the same call.
         allowed = {s * (1 << j) for j in range(3) for s in (-1, 1)}
-        seen = {_service_step(_REFACTOR_INDEX, rng, REVIEW_MAX, REFACTOR_MAX)
+        seen = {_service_step(_REFACTOR_INDEX, rng, WIDE_LIMITS)
                 for _ in range(2000)}
         assert seen == allowed
 
     def test_a_zero_range_still_yields_a_unit_step(self):
         """a-bar_4 is 0 at r_arrival < 2; log2(0) must not be evaluated."""
         rng = np.random.default_rng(2)
-        seen = {_service_step(_REFACTOR_INDEX, rng, REVIEW_MAX, 0) for _ in range(200)}
+        seen = {_service_step(_REFACTOR_INDEX, rng, replace(WIDE_LIMITS, refactor=0)) for _ in range(200)}
         assert seen == {-1, 1}
 
     def test_large_steps_actually_reach_the_service_counts(self, search_cfg):
@@ -592,8 +604,7 @@ class TestServiceStep:
         parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         peak = 0
         for _ in range(200):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS,
-                             review_max=64, refactor_max=REFACTOR_MAX)
+            parent = _mutate(parent, rng, search_cfg, replace(WIDE_LIMITS, review=64))
             peak = max(peak, max(parent.A_dev[i] for i in REVIEW_INDICES))
         assert peak >= 8, f"the review services only reached {peak} in 200 mutations"
 
@@ -606,8 +617,7 @@ class TestServiceStep:
         parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         peak = 0
         for _ in range(500):
-            parent = _mutate(parent, rng, search_cfg, WIDE_BOUNDS,
-                             review_max=REVIEW_MAX, refactor_max=cap)
+            parent = _mutate(parent, rng, search_cfg, replace(WIDE_LIMITS, refactor=cap))
             assert parent.A_dev[_REFACTOR_INDEX] <= cap
             peak = max(peak, parent.A_dev[_REFACTOR_INDEX])
         assert peak == cap
@@ -626,7 +636,6 @@ class TestTwoStageSelection:
         return SimulationHorizon(T=6, K_search=4, K_final=16, master_seed=1)
 
     def _search(self, search_cfg, medium_params, seed=0):
-        from dataclasses import replace
         cfg = replace(search_cfg, budget=40, n_samples_initial=20, n_generations=2,
                       n_offspring=10, n_elite=5)
         horizon = self._horizon()
@@ -804,7 +813,6 @@ class TestConvergenceRecording:
         assert outcome.incumbent_turnover == pytest.approx(0.5)
 
     def test_an_enumeration_records_no_generations(self, search_cfg, medium_params):
-        from dataclasses import replace
         cfg = replace(search_cfg, human_only=True, N_values=(1.0,), R_values=(2,))
         outcome = run_human_only(
             cfg, SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0),

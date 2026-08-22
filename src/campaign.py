@@ -172,13 +172,10 @@ def optimum_row(
         "config_key": best,
         "N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"],
     })
-    composition = composition_columns(obj)
-    row.update({k: v for k, v in composition.items() if k.startswith("a_")})
+    row.update(composition_columns(obj))
     T_dev, T_qa = phase_sprint_counts(team_config(row), T)
     total = obj["cost_mean"]
     row.update({
-        "n_sup_dev": composition["n_sup_dev"],
-        "n_sup_qa": composition["n_sup_qa"],
         "T_dev": T_dev,
         "T_qa": T_qa,
         "cost_mean": obj["cost_mean"],
