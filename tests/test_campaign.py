@@ -11,8 +11,6 @@ from src.campaign import (
     baseline_uplift,
     build_tables,
     convergence_summary,
-    expected_modes,
-    is_baseline_scenario,
     optimum_row,
     scenario_params_for_id,
     search_dirs,
@@ -21,7 +19,6 @@ from src.campaign import (
 )
 from src.config import (
     AGENT_ROLE_COUNT,
-    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     SCENARIO_GROUPS,
 )
@@ -317,20 +314,11 @@ class TestScenarioIdSentinel:
         assert tiers["debt"] == "unused" and tiers["agent"] == "unused"
         assert tiers["human"] == "medium" and tiers["project"] == "medium"
 
-    def test_is_baseline_scenario(self):
-        assert is_baseline_scenario(_BASELINE_SID)
-        assert not is_baseline_scenario(_SID)
-
     def test_params_resolve_to_the_unused_placeholders(self):
         # `<group>_unused.json` keeps the file-name convention, so no special case is
         # needed anywhere: the params load exactly like any other scenario's.
         params = scenario_params_for_id(_BASELINE_SID)
         assert params.r_arrival > 0 and params.r_bugs > 0
-
-    def test_expected_modes_differ_by_scenario_kind(self):
-        """A baseline is enumerated once; every other scenario gets one search."""
-        assert expected_modes(_BASELINE_SID) == (HUMAN_ONLY_MODE,)
-        assert expected_modes(_SID) == (SEARCH_MODE,)
 
 
 class TestBaselineInTheTables:

@@ -182,8 +182,8 @@ def step_sprint(
     arch_impl_cap = int(total_impl_cap // ARCH_IMPL_COST_UNITS)
     arch_impl_done = min(state.Q_arch_impl, arch_impl_cap)
     # Humans serve demand first, agents fill the rest.  Each stream is capped at the
-    # residual backlog, not just their sum, so impl_human + impl_agents == impl and the
-    # bug injection below cannot charge for features nobody implemented.
+    # residual backlog rather than only their sum, so impl_human + impl_agents == impl
+    # and the bug injection below cannot charge for features nobody implemented.
     demand = state.F_backlog + arrivals
     impl_human = min(impl_human, demand)
     impl_agents = min(demand - impl_human,
@@ -216,9 +216,9 @@ def step_sprint(
     bugs_min = remaining - bugs_maj
 
     if human_only:
-        # A single human review stage, replacing the three agentic ones below.  cov_qa is
-        # the share of features the reserved capacity can review in full; there is no
-        # human security-audit analogue, so every severity is caught at the same rate.
+        # A single human review stage, replacing the three agentic ones below.  cov_qa
+        # is the share of features the reserved capacity can review in full, and the
+        # same detection probability applies to all three severities.
         cov_qa = min(1.0, params.f_qa * config.N * H_net
                           / (params.h_qa * max(1, impl)))
         p_qa = cov_qa * params.d_qa
@@ -285,8 +285,8 @@ def step_sprint(
     total_fixes = fixes_human + fixes_agent
 
     # --- Escalation queue ---------------------------------------------------
-    # rho_esc is a probability per completed agent task, so W_agent counts only the
-    # roles whose throughput is denominated in comparable task units.
+    # The escalation rate applies per completed agent task, so W_agent sums the three
+    # roles whose output is counted in tasks.
     W_agent = impl_agents + arch_chg_done + fixes_agent
     esc_new = int(rng.poisson(params.rho_esc * (2.0 - delta_D) * W_agent))
     state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
@@ -295,8 +295,8 @@ def step_sprint(
     D_raw = (state.D_tech
              + params.delta_impl * impl
              + params.delta_fix * total_fixes)
-    # r_refactor is in D_tech units, so it is on the same scale as delta_impl and
-    # delta_fix.  Nothing throttles the removal but the clip into [0, 1].
+    # The refactoring term is in the same D_tech units as the two increments above;
+    # nothing throttles the removal but the clip into [0, 1].
     state.D_tech = max(0.0, min(1.0,
         D_raw - params.r_refactor * A_active[3],   # Refactoring Agent (k=4, index 3)
     ))
@@ -308,24 +308,23 @@ def step_sprint(
     state.N_doc += docs_written
 
     # --- Release event ------------------------------------------------------
-    new_escaped_min = new_escaped_maj = new_escaped_sec = 0
     if (t + 1) % config.R == 0:
         # Everything unrepaired ships, whether or not it was ever detected.
-        new_escaped_min = state.B_hid_min + state.B_kno_min
-        new_escaped_maj = state.B_hid_maj + state.B_kno_maj
-        new_escaped_sec = state.B_hid_sec + state.B_kno_sec
-        state.B_escaped_min += new_escaped_min
-        state.B_escaped_maj += new_escaped_maj
-        state.B_escaped_sec += new_escaped_sec
-        state.B_rel_min += new_escaped_min
-        state.B_rel_maj += new_escaped_maj
-        state.B_rel_sec += new_escaped_sec
+        escaped_min = state.B_hid_min + state.B_kno_min
+        escaped_maj = state.B_hid_maj + state.B_kno_maj
+        escaped_sec = state.B_hid_sec + state.B_kno_sec
+        state.B_escaped_min += escaped_min
+        state.B_escaped_maj += escaped_maj
+        state.B_escaped_sec += escaped_sec
+        state.B_rel_min += escaped_min
+        state.B_rel_maj += escaped_maj
+        state.B_rel_sec += escaped_sec
         state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
         state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
 
     # --- Billable work completed this sprint, by role -----------------------
-    # Roles 1-3 and 7-8 bill for what they produced, so one that no work reached costs
-    # nothing.  Roles 4-6 have no countable artefact and bill per deployed instance.
+    # Roles 1-3 and 7-8 bill for what they produced, so one that no work reached bills
+    # nothing; roles 4-6 bill per deployed instance whether or not they had work.
     return SprintActions(
         units=(
             # k=1 features implemented, plus proposals at ARCH_IMPL_COST_UNITS each

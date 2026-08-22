@@ -46,7 +46,7 @@ from src.search import (
     saturation_bounds,
     two_stage_selection,
 )
-from src.selection import indistinguishable_set, parsimony_key, throughput_floor
+from src.selection import parsimony_key, report_optimum, throughput_floor
 
 REVIEW_MAX = 12    # floor(r_arrival) of config/project_medium.json
 REFACTOR_MAX = 6   # floor(r_arrival / 2), i.e. a-bar_4 of the same scenario
@@ -670,8 +670,8 @@ class TestTwoStageSelection:
         cfg, horizon, outcome, report = self._search(search_cfg, medium_params)
         floor = throughput_floor(medium_params, cfg.epsilon)
         aggs = [a for _, _, a in outcome.aggs]
-        raw = indistinguishable_set(aggs, floor)
-        reduced = indistinguishable_set(
+        _, raw = report_optimum(aggs, floor)
+        _, reduced = report_optimum(
             aggs, floor, keys=[parsimony_key(c) for _, c, _ in outcome.aggs])
         assert report.stats["n_prelim"] == len(raw)
         assert report.stats["n_resimulated"] == len(reduced) <= len(raw)
@@ -705,7 +705,7 @@ class TestTwoStageSelection:
             outcome.aggs.append((key, team, agg))
 
         aggs = [a for _, _, a in outcome.aggs]
-        assert indistinguishable_set(aggs, floor) == [0, 1], "the pair must be tied at K'"
+        assert report_optimum(aggs, floor)[1] == [0, 1], "the pair must be tied at K'"
 
         report = two_stage_selection(outcome, search_cfg, horizon, medium_params,
                                      progress_every=0)
@@ -731,7 +731,7 @@ class TestTwoStageSelection:
         very-high project tier features arrive at 1000 per sprint and one implementation
         agent cannot come near the floor, i.e. the inadmissible case.
         """
-        from src.search import SearchOutcome, _config_key, _evaluate
+        from src.search import SearchOutcome
         cfg = SearchConfiguration(
             scenario_paths={group: f"config/{group}_medium.json"
                             for group in SCENARIO_GROUPS} | {
@@ -747,11 +747,8 @@ class TestTwoStageSelection:
         A_dev[0] = 1
         weak = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
         outcome = SearchOutcome()
-        entry, agg, cr = _evaluate(weak, horizon, params)
-        assert agg is not None, "the weak team must still be monitoring-feasible"
-        key = _config_key(weak, 0)
-        outcome.manifest[key] = entry
-        outcome.aggs.append((key, weak, agg))
+        outcome.record(weak, horizon, params, None, keep_samples=False)
+        assert outcome.n_simulated == 1, "the weak team must still be monitoring-feasible"
 
         report = two_stage_selection(outcome, cfg, horizon, params, progress_every=0)
         assert not report.best_admissible

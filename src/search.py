@@ -45,6 +45,7 @@ from .config import (
     TeamConfiguration,
 )
 from .feasibility import check_feasibility
+from .parameters import ScenarioParameters
 from .results import save_result
 from .selection import (
     AggregatedObjectives,
@@ -72,7 +73,7 @@ _QA_SUPERVISED_INDICES: tuple[int, ...] = tuple(
 )   # QA phase pins roles 1-2 (indices 0-1) to zero
 
 
-def saturation_bounds(params, sigma: float) -> dict[int, int]:
+def saturation_bounds(params: ScenarioParameters, sigma: float) -> dict[int, int]:
     """Per-role upper bounds for the supervised roles, keyed by 0-based role index.
 
     `ceil(sigma * workload / rate)`, where `workload` is the steady-state inflow reaching
@@ -84,7 +85,7 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
         raise ValueError(f"sigma must be >= 1, got {sigma}")
 
     r = params.r_arrival
-    # Counts the agent-injected stream only, which under-counts the true inflow.
+    # The agent-injected stream only; the bound is a search range, not an exact budget.
     bug_inflow = params.r_bugs * (2.0 - params.delta_min) * r
     workload = {
         0: (1.0 + params.f_arch_chg) * r,                       # k=1 Feature Implementation
@@ -111,7 +112,7 @@ def saturation_bounds(params, sigma: float) -> dict[int, int]:
     return bounds
 
 
-def review_sample_max(params) -> int:
+def review_sample_max(params: ScenarioParameters) -> int:
     """Sampling range of the two detection services: `floor(r_arrival)`.
 
     A sampling choice, not a bound: nothing caps these two roles, and the mutation
@@ -120,7 +121,7 @@ def review_sample_max(params) -> int:
     return int(params.r_arrival)
 
 
-def refactoring_bound(params) -> int:
+def refactoring_bound(params: ScenarioParameters) -> int:
     """Upper bound on the Refactoring Agent: `floor(r_arrival / 2)`.
 
     Unlike `review_sample_max` this is a real cap, honoured by the sampler and by the
@@ -160,6 +161,11 @@ def _sample_composition(
 # ---------------------------------------------------------------------------
 # Mutation operator
 # ---------------------------------------------------------------------------
+
+#: How often `_mutate` redraws when a mutation lands back on the parent or on an invalid
+#: configuration; also how many parent draws a generation may spend per offspring slot.
+_MUTATION_ATTEMPTS: int = 10
+
 
 def _pick(indices: tuple[int, ...], rng: np.random.Generator) -> int:
     """Uniformly pick one role index from `indices`."""
@@ -241,15 +247,15 @@ def _mutate(
 ) -> TeamConfiguration:
     """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
 
-    R is never mutated.  Retries up to ten times if the result is unchanged or invalid,
-    and returns the parent if every attempt fails.
+    R is never mutated.  Retries up to `_MUTATION_ATTEMPTS` times if the result is
+    unchanged or invalid, and returns the parent if every attempt fails.
 
     With F_freeze == 0 the A_qa option is dropped and the choice is over the other three:
     A_qa is normalised to zero there, so mutating it would produce a child normalised
     straight back to its parent.
     """
     n_mutation_types = 3 if config.F_freeze == 0 else 4
-    for _ in range(10):
+    for _ in range(_MUTATION_ATTEMPTS):
         mutation_type = int(rng.integers(n_mutation_types))  # 0=N, 1=F_freeze, 2=A_dev, 3=A_qa
 
         N = config.N
@@ -307,13 +313,13 @@ def _random_draws(
     search_cfg: SearchConfiguration,
     rng: np.random.Generator,
     n_samples: int,
-    params,
+    params: ScenarioParameters,
 ) -> list[TeamConfiguration]:
     """Draw `n_samples` random (N, A_dev, R, F_freeze, A_qa) candidates.
 
     Every draw satisfies `TeamConfiguration`'s structural constraints by construction, so
-    nothing is discarded here; the only rejection path is the human-capacity check that
-    `_evaluate` applies.
+    nothing is discarded here; the only rejection path is the human-capacity check
+    `SearchOutcome.record` applies.
     """
     review_max = review_sample_max(params)
     refactor_max = refactoring_bound(params)
@@ -348,34 +354,6 @@ def _config_key(config: TeamConfiguration, idx: int) -> str:
     return f"N{config.N:g}_R{config.R}_{idx:05d}"
 
 
-def _evaluate(
-    config: TeamConfiguration,
-    settings: SimulationHorizon,
-    params,
-    initial_state: SystemState | None = None,
-):
-    """Check feasibility, then simulate if it passes.
-
-    Returns (manifest_entry, agg_or_None, config_result_or_None); the latter two are None
-    for an infeasible configuration, which is never simulated.  Persistence is left to the
-    caller, which knows the sample retention policy.
-    """
-    report = check_feasibility(config, params)
-    entry: dict = {
-        "feasible": report.feasible,
-        "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
-        "A_dev": list(config.A_dev),
-        "A_qa": list(config.A_qa),
-    }
-    if not report.feasible:
-        entry["reason"] = report.reason
-        return entry, None, None
-
-    cr = run_configuration(config, settings, params, initial_state=initial_state)
-    agg = aggregate_config_result(cr, master_seed=settings.master_seed)
-    return entry, agg, cr
-
-
 @dataclass(slots=True)
 class SearchOutcome:
     """Everything a search or enumeration produces, independent of how it is persisted.
@@ -399,26 +377,42 @@ class SearchOutcome:
             return None
         return sum(self.incumbent_changed) / len(self.incumbent_changed)
 
+    @property
+    def configs_by_key(self) -> dict[str, TeamConfiguration]:
+        """The simulated configurations, keyed as the manifest keys them."""
+        return {key: config for key, config, _ in self.aggs}
+
     def record(
         self,
         config: TeamConfiguration,
         settings: SimulationHorizon,
-        params,
+        params: ScenarioParameters,
         initial_state: SystemState | None,
         keep_samples: bool,
         generation: int | None = None,
     ) -> None:
-        """Evaluate one candidate and file it under a fresh key.
+        """Check `config` for feasibility, simulate it if it passes, and file the result.
 
         Infeasible candidates land in the manifest only; they consume budget but are
         never simulated.  `generation` is recorded when there is one.
         """
         key = _config_key(config, self.n_evaluated)
-        entry, agg, cr = _evaluate(config, settings, params, initial_state)
+        feasibility = check_feasibility(config, params)
+        entry: dict = {
+            "feasible": feasibility.feasible,
+            "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
+            "A_dev": list(config.A_dev),
+            "A_qa": list(config.A_qa),
+        }
+        if not feasibility.feasible:
+            entry["reason"] = feasibility.reason
         if generation is not None:
             entry["generation"] = generation
         self.manifest[key] = entry
-        if agg is not None:
+
+        if feasibility.feasible:
+            cr = run_configuration(config, settings, params, initial_state=initial_state)
+            agg = aggregate_config_result(cr, master_seed=settings.master_seed)
             self.aggs.append((key, config, agg))
             if keep_samples:
                 self.results[key] = cr
@@ -462,6 +456,10 @@ def write_samples(
 # Search
 # ---------------------------------------------------------------------------
 
+#: Share of a generation's offspring whose parent is drawn from outside the elite.
+_EXPLORATION_SHARE: float = 0.2
+
+
 def _progress(i: int, total: int, outcome: SearchOutcome, every: int) -> None:
     """Print a compact heartbeat every `every` candidates (`every == 0` silences it)."""
     if every and (i % every == 0 or i == total):
@@ -470,11 +468,10 @@ def _progress(i: int, total: int, outcome: SearchOutcome, every: int) -> None:
               flush=True)
 
 
-
 def run_search(
     search_cfg: SearchConfiguration,
     settings: SimulationHorizon,
-    params,
+    params: ScenarioParameters,
     rng: np.random.Generator,
     initial_state: SystemState | None = None,
     progress_every: int = 100,
@@ -530,7 +527,8 @@ def run_search(
         if not elite_parents:
             elite_parents = rest_parents
 
-        n_rest_slots = round(n_offspring * 0.2) if rest_parents else 0
+        n_rest_slots = (round(n_offspring * _EXPLORATION_SHARE)
+                        if rest_parents else 0)
         n_elite_slots = n_offspring - n_rest_slots
 
         n_new = 0
@@ -540,7 +538,7 @@ def run_search(
                 continue
             count = 0
             attempts = 0
-            while count < slots and attempts < slots * 10:
+            while count < slots and attempts < slots * _MUTATION_ATTEMPTS:
                 if outcome.n_evaluated >= budget:
                     break
                 attempts += 1
@@ -594,16 +592,16 @@ def human_only_grid(search_cfg: SearchConfiguration) -> list[TeamConfiguration]:
 def run_human_only(
     search_cfg: SearchConfiguration,
     settings: SimulationHorizon,
-    params,
+    params: ScenarioParameters,
     initial_state: SystemState | None = None,
     progress_every: int = 100,
 ) -> SearchOutcome:
     """Exhaustively enumerate the zero-agent grid.
 
     The grid is small enough not to need searching, so `budget` and the generation
-    settings are ignored and the result is deterministic.  Every candidate still goes
-    through `_evaluate`, so an infeasible one counts as an evaluation as it would in a
-    search.  `saturation_bounds` is never consulted: this grid staffs no agents.
+    settings are ignored and the result is deterministic.  Every candidate is still
+    recorded the way a search records one, so an infeasible one counts as an evaluation.
+    `saturation_bounds` is never consulted: this grid staffs no agents.
     """
     keep_samples = search_cfg.samples != "none"
     outcome = SearchOutcome()
@@ -651,7 +649,7 @@ def two_stage_selection(
     outcome: SearchOutcome,
     search_cfg: SearchConfiguration,
     settings: SimulationHorizon,
-    params,
+    params: ScenarioParameters,
     initial_state: SystemState | None = None,
     progress_every: int = 100,
 ) -> SelectionReport:

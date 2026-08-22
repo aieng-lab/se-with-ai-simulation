@@ -101,7 +101,8 @@ class TestSaveLoadResult:
 
     def test_load_wrong_A_length_raises(self, tmp_path):
         import json
-        bad = {"config": {"N": 1, "A_dev": [1] * 5, "R": 1},
+        bad = {"config": {"N": 1, "A_dev": [1] * 5, "R": 1, "F_freeze": 0,
+                          "A_qa": []},
                "replications": [], "aggregated": {
                    "value_mean": 0, "value_ci": [0, 0],
                    "cost_mean": 0, "cost_ci": [0, 0]}}
@@ -130,17 +131,22 @@ class TestSaveLoadTraces:
 class TestTrajectoryFieldNames:
     """Every field the CLI and the trajectory figure ask for must actually be persisted."""
 
+    @staticmethod
+    def _snapshot_fields() -> set[str]:
+        import dataclasses
+
+        from src.simulation import SprintSnapshot
+        return {f.name for f in dataclasses.fields(SprintSnapshot)}
+
     def test_analyze_fields_are_snapshot_fields(self):
         from src.main import ANALYZE_TRAJECTORY_FIELDS
-        from src.results import _SNAPSHOT_FIELDS
-        missing = set(ANALYZE_TRAJECTORY_FIELDS) - set(_SNAPSHOT_FIELDS)
+        missing = set(ANALYZE_TRAJECTORY_FIELDS) - self._snapshot_fields()
         assert not missing, f"{sorted(missing)} are not persisted"
 
     def test_trajectory_plot_fields_are_snapshot_fields(self):
-        from src.results import _SNAPSHOT_FIELDS
         from src.visualization import _DEFAULT_TRAJECTORY_FIELDS, _TRAJECTORY_LABELS
         # B_kno is derived from B_kno_min + B_kno_maj inside plot_trajectories.
         derived = {"B_kno"}
-        missing = set(_DEFAULT_TRAJECTORY_FIELDS) - set(_SNAPSHOT_FIELDS) - derived
+        missing = set(_DEFAULT_TRAJECTORY_FIELDS) - self._snapshot_fields() - derived
         assert not missing, f"{sorted(missing)} are neither persisted nor derived"
         assert set(_DEFAULT_TRAJECTORY_FIELDS) <= set(_TRAJECTORY_LABELS)

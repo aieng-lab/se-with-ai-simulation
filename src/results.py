@@ -9,17 +9,11 @@ from typing import Any, TypeVar
 
 import pandas as pd
 
-from .config import AGENT_ROLE_COUNT, TeamConfiguration
+from .config import TeamConfiguration
 from .selection import AggregatedObjectives
-from .simulation import ConfigResult, ConfigTrace, ReplicationResult, SprintSnapshot
+from .simulation import ConfigResult, ConfigTrace, ReplicationResult
 
 _T = TypeVar("_T")
-
-# Every SprintSnapshot field except 't', which the DataFrame calls 'sprint'.  This is the
-# column order of a persisted trace CSV.
-_SNAPSHOT_FIELDS: tuple[str, ...] = tuple(
-    f.name for f in dataclasses.fields(SprintSnapshot) if f.name != "t"
-)
 
 # JSON has no tuples, so these come back as lists and have to be converted on load.
 _TUPLE_FIELDS = frozenset({
@@ -39,16 +33,18 @@ def _from_json(cls: "type[_T]", data: dict[str, Any]) -> _T:
 def to_dataframe(trace: ConfigTrace) -> pd.DataFrame:
     """Convert a ConfigTrace to a DataFrame indexed by (replication, sprint).
 
-    One row per sprint per replication, one column per SprintSnapshot field.
+    One row per sprint per replication, one column per SprintSnapshot field, in that
+    dataclass's declaration order — which is the column order of a persisted trace CSV.
+    `SprintSnapshot.t` is called `sprint` here.
     """
-    rows = []
-    for rep_trace in trace.traces:
-        for snap in rep_trace.snapshots:
-            row = {"replication": rep_trace.k, "sprint": snap.t}
-            for field in _SNAPSHOT_FIELDS:
-                row[field] = getattr(snap, field)
-            rows.append(row)
-    return pd.DataFrame(rows).set_index(["replication", "sprint"])
+    rows = [
+        {"replication": rep_trace.k, **dataclasses.asdict(snap)}
+        for rep_trace in trace.traces
+        for snap in rep_trace.snapshots
+    ]
+    return (pd.DataFrame(rows)
+            .rename(columns={"t": "sprint"})
+            .set_index(["replication", "sprint"]))
 
 
 def save_result(
@@ -69,9 +65,6 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
     """Load a JSON file written by save_result."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
-    if len(data["config"]["A_dev"]) != AGENT_ROLE_COUNT:
-        raise ValueError(f"A_dev has length {len(data['config']['A_dev'])}, "
-                         f"expected {AGENT_ROLE_COUNT}")
     result = ConfigResult(
         config=_from_json(TeamConfiguration, data["config"]),
         replications=tuple(_from_json(ReplicationResult, r)

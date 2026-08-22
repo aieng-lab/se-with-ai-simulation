@@ -5,16 +5,15 @@ files and returns a matplotlib Figure; the caller decides how to save it.
 
 Per-search plots
 ----------------
-    plot_cost_vs_value, plot_cost_split, plot_trajectories, plot_comparison_optima,
-    plot_elite_turnover
+    plot_cost_vs_value, plot_cost_split, plot_trajectories, plot_comparison_optima
 
 Campaign plots
 --------------
-These take the ``optima.csv`` table of :mod:`src.campaign` rather than a per-search
-`objectives` dict:
+These take the consolidated tables of :mod:`src.campaign` and :mod:`src.constellation`
+rather than a per-search `objectives` dict:
 
     plot_human_agent_matrix, plot_quality_development_matrix,
-    plot_agent_human_ratio_matrix, plot_constellation_profile,
+    plot_agent_human_ratio_matrix, plot_elite_turnover, plot_constellation_profile,
     plot_constellation_heatmap, plot_team_shape, plot_team_drivers
 
 The first three share `_draw_matrix`, the five-channel tier grid, and differ only in the
@@ -31,6 +30,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -39,6 +39,7 @@ matplotlib.use("Agg")  # non-interactive backend; safe to override before pyplot
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
+import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.ticker import (
     FuncFormatter,
@@ -68,9 +69,9 @@ from .constellation import (
     PARAMETER_BLOCKS,
     POPULATIONS,
 )
+from .results import load_traces
 
 if TYPE_CHECKING:
-    import pandas as pd
     from matplotlib.figure import Figure
 
 # Shared palette
@@ -506,11 +507,6 @@ def _tiers_present(df: "pd.DataFrame", column: str) -> list[str]:
     return [tier for tier in ALL_SCENARIO_TIERS if (df[column] == tier).any()]
 
 
-def _tier_groups(df: "pd.DataFrame", column: str) -> "list[tuple[str, pd.DataFrame]]":
-    """(tier, subframe) pairs in mild→extreme order, skipping empty tiers."""
-    return [(tier, df[df[column] == tier]) for tier in _tiers_present(df, column)]
-
-
 def _log_floor(df: "pd.DataFrame", column: str) -> float | None:
     """Where non-positive values are drawn on a log axis: half the smallest positive.
 
@@ -649,7 +645,6 @@ _MATRIX_FONT: dict[str, int] = {
 }
 
 
-
 def _figure_bbox(fig: "Figure", artist) -> "matplotlib.transforms.Bbox":
     """`artist`'s bounding box in figure coordinates.
 
@@ -696,8 +691,6 @@ def _with_baseline(
     """
     if baseline is None or baseline.empty:
         return df
-    import pandas as pd    # runtime-only: the module-level import is TYPE_CHECKING
-
     return pd.concat([df, baseline], ignore_index=True)
 
 
@@ -733,8 +726,6 @@ def _baseline_style_groups(
     held at `UNUSED_TIER` yields `None` there and the caller draws the fallback style.
     Sorted largest area first, so the small markers are not buried.
     """
-    import pandas as pd    # runtime-only: the module-level import is TYPE_CHECKING
-
     def tiers(group: str) -> "pd.Series":
         column = f"tier_{group}"
         if column in cell.columns:
@@ -786,7 +777,7 @@ def _draw_matrix(
     reference points down every column.
     """
     columns = _tiers_present(df, f"tier_{x_group}")
-    rows = _tier_groups(df, f"tier_{y_group}")
+    rows = _tiers_present(df, f"tier_{y_group}")
     if not columns or not rows:
         raise ValueError("no rows for any tier of the faceting groups")
 
@@ -808,7 +799,8 @@ def _draw_matrix(
         fig.suptitle(title, fontsize=_MATRIX_FONT["suptitle"], y=1.0)
 
         channel_columns = [f"tier_{g}" for g in (size_group, marker_group, color_group)]
-        for r, (y_tier, y_sub) in enumerate(rows):
+        for r, y_tier in enumerate(rows):
+            y_sub = df[df[f"tier_{y_group}"] == y_tier]
             for c, x_tier in enumerate(columns):
                 ax = axes[r][c]
                 cell = y_sub[y_sub[f"tier_{x_group}"] == x_tier]
@@ -927,6 +919,16 @@ def _require_columns(df: "pd.DataFrame", columns: tuple[str, ...]) -> None:
             raise KeyError(f"{column!r} is not a column of the optima table")
 
 
+def _matrix_channels(
+    x_group: str, y_group: str, size_group: str, marker_group: str, color_group: str,
+) -> dict[str, str]:
+    """The five channel->group assignments as `_draw_matrix` takes them."""
+    return {
+        "x_group": x_group, "y_group": y_group, "size_group": size_group,
+        "marker_group": marker_group, "color_group": color_group,
+    }
+
+
 def _draw_cost_plane(
     df: "pd.DataFrame",
     channels: dict[str, str],
@@ -942,6 +944,9 @@ def _draw_cost_plane(
     Both columns share one log range — taken over `df` and `baseline` together, so a
     baseline zero does not drop off the axis — at an equal aspect, and the 1:1 diagonal
     is drawn.  Ticks are decades in dollars, with 2 and 5 as unlabelled minor ticks.
+
+    The dollar signs in the labels must reach here escaped, or mathtext sees three
+    delimiters in one label and renders it literally.
     """
     scaled = _with_baseline(df, baseline)
     x_floor = _log_floor(scaled, x_col)
@@ -960,67 +965,6 @@ def _draw_cost_plane(
     return fig
 
 
-#: The two cost planes: how each derives its columns, and how it labels them.  Both go
-#: through `_draw_cost_plane`, so they differ only in this.
-class _CostPlane(NamedTuple):
-    x_col: str
-    y_col: str
-    xlabel: str                 # the dollar signs are escaped, or mathtext sees three
-    ylabel: str                 # delimiters in the label and renders it literally
-    title: str
-    derive: object = None       # frame -> frame, for a column no table carries
-
-
-def _add_development_cost(frame: "pd.DataFrame") -> "pd.DataFrame":
-    """A copy of `frame` with the two team cost drivers added together."""
-    return frame.assign(
-        cost_development_mean=frame["cost_human_mean"] + frame["cost_agent_mean"])
-
-
-_HUMAN_AGENT_PLANE = _CostPlane(
-    x_col="cost_agent_mean", y_col="cost_human_mean",
-    xlabel="↓  agent cost   (\\$ / feature)",
-    ylabel="↓  developer cost   (\\$ / feature)",
-    title="Developer vs. agent cost at $c^\\star$",
-)
-
-_QUALITY_DEVELOPMENT_PLANE = _CostPlane(
-    x_col="cost_development_mean", y_col="cost_quality_mean",
-    xlabel="↓  development cost   (\\$ / feature)",
-    ylabel="↓  escaped-bug cost   (\\$ / feature)",
-    title="Escaped-bug vs. development cost (developers + agents) at $c^\\star$",
-    derive=_add_development_cost,
-)
-
-
-def _plot_cost_plane(
-    plane: _CostPlane,
-    df: "pd.DataFrame",
-    required: tuple[str, ...],
-    x_group: str, y_group: str, size_group: str, marker_group: str, color_group: str,
-    title: str,
-    baseline: "pd.DataFrame | None",
-) -> "Figure":
-    """Validate the channels and the columns, derive what is missing, and draw `plane`."""
-    channels = {
-        "x_group": x_group, "y_group": y_group, "size_group": size_group,
-        "marker_group": marker_group, "color_group": color_group,
-    }
-    _check_matrix_groups(df, channels)
-    _require_columns(df, required)
-    if plane.derive is not None:
-        df = plane.derive(df)
-        if baseline is not None and not baseline.empty:
-            baseline = plane.derive(baseline)
-    return _draw_cost_plane(
-        df, channels,
-        x_col=plane.x_col, y_col=plane.y_col,
-        xlabel=plane.xlabel, ylabel=plane.ylabel,
-        title=title or f"{plane.title} — {x_group} × {y_group}",
-        baseline=baseline,
-    )
-
-
 def plot_human_agent_matrix(
     df: "pd.DataFrame",
     x_group: str = "agent",
@@ -1037,9 +981,17 @@ def plot_human_agent_matrix(
     the part of the bill the team composition controls.  The escaped-bug term is the
     subject of :func:`plot_quality_development_matrix`.
     """
-    return _plot_cost_plane(
-        _HUMAN_AGENT_PLANE, df, ("cost_agent_mean", "cost_human_mean"),
-        x_group, y_group, size_group, marker_group, color_group, title, baseline,
+    channels = _matrix_channels(x_group, y_group, size_group, marker_group, color_group)
+    _check_matrix_groups(df, channels)
+    _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
+    return _draw_cost_plane(
+        df, channels,
+        x_col="cost_agent_mean", y_col="cost_human_mean",
+        xlabel="↓  agent cost   (\\$ / feature)",
+        ylabel="↓  developer cost   (\\$ / feature)",
+        title=title or (f"Developer vs. agent cost at $c^\\star$ — "
+                        f"{x_group} × {y_group}"),
+        baseline=baseline,
     )
 
 
@@ -1059,10 +1011,25 @@ def plot_quality_development_matrix(
     x and set against the escaped-bug bill on y.  The sum is derived on a copy; no table
     carries it.
     """
-    return _plot_cost_plane(
-        _QUALITY_DEVELOPMENT_PLANE, df,
-        ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"),
-        x_group, y_group, size_group, marker_group, color_group, title, baseline,
+    channels = _matrix_channels(x_group, y_group, size_group, marker_group, color_group)
+    _check_matrix_groups(df, channels)
+    _require_columns(df, ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"))
+
+    def add_development_cost(frame: "pd.DataFrame") -> "pd.DataFrame":
+        return frame.assign(
+            cost_development_mean=frame["cost_human_mean"] + frame["cost_agent_mean"])
+
+    df = add_development_cost(df)
+    if baseline is not None and not baseline.empty:
+        baseline = add_development_cost(baseline)
+    return _draw_cost_plane(
+        df, channels,
+        x_col="cost_development_mean", y_col="cost_quality_mean",
+        xlabel="↓  development cost   (\\$ / feature)",
+        ylabel="↓  escaped-bug cost   (\\$ / feature)",
+        title=title or (f"Escaped-bug vs. development cost (developers + agents) at "
+                        f"$c^\\star$ — {x_group} × {y_group}"),
+        baseline=baseline,
     )
 
 
@@ -1086,10 +1053,7 @@ def plot_agent_human_ratio_matrix(
     distribution and each is a fragment of it.  The rank is taken over the frame as handed
     in, so filtering it further before calling re-ranks what is left against itself.
     """
-    channels = {
-        "x_group": x_group, "y_group": y_group, "size_group": size_group,
-        "marker_group": marker_group, "color_group": color_group,
-    }
+    channels = _matrix_channels(x_group, y_group, size_group, marker_group, color_group)
     _check_matrix_groups(df, channels)
     _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
 
@@ -1134,13 +1098,12 @@ _POPULATION_COLORS = {C_STAR: _BEST_COLOR, I_STAR: _KEEP_COLOR}
 _POPULATION_LABELS = {C_STAR: "$c^\\star$", I_STAR: "$\\mathcal{I}^\\star$ (mean per scenario)"}
 
 
-def _check_cell_channels(cells: "pd.DataFrame", groups: tuple[str, ...]) -> tuple[str, str]:
+def _check_cell_channels(cells: "pd.DataFrame", groups: tuple[str, ...]) -> None:
     """Validate the two faceting groups of the constellation figures."""
     require_group_pair(groups)
     missing = [f"tier_{g}" for g in groups if f"tier_{g}" not in cells.columns]
     if missing:
         raise KeyError(f"{missing} are not columns of the constellation table")
-    return groups[0], groups[1]
 
 
 def _cell_lookup(cells: "pd.DataFrame", row_column: str, col_column: str) -> dict:
@@ -1190,7 +1153,7 @@ def plot_constellation_profile(
     at the frame, `sd` exceeding the mean wherever a role is staffed in only part of the
     cell.
     """
-    rows_group, cols_group = _check_cell_channels(cells, (rows_group, cols_group))
+    _check_cell_channels(cells, (rows_group, cols_group))
     parameters, labels = DEV_PARAMETERS, AGENT_ROLE_ABBREV
     row_column, col_column = f"tier_{rows_group}", f"tier_{cols_group}"
     row_tiers = _tiers_present(cells, row_column)
@@ -1308,7 +1271,7 @@ def plot_constellation_heatmap(
     :func:`_normalised_columns`).  The raw `mean ± sd` is printed in each cell, so the
     colour is a reading aid and the number is the result.
     """
-    rows_group, cols_group = _check_cell_channels(cells, (rows_group, cols_group))
+    _check_cell_channels(cells, (rows_group, cols_group))
     row_column, col_column = f"tier_{rows_group}", f"tier_{cols_group}"
     row_tiers = _tiers_present(cells, row_column)
     col_tiers = _tiers_present(cells, col_column)
@@ -1415,7 +1378,7 @@ def visualize_constellation(
 
 
 # ---------------------------------------------------------------------------
-# 7. The two-figure summary of team structure
+# 7. The summary of team structure
 # ---------------------------------------------------------------------------
 #
 # `plot_constellation_profile` / `_heatmap` report every control variable; these two
@@ -1728,7 +1691,7 @@ class _Quantity(NamedTuple):
     """One panel of the driver figure: a column, its axis label, its tick formatter."""
     column: str
     label: str
-    formatter: "object" = None
+    formatter: "Callable[[float, int | None], str] | None" = None
 
 
 #: The quantities the driver figure summarises, one linear panel each: the three process
@@ -1741,7 +1704,6 @@ _TEAM_QUANTITIES: tuple[_Quantity, ...] = (
     _Quantity("aut_agents_per_feature", "autonomous agents\nper arriving feature"),
     _Quantity("security_share", "Security's share of\nthe detection pair", _percent_tick),
 )
-
 
 
 def _team_quantities(optima: "pd.DataFrame") -> "pd.DataFrame":
@@ -1941,7 +1903,6 @@ def _load_traces(
     config_keys: list[str],
 ) -> "dict[str, pd.DataFrame]":
     """Load traces.csv for each config that has one."""
-    from .results import load_traces
     out = {}
     for key in config_keys:
         tfile = result_dir / "samples" / f"{key}_traces.csv"

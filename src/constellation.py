@@ -277,15 +277,15 @@ def _sorted_cells(
     parameters: list[str],
 ) -> pd.DataFrame:
     """Order the long table by tier (mild→extreme) and by parameter block."""
-    order = {name: i for i, name in enumerate(ALL_SCENARIO_TIERS)}
-    keys = []
-    for group in groups:
-        keys.append(long[f"tier_{group}"].map(order))
-    keys.append(long["parameter"].map({p: i for i, p in enumerate(parameters)}))
-    out = long.assign(**{f"_k{i}": k for i, k in enumerate(keys)})
-    sort_columns = [f"_k{i}" for i in range(len(keys))]
-    out = out.sort_values(sort_columns).drop(columns=sort_columns)
-    return out[["population", *[f"tier_{g}" for g in groups], "parameter",
+    tier_order = {name: i for i, name in enumerate(ALL_SCENARIO_TIERS)}
+    parameter_order = {name: i for i, name in enumerate(parameters)}
+    tier_columns = [f"tier_{g}" for g in groups]
+    out = long.sort_values(
+        tier_columns + ["parameter"],
+        key=lambda column: column.map(
+            parameter_order if column.name == "parameter" else tier_order),
+    )
+    return out[["population", *tier_columns, "parameter",
                 "mean", "sd", "n_scenarios", "n_members"]].reset_index(drop=True)
 
 

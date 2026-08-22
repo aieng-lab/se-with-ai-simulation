@@ -20,7 +20,6 @@ from src.selection import (
     AggregatedObjectives,
     aggregate_config_result,
     best_index,
-    indistinguishable_set,
     parsimony_dominates,
     parsimony_key,
     preference_key,
@@ -165,17 +164,17 @@ class TestIndistinguishableSet:
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # 0: c*
                 _agg(value=10.0, cost=115.0, ci=(105.0, 125.0)),  # 1: overlaps 0
                 _agg(value=10.0, cost=300.0, ci=(290.0, 310.0))]  # 2: separated
-        assert indistinguishable_set(pool, floor=10.0) == [0, 1]
+        assert report_optimum(pool, floor=10.0)[1] == [0, 1]
 
     def test_best_is_a_member_without_the_tie_break(self):
         pool = [_agg(value=10.0, cost=100.0, ci=(99.0, 101.0))]
-        assert indistinguishable_set(pool, 10.0) == [0]
+        assert report_optimum(pool, 10.0)[1] == [0]
 
     def test_inadmissible_configurations_are_excluded_even_when_tied(self):
         """I* is defined over admissible candidates only."""
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),   # 0: c*
                 _agg(value=5.0, cost=100.0, ci=(90.0, 110.0))]    # 1: same cost, short
-        assert indistinguishable_set(pool, floor=10.0) == [0]
+        assert report_optimum(pool, floor=10.0)[1] == [0]
 
     def test_an_inadmissible_pool_yields_an_empty_set(self):
         """With nothing admissible there is no c*, so I* is empty.
@@ -185,26 +184,26 @@ class TestIndistinguishableSet:
         """
         pool = [_agg(value=9.0, cost=100.0, ci=(90.0, 110.0)),
                 _agg(value=1.0, cost=100.0, ci=(90.0, 110.0))]
-        assert indistinguishable_set(pool, floor=10.0) == []
+        assert report_optimum(pool, floor=10.0)[1] == []
 
     def test_touching_cis_count_as_overlapping(self):
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),
                 _agg(value=10.0, cost=130.0, ci=(110.0, 150.0))]
-        assert indistinguishable_set(pool, 10.0) == [0, 1]
+        assert report_optimum(pool, 10.0)[1] == [0, 1]
 
     def test_empty_pool_yields_an_empty_set(self):
-        assert indistinguishable_set([], 10.0) == []
+        assert report_optimum([], 10.0)[1] == []
 
     def test_key_length_mismatch_raises(self):
         pool = [_agg(), _agg()]
         with pytest.raises(ValueError, match="one entry per point"):
-            indistinguishable_set(pool, 10.0, keys=[parsimony_key(_cfg())])
+            report_optimum(pool, 10.0, keys=[parsimony_key(_cfg())])
 
     def test_membership_does_not_depend_on_input_order(self):
         pool = [_agg(value=10.0, cost=300.0, ci=(290.0, 310.0)),
                 _agg(value=10.0, cost=115.0, ci=(105.0, 125.0)),
                 _agg(value=10.0, cost=100.0, ci=(90.0, 110.0))]
-        assert indistinguishable_set(pool, 10.0) == [1, 2]
+        assert report_optimum(pool, 10.0)[1] == [1, 2]
 
 
 # ---------------------------------------------------------------------------
@@ -283,15 +282,15 @@ class TestIndistinguishableSetParsimony:
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
                 parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))]
-        assert indistinguishable_set(pool, 10.0) == [0, 1]
-        assert indistinguishable_set(pool, 10.0, keys=keys) == [0]
+        assert report_optimum(pool, 10.0)[1] == [0, 1]
+        assert report_optimum(pool, 10.0, keys=keys)[1] == [0]
 
     def test_incomparable_members_both_survive(self):
         pool = [_agg(value=10.0, cost=100.0, ci=(90.0, 110.0)),
                 _agg(value=10.0, cost=101.0, ci=(91.0, 111.0))]
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 3, 2, 1, 0, 0, 0))),
                 parsimony_key(_cfg(A_dev=(1, 0, 2, 3, 1, 0, 0, 0)))]
-        assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
+        assert report_optimum(pool, 10.0, keys=keys)[1] == [0, 1]
 
     def test_the_set_is_never_emptied(self):
         """`parsimony_dominates` is a strict partial order, so a minimal member survives."""
@@ -304,7 +303,7 @@ class TestIndistinguishableSetParsimony:
             cost = 100.0 + i
             pool.append(_agg(value=10.0, cost=cost, ci=(cost - 30.0, cost + 30.0)))
             keys.append(parsimony_key(_cfg(A_dev=A, A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
-        assert indistinguishable_set(pool, 10.0, keys=keys)
+        assert report_optimum(pool, 10.0, keys=keys)[1]
 
     def test_the_tie_break_never_removes_the_raw_minimiser(self):
         """A smaller tied team cannot displace c*, because it is not cheaper.
@@ -318,7 +317,7 @@ class TestIndistinguishableSetParsimony:
         keys = [parsimony_key(_cfg(A_dev=(1, 0, 2, 0, 1, 0, 0, 0))),
                 parsimony_key(_cfg(A_dev=(1, 0, 1, 0, 1, 0, 0, 0)))]
         assert best_index(pool, 10.0) == 0
-        assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
+        assert report_optimum(pool, 10.0, keys=keys)[1] == [0, 1]
 
     def test_a_dominated_non_optimum_is_still_removed(self):
         """c* is only safe because nothing undercuts it; other members are fair game."""
@@ -328,7 +327,7 @@ class TestIndistinguishableSetParsimony:
         keys = [parsimony_key(_cfg(N=2.0, A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
                 parsimony_key(_cfg(N=3.0, A_dev=(1, 0, 1, 0, 1, 0, 0, 0))),
                 parsimony_key(_cfg(N=3.0, A_dev=(1, 0, 2, 0, 1, 0, 0, 0)))]
-        assert indistinguishable_set(pool, 10.0, keys=keys) == [0, 1]
+        assert report_optimum(pool, 10.0, keys=keys)[1] == [0, 1]
 
     def test_parsimony_does_not_depend_on_input_order(self):
         """The dominance filter is order-independent: it is a strict partial order.
@@ -344,12 +343,12 @@ class TestIndistinguishableSetParsimony:
             cost = 100.0 + i
             pool.append(_agg(value=10.0, cost=cost, ci=(cost - 30.0, cost + 30.0)))
             keys.append(parsimony_key(_cfg(A_dev=A, A_qa=(0, 0, 1, 0, 0, 0, 0, 0))))
-        survivors = {keys[i].agents for i in indistinguishable_set(pool, 10.0, keys=keys)}
+        survivors = {keys[i].agents for i in report_optimum(pool, 10.0, keys=keys)[1]}
         order = list(rng.permutation(len(pool)))
         shuffled = [pool[i] for i in order], [keys[i] for i in order]
         survivors_shuffled = {
             shuffled[1][i].agents
-            for i in indistinguishable_set(shuffled[0], 10.0, keys=shuffled[1])
+            for i in report_optimum(shuffled[0], 10.0, keys=shuffled[1])[1]
         }
         assert survivors == survivors_shuffled
 
@@ -403,7 +402,7 @@ class TestReportOptimum:
                 _agg(value=10.0, cost=100.0, ci=(90.0, 110.0))]
         best, members = report_optimum(pool, 10.0)
         assert best == best_index(pool, 10.0) == 1
-        assert members == indistinguishable_set(pool, 10.0)
+        assert members == [1]
 
     def test_empty_pool(self):
         assert report_optimum([], 10.0) == (None, [])

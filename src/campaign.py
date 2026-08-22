@@ -37,7 +37,6 @@ import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
-    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     RESULT_MODES,
     SCENARIO_GROUPS,
@@ -95,21 +94,6 @@ def scenario_params_for_id(
 # ----------------------------------------------------------------------------
 # Flat tables over the campaign artifacts
 # ----------------------------------------------------------------------------
-
-def is_baseline_scenario(scenario_id: str) -> bool:
-    """True for a human-only baseline scenario, i.e. one carrying the `X` sentinel."""
-    return UNUSED_TIER in tiers_from_scenario_id(scenario_id).values()
-
-
-def expected_modes(scenario_id: str) -> tuple[str, ...]:
-    """The result modes a scenario is supposed to carry, for the missing-run report.
-
-    A baseline scenario is enumerated once and has no search counterpart; every other
-    scenario is searched once.
-    """
-    return ((HUMAN_ONLY_MODE,) if is_baseline_scenario(scenario_id)
-            else (SEARCH_MODE,))
-
 
 def search_dirs(results_dir: Path) -> list[tuple[str, str, Path]]:
     """Find every (scenario_id, mode, dir) that holds a finished search or enumeration."""

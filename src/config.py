@@ -208,9 +208,9 @@ class TeamConfiguration:
                     "a_qa,2 (Architecture & Design Agent) must be 0 during feature freeze"
                 )
         else:
-            # Never applied without a freeze window, so normalise it: two teams differing
-            # only here are the same model and must hash and simulate as one.  After the
-            # shape checks, so a malformed A_qa still raises.
+            # Never applied without a freeze window, so normalise it: two teams that
+            # differ only here must hash and simulate as one.  After the shape checks,
+            # so a malformed A_qa still raises.
             object.__setattr__(self, "A_qa", (0,) * AGENT_ROLE_COUNT)
 
     def active_A(self, is_frozen: bool) -> tuple[int, ...]:

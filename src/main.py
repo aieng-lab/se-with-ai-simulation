@@ -32,7 +32,7 @@ Generate visualizations from optimization results:
     python -m src.main visualize results/search_default [--out results/search_default/plots]
     python -m src.main visualize results/run1 results/run2 --out results/comparison
 
-Consolidate a finished campaign into its tables and the five-dimension optima figures:
+Consolidate a finished campaign into its tables and the five-channel optima figures:
     python -m src.main campaign [results/experiments] [--out results/analysis]
     python -m src.main campaign --x debt --color agent
     python -m src.main campaign --figures-only    (redraw from an existing optima.csv)
@@ -53,29 +53,40 @@ import pandas as pd
 from .config import (
     AGENT_ROLE_NAMES,
     AUTONOMOUS_ROLE_INDICES,
-    SEARCH_MODE,
     HUMAN_ONLY_MODE,
     SAMPLE_POLICIES,
     SCENARIO_GROUPS,
+    SEARCH_MODE,
+    SearchConfiguration,
+    SimulationHorizon,
     TeamConfiguration,
     supervised_agent_count,
 )
-from .io import load_initial_state, load_scenario_params, load_search_config, load_simulation_horizon, load_team_config
+from .io import (
+    load_initial_state,
+    load_scenario_params,
+    load_search_config,
+    load_simulation_horizon,
+    load_team_config,
+)
+from .parameters import ScenarioParameters
 from .results import load_result, load_traces, save_result, save_traces
 from .search import (
-    run_search,
-    run_human_only,
+    SearchOutcome,
+    SelectionReport,
     human_only_grid,
+    run_human_only,
+    run_search,
     two_stage_selection,
     write_samples,
 )
 from .selection import (
+    AggregatedObjectives,
     aggregate_config_result,
     satisfies_throughput,
     throughput_floor,
 )
-from .campaign import (baseline_uplift, build_tables, convergence_summary,
-                       expected_modes, search_dirs)
+from .campaign import baseline_uplift, build_tables, convergence_summary
 from .constellation import (CELL_GROUPS, build_constellation,
                             build_indistinguishable, constellation_summary,
                             role_bill)
@@ -104,7 +115,7 @@ def _scenario_paths_from_args(args: argparse.Namespace) -> dict[str, str]:
     return {group: getattr(args, group) for group in SCENARIO_GROUPS}
 
 
-def _print_objectives(agg) -> None:
+def _print_objectives(agg: AggregatedObjectives) -> None:
     """The objective, the constraint and the three cost drivers of one configuration."""
     print("Objective and constraint (mean [95 % CI]):")
     print(f"  cost   $/feature         {agg.cost_mean:.1f}   "
@@ -178,11 +189,17 @@ def _cmd_run(args: argparse.Namespace) -> None:
             print(f"Saved traces  → {traces_path}")
 
 
-#: Trajectory columns the `analyze` subcommand tabulates.  Every name must be a persisted
-#: SprintSnapshot field, i.e. a column `results.to_dataframe` writes.
-ANALYZE_TRAJECTORY_FIELDS: tuple[str, ...] = (
-    "F_completed", "D_tech", "B_kno_min", "B_kno_maj", "N_test", "N_doc",
-)
+#: Trajectory columns the `analyze` subcommand tabulates, and the heading each gets.
+#: Every key must be a persisted SprintSnapshot field, i.e. a column
+#: `results.to_dataframe` writes.
+ANALYZE_TRAJECTORY_FIELDS: dict[str, str] = {
+    "F_completed": "F_done",
+    "D_tech": "Debt",
+    "B_kno_min": "B_kno_min",
+    "B_kno_maj": "B_kno_maj",
+    "N_test": "N_test",
+    "N_doc": "N_doc",
+}
 
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
@@ -208,7 +225,7 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print()
 
     fields = list(ANALYZE_TRAJECTORY_FIELDS)
-    labels = ["F_done", "Debt", "B_kno_min", "B_kno_maj", "N_test", "N_doc"]
+    labels = list(ANALYZE_TRAJECTORY_FIELDS.values())
 
     # Header
     col_w = 10
@@ -236,7 +253,8 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
         print(f"  {lbl:<12}  min={fd.min():.3f}  mean={fd.mean():.3f}  max={fd.max():.3f}")
 
 
-def _objective_entry(config: TeamConfiguration, agg, floor: float) -> dict:
+def _objective_entry(config: TeamConfiguration, agg: AggregatedObjectives,
+                     floor: float) -> dict:
     """One `search_summary.json` objectives entry: the configuration and its aggregates.
 
     Used for both blocks of that file — `objectives` at `K_search` for every simulated
@@ -266,8 +284,9 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _print_search_banner(cfg_path: Path, search_cfg, horizon, params, mode: str,
-                         start_state: str) -> None:
+def _print_search_banner(cfg_path: Path, search_cfg: SearchConfiguration,
+                         horizon: SimulationHorizon, params: ScenarioParameters,
+                         mode: str, start_state: str) -> None:
     """What is about to be run: inputs, protocol, budget and throughput floor."""
     print(f"Search:      {cfg_path}")
     print(f"Scenario id: {search_cfg.scenario_id or '(unnamed)'}")
@@ -294,9 +313,10 @@ def _print_search_banner(cfg_path: Path, search_cfg, horizon, params, mode: str,
     print()
 
 
-def _manifest_payload(cfg_path: Path, search_cfg, horizon, mode: str,
-                      scenario_values: dict, outcome, floor: float,
-                      best_admissible: bool, wall_clock_s: float) -> dict:
+def _manifest_payload(cfg_path: Path, search_cfg: SearchConfiguration,
+                      horizon: SimulationHorizon, mode: str, scenario_values: dict,
+                      outcome: SearchOutcome, floor: float, best_admissible: bool,
+                      wall_clock_s: float) -> dict:
     """`manifest.json`: what was run, and one entry per evaluated candidate."""
     return {
         "search_config": str(cfg_path),
@@ -332,14 +352,15 @@ def _manifest_payload(cfg_path: Path, search_cfg, horizon, mode: str,
     }
 
 
-def _search_summary_payload(aggs, report, horizon, floor: float) -> dict:
+def _search_summary_payload(outcome: SearchOutcome, report: SelectionReport,
+                            horizon: SimulationHorizon, floor: float) -> dict:
     """`search_summary.json`: the reported pair, and the objectives behind it.
 
     `objectives` holds every simulated candidate at `K_search`, which is what the search
     ranked by; `final_objectives` holds the re-simulated ones at `K_final`, which is what
     `best` and `indistinguishable` key into and what every reported number comes from.
     """
-    configs_by_key = {key: cfg for key, cfg, _ in aggs}
+    configs = outcome.configs_by_key
     return {
         "best": report.best_key,
         "indistinguishable": report.keep_keys,
@@ -347,17 +368,18 @@ def _search_summary_payload(aggs, report, horizon, floor: float) -> dict:
         "K_search": horizon.K_search,
         "K_final": horizon.K_final,
         "objectives": {
-            key: _objective_entry(cfg, agg, floor) for key, cfg, agg in aggs
+            key: _objective_entry(cfg, agg, floor) for key, cfg, agg in outcome.aggs
         },
         "final_objectives": {
-            key: _objective_entry(configs_by_key[key], agg, floor)
+            key: _objective_entry(configs[key], agg, floor)
             for key, agg in report.final_aggs.items()
         },
     }
 
 
-def _convergence_payload(search_cfg, horizon, mode: str, outcome, report,
-                         params, final_best: dict | None, floor: float,
+def _convergence_payload(search_cfg: SearchConfiguration, horizon: SimulationHorizon,
+                         mode: str, outcome: SearchOutcome, report: SelectionReport,
+                         params: ScenarioParameters, final_best: dict | None,
                          wall_clock_s: float, resim_s: float) -> dict:
     """`convergence.json`: the per-generation record and the stages of the selection.
 
@@ -384,7 +406,8 @@ def _convergence_payload(search_cfg, horizon, mode: str, outcome, report,
     }
 
 
-def _print_optimum(report, horizon, floor: float, final_best: dict | None) -> None:
+def _print_optimum(report: SelectionReport, horizon: SimulationHorizon, floor: float,
+                   final_best: dict | None) -> None:
     """The reported optimum and how the selection narrowed down to it."""
     if final_best is None:
         print("No candidate was simulated — nothing to report.")
@@ -477,7 +500,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     write_samples(outcome, out_dir, sample_keys, report.final_aggs)
 
     final_best = (
-        _objective_entry({key: cfg for key, cfg, _ in outcome.aggs}[report.best_key],
+        _objective_entry(outcome.configs_by_key[report.best_key],
                          report.final_aggs[report.best_key], floor)
         if report.best_key is not None else None
     )
@@ -486,10 +509,10 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
                 _manifest_payload(cfg_path, search_cfg, horizon, mode, scenario_values,
                                   outcome, floor, report.best_admissible, wall_clock_s))
     _write_json(out_dir / "search_summary.json",
-                _search_summary_payload(outcome.aggs, report, horizon, floor))
+                _search_summary_payload(outcome, report, horizon, floor))
     _write_json(out_dir / "convergence.json",
                 _convergence_payload(search_cfg, horizon, mode, outcome, report, params,
-                                     final_best, floor, wall_clock_s, resim_s))
+                                     final_best, wall_clock_s, resim_s))
 
     print()
     print(f"Evaluated {outcome.n_evaluated} candidates "
@@ -556,17 +579,12 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print("\nDone.")
         return
 
-    results_dir = Path(args.results_dir)
-    if not results_dir.is_dir():
-        print(f"Error: {results_dir} is not a directory.", file=sys.stderr)
+    try:
+        optima, scenarios, convergence, turnover = build_tables(
+            Path(args.results_dir), args.config_dir)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    searches = search_dirs(results_dir)
-    if not searches:
-        print(f"Error: no finished searches found under {results_dir}", file=sys.stderr)
-        sys.exit(1)
-
-    optima, scenarios, convergence, turnover = build_tables(results_dir, args.config_dir)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     scenarios_path = out_dir / "scenarios.csv"
@@ -584,24 +602,20 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
     if not uplift.empty:
         uplift.to_csv(uplift_path, index=False)
 
-    scenario_ids = {sid for sid, _, _ in searches}
-    n_scenarios = len(scenario_ids)
-    print(f"Collected {len(searches)} search(es) over {n_scenarios} scenario(s)")
+    # One `scenarios` row per finished run, so the two counts come off that table.
+    n_searches = len(scenarios)
+    print(f"Collected {n_searches} search(es) over "
+          f"{scenarios['scenario_id'].nunique()} scenario(s)")
     print(f"  {optima_path}   {len(optima)} reported optima")
-    print(f"  {scenarios_path}   {len(scenarios)} (scenario, mode) pairs")
+    print(f"  {scenarios_path}   {n_searches} (scenario, mode) pairs")
     if not uplift.empty:
         print(f"  {uplift_path}   {len(uplift)} optima with a human-only reference")
     if not convergence.empty:
         print(f"  {convergence_path}   {len(convergence)} search(es) with convergence measures")
     if not turnover.empty:
         print(f"  {turnover_path}   {len(turnover)} generation(s) of elite turnover")
-    # Per scenario rather than a flat 1: a baseline scenario is enumerated once and has
-    # no search counterpart.
-    missing = sum(len(expected_modes(sid)) for sid in scenario_ids) - len(searches)
-    if missing:
-        print(f"  note: {missing} (scenario, mode) pair(s) have no results yet")
-    if len(optima) < len(searches):
-        print(f"  note: {len(searches) - len(optima)} search(es) simulated no candidate")
+    if len(optima) < n_searches:
+        print(f"  note: {n_searches - len(optima)} search(es) simulated no candidate")
 
     if not convergence.empty:
         summary = convergence_summary(convergence)
@@ -661,11 +675,12 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
 
     optima = _read_table(optima_path, "reported optima", optima_hint)
     results_dir = Path(args.results_dir)
-    if not results_dir.is_dir():
-        print(f"Error: {results_dir} is not a directory.", file=sys.stderr)
-        sys.exit(1)
     print(f"Reading the indistinguishable sets under {results_dir} ...")
-    istar = build_indistinguishable(results_dir)
+    try:
+        istar = build_indistinguishable(results_dir)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(f"  {len(istar)} I* member(s) over "
           f"{istar[['scenario_id', 'mode']].drop_duplicates().shape[0]} search(es)")
 
@@ -772,8 +787,8 @@ def main(argv: list[str] | None = None) -> None:
     # -- campaign --
     p_camp = sub.add_parser(
         "campaign",
-        help="Consolidate a whole campaign into optima.csv, scenarios.csv and the "
-             "five-dimension optima figure.",
+        help="Consolidate a whole campaign into its CSV tables and the "
+             "five-channel optima figures.",
     )
     p_camp.add_argument("results_dir", nargs="?", default="results/experiments",
                         metavar="RESULTS_DIR",

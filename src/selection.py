@@ -193,15 +193,29 @@ def parsimony_dominates(
     return all(x <= y for x, y in zip(key_a.agents, key_b.agents))
 
 
-def _members(
+def report_optimum(
     aggs: "Sequence[AggregatedObjectives]",
     floor: float,
-    best: int,
-    keys: "Sequence[ParsimonyKey] | None",
-) -> list[int]:
-    """`I*` given a known `c*` index; empty when `c*` itself is inadmissible."""
+    keys: "Sequence[ParsimonyKey] | None" = None,
+) -> tuple[int | None, list[int]]:
+    """The `(c*, I*)` pair to report: the index of `c*` and the indices of `I*`.
+
+    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost
+    CI overlaps `c*`'s.  With `keys` given, the parsimony tie-break then drops any member
+    another member dominates; `c*` cannot be dropped, since domination requires a
+    strictly lower mean cost.
+
+    `I*` is empty for an empty pool and for one in which no candidate is admissible;
+    in the latter case the least-violating candidate is still returned beside it, and
+    callers must mark such a result as inadmissible with `satisfies_throughput`.
+    """
+    best = best_index(aggs, floor)
+    if best is None:
+        return None, []
+    if keys is not None and len(keys) != len(aggs):
+        raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
     if not satisfies_throughput(aggs[best], floor):
-        return []
+        return best, []
 
     lo, hi = aggs[best].cost_ci
     members = [
@@ -211,53 +225,11 @@ def _members(
             and agg.cost_ci[0] <= hi and lo <= agg.cost_ci[1])
     ]
     if keys is None:
-        return members
-    return [
+        return best, members
+    return best, [
         i for i in members
         if not any(
             parsimony_dominates(keys[j], keys[i], aggs[j].cost_mean, aggs[i].cost_mean)
             for j in members if j != i
         )
     ]
-
-
-def indistinguishable_set(
-    aggs: "Sequence[AggregatedObjectives]",
-    floor: float,
-    keys: "Sequence[ParsimonyKey] | None" = None,
-) -> list[int]:
-    """Indices of `I*`: the admissible candidates statistically tied with `c*`.
-
-    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost
-    CI overlaps `c*`'s.  With `keys` given, the parsimony tie-break then drops any member
-    another member dominates; `c*` cannot be dropped, since domination requires a
-    strictly lower mean cost.
-
-    Empty for an empty pool, and for a pool in which no candidate is admissible — there
-    is no `c*` for a set to form around, though one is still reported.
-    """
-    best = best_index(aggs, floor)
-    if best is None:
-        return []
-    if keys is not None and len(keys) != len(aggs):
-        raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
-    return _members(aggs, floor, best, keys)
-
-
-def report_optimum(
-    aggs: "Sequence[AggregatedObjectives]",
-    floor: float,
-    keys: "Sequence[ParsimonyKey] | None" = None,
-) -> tuple[int | None, list[int]]:
-    """The `(c*, I*)` pair to report; see :func:`indistinguishable_set`.
-
-    When no candidate is admissible `I*` is empty and the least-violating candidate is
-    returned beside it — callers must mark such a result as inadmissible, for which
-    `satisfies_throughput` on the returned entry is the check.
-    """
-    best = best_index(aggs, floor)
-    if best is None:
-        return None, []
-    if keys is not None and len(keys) != len(aggs):
-        raise ValueError(f"keys must have one entry per point: {len(keys)} != {len(aggs)}")
-    return best, _members(aggs, floor, best, keys)
