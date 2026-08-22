@@ -1,4 +1,4 @@
-"""Persistence and DataFrame conversion for simulation results."""
+"""JSON persistence for simulation results."""
 
 from __future__ import annotations
 
@@ -7,11 +7,9 @@ import json
 from pathlib import Path
 from typing import Any, TypeVar
 
-import pandas as pd
-
 from .config import TeamConfiguration
 from .selection import AggregatedObjectives
-from .simulation import ConfigResult, ConfigTrace, ReplicationResult
+from .simulation import ConfigResult, ReplicationResult
 
 _T = TypeVar("_T")
 
@@ -28,23 +26,6 @@ def _from_json(cls: "type[_T]", data: dict[str, Any]) -> _T:
         for f in dataclasses.fields(cls)          # type: ignore[arg-type]
     }
     return cls(**kwargs)                          # type: ignore[operator]
-
-
-def to_dataframe(trace: ConfigTrace) -> pd.DataFrame:
-    """Convert a ConfigTrace to a DataFrame indexed by (replication, sprint).
-
-    One row per sprint per replication, one column per SprintSnapshot field, in that
-    dataclass's declaration order — which is the column order of a persisted trace CSV.
-    `SprintSnapshot.t` is called `sprint` here.
-    """
-    rows = [
-        {"replication": rep_trace.k, **dataclasses.asdict(snap)}
-        for rep_trace in trace.traces
-        for snap in rep_trace.snapshots
-    ]
-    return (pd.DataFrame(rows)
-            .rename(columns={"t": "sprint"})
-            .set_index(["replication", "sprint"]))
 
 
 def save_result(
@@ -71,13 +52,3 @@ def load_result(path: str | Path) -> tuple[ConfigResult, AggregatedObjectives]:
                            for r in data["replications"]),
     )
     return result, _from_json(AggregatedObjectives, data["aggregated"])
-
-
-def save_traces(trace: ConfigTrace, path: str | Path) -> None:
-    """Save the full per-sprint time-series trace to a CSV file."""
-    to_dataframe(trace).reset_index().to_csv(path, index=False)
-
-
-def load_traces(path: str | Path) -> pd.DataFrame:
-    """Load a CSV written by save_traces; restores the (replication, sprint) MultiIndex."""
-    return pd.read_csv(path).set_index(["replication", "sprint"])

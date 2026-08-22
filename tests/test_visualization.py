@@ -30,15 +30,7 @@ from src.config import (
     scenario_tier_combinations,
     scenario_tiers,
 )
-from src.constellation import (
-    BILL_PARAMETERS,
-    C_STAR,
-    CONSTELLATION_PARAMETERS,
-    DEV_PARAMETERS,
-    I_STAR,
-    PARAMETER_BLOCKS,
-    role_bill,
-)
+from src.constellation import BILL_PARAMETERS, role_bill
 from src.visualization import (
     _BUG_COST_LABEL,
     _compact_dollars,
@@ -55,14 +47,11 @@ from src.visualization import (
     _SHARE_WEIGHTS,
     _TEAM_QUANTITIES,
     _team_quantities,
-    plot_constellation_heatmap,
-    plot_constellation_profile,
     plot_team_drivers,
     plot_team_shape,
     plot_quality_development_matrix,
     save_figure,
     visualize_campaign,
-    visualize_constellation,
     visualize_team_summary,
 )
 
@@ -614,172 +603,6 @@ class TestVisualizeCampaignWithBaseline:
     def test_a_campaign_without_a_baseline_still_works(self, tmp_path):
         visualize_campaign(_few(("search",)), tmp_path, fmt="png")
         assert (tmp_path / "human_agent_matrix.png").is_file()
-
-
-# ---------------------------------------------------------------------------
-# The constellation figures (src/constellation.py's cell table)
-# ---------------------------------------------------------------------------
-
-def _cells(
-    populations: tuple[str, ...] = (C_STAR, I_STAR),
-    row_tiers: tuple[str, ...] = ("low", "medium", "high"),
-    col_tiers: tuple[str, ...] = ("low", "medium", "high", "veryhigh"),
-    overrides: "dict | None" = None,
-) -> pd.DataFrame:
-    """A synthetic `constellation_cells.csv`, keyed (project, bugimpact)."""
-    overrides = overrides or {}
-    rows = []
-    for p, population in enumerate(populations):
-        for i, col_tier in enumerate(col_tiers):
-            for j, row_tier in enumerate(row_tiers):
-                for k, parameter in enumerate(CONSTELLATION_PARAMETERS):
-                    mean = overrides.get(
-                        parameter, float((k + 1) * (i + 1) * (j + 1) + p))
-                    rows.append({
-                        "population": population,
-                        "tier_project": col_tier, "tier_bugimpact": row_tier,
-                        "parameter": parameter,
-                        "mean": mean,
-                        "sd": mean * 0.3,
-                        "n_scenarios": 36, "n_members": 36 * (p + 1),
-                    })
-    return pd.DataFrame(rows)
-
-
-@pytest.fixture(scope="module")
-def profile_fig() -> Figure:
-    """One shared profile render: twelve panels and a laid-out legend cost ~1.5 s."""
-    return plot_constellation_profile(_cells())
-
-
-@pytest.fixture(scope="module")
-def heatmap_fig() -> Figure:
-    """One shared heatmap render; it lays out 552 annotations per panel."""
-    return plot_constellation_heatmap(_cells())
-
-
-class TestConstellationProfile:
-    def test_one_panel_per_cell(self, profile_fig):
-        assert len(profile_fig.axes) == 3 * 4
-
-    def test_the_x_axis_is_logarithmic_and_shared(self, profile_fig):
-        """The counts span four decades, so a per-panel axis would hide the comparison."""
-        assert len({ax.get_xlim() for ax in profile_fig.axes}) == 1
-        assert all(ax.get_xscale() == "log" for ax in profile_fig.axes)
-
-    def test_one_bar_group_per_role_and_population(self, profile_fig):
-        # One BarContainer per population, each holding the eight roles.
-        bars = [c for c in profile_fig.axes[0].containers if hasattr(c, "patches")]
-        assert len(bars) == 2
-        assert all(len(c.patches) == len(DEV_PARAMETERS) for c in bars)
-
-    def test_both_populations_are_in_the_legend(self, profile_fig):
-        labels = {t.get_text()
-                  for legend in profile_fig.legends for t in legend.get_texts()}
-        assert len(labels) == 2
-
-    def test_one_population_still_draws(self):
-        fig = plot_constellation_profile(_cells(populations=(C_STAR,)))
-        bars = [c for c in fig.axes[0].containers if hasattr(c, "patches")]
-        assert len(bars) == 1
-        plt.close(fig)
-
-    def test_a_role_no_optimum_staffs_is_marked_not_dropped(self):
-        """A mean of exactly 0 has no bar on a log axis; it gets a `0` at the frame."""
-        fig = plot_constellation_profile(_cells(overrides={"a_dev_2": 0.0}))
-        texts = [t.get_text().strip() for t in fig.axes[0].texts]
-        assert texts.count("0") == 2         # one per population
-        plt.close(fig)
-
-    def test_an_all_zero_table_cannot_be_scaled(self):
-        zeros = {p: 0.0 for p in CONSTELLATION_PARAMETERS}
-        with pytest.raises(ValueError, match="log axis"):
-            plot_constellation_profile(_cells(overrides=zeros))
-
-    def test_the_role_labels_are_the_short_forms(self, profile_fig):
-        labels = [t.get_text() for t in profile_fig.axes[0].get_yticklabels()]
-        assert labels == list(AGENT_ROLE_ABBREV)
-
-    def test_role_one_is_at_the_top(self, profile_fig):
-        lo, hi = profile_fig.axes[0].get_ylim()
-        assert lo > hi          # inverted, so index 0 sits at the top
-
-    @pytest.mark.parametrize("groups", [
-        ("project", "project"),          # one group on both axes
-        ("project", "nonsense"),         # not a scenario group
-    ])
-    def test_the_faceting_groups_are_validated(self, groups):
-        with pytest.raises(ValueError):
-            plot_constellation_profile(_cells(), rows_group=groups[0],
-                                       cols_group=groups[1])
-
-    def test_a_group_the_table_does_not_carry_is_a_key_error(self):
-        with pytest.raises(KeyError):
-            plot_constellation_profile(_cells(), rows_group="debt")
-
-
-class TestConstellationHeatmap:
-    def test_one_panel_per_population(self, heatmap_fig):
-        assert len(heatmap_fig.axes) == 2
-
-    def test_every_cell_of_the_grid_is_a_row(self, heatmap_fig):
-        assert len(heatmap_fig.axes[0].get_yticklabels()) == 3 * 4
-
-    def test_every_parameter_is_a_column(self, heatmap_fig):
-        image = heatmap_fig.axes[0].get_images()[0]
-        assert image.get_array().shape == (3 * 4, len(CONSTELLATION_PARAMETERS))
-
-    def test_the_colour_scale_is_per_column_and_spans_both_populations(self, heatmap_fig):
-        """A parameter's darkest cell is its own maximum, wherever that maximum sits."""
-        first, second = (ax.get_images()[0].get_array() for ax in heatmap_fig.axes)
-        column = list(CONSTELLATION_PARAMETERS).index("a_dev_5")
-        # `i_star` means are the `c_star` ones plus one, so its column tops out at 1.0
-        # and `c_star`'s does not — which only holds if the two share one range.
-        assert second[:, column].max() == pytest.approx(1.0)
-        assert first[:, column].max() < 1.0
-
-    def test_the_annotations_carry_the_raw_numbers(self, heatmap_fig):
-        texts = [t.get_text() for t in heatmap_fig.axes[0].texts]
-        assert len(texts) == 3 * 4 * len(CONSTELLATION_PARAMETERS)
-        assert all("±" in t for t in texts)
-
-    def test_a_block_rule_separates_the_parameter_groups(self, heatmap_fig):
-        # Three rules for four blocks; the last block needs none.
-        assert len(heatmap_fig.axes[0].lines) == len(PARAMETER_BLOCKS) - 1
-
-    def test_an_all_zero_column_does_not_break_the_scale(self):
-        """`a_qa_1` is 0 by construction, so its column has no range to normalise."""
-        fig = plot_constellation_heatmap(_cells(overrides={"a_qa_1": 0.0}))
-        column = list(CONSTELLATION_PARAMETERS).index("a_qa_1")
-        assert np.all(fig.axes[0].get_images()[0].get_array()[:, column] == 0.0)
-        plt.close(fig)
-
-    def test_the_faceting_groups_are_validated(self):
-        with pytest.raises(ValueError):
-            plot_constellation_heatmap(_cells(), rows_group="project",
-                                       cols_group="project")
-
-
-class TestVisualizeConstellation:
-    def test_both_figures_are_written_named_by_the_grid(self, tmp_path):
-        visualize_constellation(_cells(), tmp_path, fmt="png")
-        assert sorted(p.name for p in tmp_path.glob("*.png")) == [
-            "constellation_heatmap_project_bugimpact.png",
-            "constellation_profile_project_bugimpact.png",
-        ]
-
-    def test_a_re_cut_grid_does_not_overwrite_the_default_one(self, tmp_path):
-        cells = _cells()
-        cells = cells.rename(columns={"tier_project": "tier_agent",
-                                      "tier_bugimpact": "tier_human"})
-        visualize_constellation(cells, tmp_path, fmt="png",
-                                rows_group="human", cols_group="agent")
-        assert (tmp_path / "constellation_profile_agent_human.png").is_file()
-
-    def test_an_empty_table_warns_and_writes_nothing(self, tmp_path):
-        with pytest.warns(UserWarning, match="empty"):
-            visualize_constellation(pd.DataFrame(), tmp_path, fmt="png")
-        assert not list(tmp_path.glob("*.png"))
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,8 @@
 #     JOBS=14 ./run_experiments.sh          # pin the worker count
 #     FORCE=1 ./run_experiments.sh          # re-run jobs that already have results
 #     FILTER='*_a-p_*' ./run_experiments.sh # only the configs matching this glob
-#     MODE=human_only ./run_experiments.sh  # enumerate the zero-agent baseline instead
+#     CONFIG_DIR=config/search_baseline MODE=human_only ./run_experiments.sh
+#                                           # enumerate the zero-agent baseline instead
 #     nohup ./run_experiments.sh > campaign.log 2>&1 &     # long unattended run
 #
 # Further environment overrides: PYTHON, CONFIG_DIR, OUT_ROOT, SAMPLES, START_STATE,
@@ -108,11 +109,6 @@ run_job() {
     local cfg=$1 id=$2
     local out="$OUT_ROOT/$id/$MODE"
     local started=$SECONDS
-    # Arrays do not survive `export`, so the flag is rebuilt per job from $MODE.
-    local mode_flags=()
-    if [[ "$MODE" == human_only ]]; then
-        mode_flags=(--human-only)
-    fi
 
     if [[ -s "$out/search_summary.json" && "$FORCE" != 1 ]]; then
         printf 'SKIP  %-22s %-13s (results present)\n' "$id" "$MODE"
@@ -122,8 +118,9 @@ run_job() {
 
     mkdir -p "$out"
     local status=0
+    # The enumerator is selected by the search config's `human_only` key; $MODE only
+    # names the output directory (and picks the config set via $CONFIG_DIR).
     "$PYTHON" -m src.main optimize "$cfg" \
-        ${mode_flags[@]+"${mode_flags[@]}"} \
         --samples "$SAMPLES" \
         --progress-every "$PROGRESS_EVERY" \
         --start-state "$START_STATE" \

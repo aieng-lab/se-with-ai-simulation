@@ -397,3 +397,154 @@ class TestRoleBill:
         # figure draws — has no such gap at all, being formed inside one row.
         error = ((recovered - billed["cost_agent_mean"]) / billed["cost_agent_mean"]).abs()
         assert error.max() < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Role usage, the release process, and the process spread within I*
+# ---------------------------------------------------------------------------
+
+def _usage_optima(n: int = 12) -> pd.DataFrame:
+    """A searched `optima.csv` with a known head count and a known bill per role.
+
+    Role 5 (Code Review) is stacked and cheap, role 6 (Security) is scarce and dear, so
+    the head-count and bill shares must disagree in a direction the test can pin.
+    """
+    rows = []
+    for i in range(n):
+        row = {
+            "scenario_id": f"{_SID}_{i}", "mode": "search", "config_key": f"c{i}",
+            "n_indistinguishable": 3, "feasible_throughput": True,
+            "N": 1.0, "R": 1 if i % 2 == 0 else 13, "F_freeze": 0 if i % 3 else 1,
+            "cost_agent_mean": 100.0, "cost_human_mean": 50.0,
+            "tier_agent": "medium",
+        }
+        for k in range(1, AGENT_ROLE_COUNT + 1):
+            row[f"a_dev_{k}"] = 0
+            row[f"bill_{k}"] = 0.0
+        row["a_dev_1"], row["bill_1"] = 1, 10.0
+        row["a_dev_5"], row["bill_5"] = 90, 10.0     # 90 % of the team, 10 % of the bill
+        row["a_dev_6"], row["bill_6"] = 9, 80.0      # 9 % of the team, 80 % of the bill
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+class TestRoleUsage:
+    def test_head_count_and_bill_shares_disagree_as_constructed(self):
+        from src.constellation import role_usage
+        usage = role_usage(_usage_optima()).set_index("role")
+        assert usage.loc[5, "head_count_share"] == pytest.approx(0.90)
+        assert usage.loc[5, "bill_share"] == pytest.approx(0.10)
+        assert usage.loc[6, "head_count_share"] == pytest.approx(0.09)
+        assert usage.loc[6, "bill_share"] == pytest.approx(0.80)
+
+    def test_each_set_of_shares_sums_to_one(self):
+        from src.constellation import role_usage
+        usage = role_usage(_usage_optima())
+        assert usage["head_count_share"].sum() == pytest.approx(1.0)
+        assert usage["bill_share"].sum() == pytest.approx(1.0)
+
+    def test_staffed_share_counts_the_optima_that_use_the_role(self):
+        from src.constellation import role_usage
+        optima = _usage_optima(n=4)
+        optima.loc[:1, "a_dev_2"] = 3          # staffed in half the optima
+        usage = role_usage(optima).set_index("role")
+        assert usage.loc[2, "staffed_share"] == pytest.approx(0.5)
+        assert usage.loc[1, "staffed_share"] == pytest.approx(1.0)
+        assert usage.loc[3, "staffed_share"] == pytest.approx(0.0)
+
+    def test_shares_are_formed_within_a_scenario_not_over_the_pool(self):
+        """A scenario 1000x larger than the rest must not dominate the mean share."""
+        from src.constellation import role_usage
+        optima = _usage_optima(n=4)
+        optima.loc[0, ["a_dev_5", "a_dev_6", "a_dev_1"]] = [90_000, 9_000, 1_000]
+        optima.loc[0, ["bill_5", "bill_6", "bill_1"]] = [10_000.0, 80_000.0, 10_000.0]
+        usage = role_usage(optima).set_index("role")
+        # The within-scenario shares are identical in every row, so the mean is unmoved.
+        assert usage.loc[5, "head_count_share"] == pytest.approx(0.90)
+        assert usage.loc[6, "bill_share"] == pytest.approx(0.80)
+
+    def test_splitting_by_a_group_keeps_every_tier_present(self):
+        from src.constellation import role_usage
+        optima = _usage_optima(n=4)
+        optima.loc[:1, "tier_agent"] = "low"
+        usage = role_usage(optima, by="agent")
+        assert set(usage["tier"]) == {"low", "medium"}
+        assert set(usage["group"]) == {"agent"}
+        assert usage.groupby("tier")["n"].first().tolist() == [2, 2]
+
+    def test_an_empty_frame_yields_nothing(self):
+        from src.constellation import role_usage
+        assert role_usage(pd.DataFrame()).empty
+
+
+class TestProcessUsage:
+    def test_the_release_shares_sum_to_one_over_the_cadences_used(self):
+        from src.constellation import process_usage
+        process = process_usage(_usage_optima())
+        cadences = process[process["quantity"] == "R"]
+        assert cadences["share"].sum() == pytest.approx(1.0)
+        assert set(cadences["value"]) == {1, 13}
+
+    def test_the_freeze_share_counts_the_optima_without_one(self):
+        from src.constellation import process_usage
+        optima = _usage_optima(n=12)
+        process = process_usage(optima)
+        freeze = process[process["quantity"] == "F_freeze"].iloc[0]
+        assert freeze["share"] == pytest.approx((optima["F_freeze"] == 0).mean())
+
+
+class TestIstarProcessDiversity:
+    def test_counts_the_distinct_triples_of_each_set(self):
+        from src.constellation import istar_process_diversity
+        istar = pd.DataFrame([
+            {"scenario_id": "s1", "mode": "search", "N": 1.0, "R": 1, "F_freeze": 0},
+            {"scenario_id": "s1", "mode": "search", "N": 1.0, "R": 1, "F_freeze": 0},
+            {"scenario_id": "s1", "mode": "search", "N": 2.0, "R": 1, "F_freeze": 0},
+            {"scenario_id": "s2", "mode": "search", "N": 1.0, "R": 4, "F_freeze": 0},
+        ])
+        diversity = istar_process_diversity(istar).set_index("scenario_id")
+        assert diversity.loc["s1", "n_triples"] == 2
+        assert diversity.loc["s1", "R_unique"]        # R agrees across the tie
+        assert not diversity.loc["s1", "N_unique"]    # N does not
+        assert diversity.loc["s2", "n_triples"] == 1
+
+    def test_the_human_only_baseline_is_excluded(self):
+        from src.constellation import istar_process_diversity
+        istar = pd.DataFrame([
+            {"scenario_id": "s1", "mode": HUMAN_ONLY_MODE, "N": 1.0, "R": 1,
+             "F_freeze": 0},
+        ])
+        assert istar_process_diversity(istar).empty
+
+
+class TestBuildProcessSummary:
+    def test_it_carries_all_three_sections(self):
+        from src.constellation import build_process_summary
+        istar = pd.DataFrame([
+            {"scenario_id": f"{_SID}_0", "mode": "search", "N": 1.0, "R": 1,
+             "F_freeze": 0},
+        ])
+        table = build_process_summary(_usage_optima(), istar)
+        assert set(table["section"]) == {"role", "process", "istar"}
+
+    def test_the_baseline_and_the_inadmissible_are_both_dropped(self):
+        from src.constellation import build_process_summary
+        optima = _usage_optima(n=6)
+        optima.loc[0, "mode"] = HUMAN_ONLY_MODE
+        optima.loc[1, "n_indistinguishable"] = 0
+        table = build_process_summary(optima, pd.DataFrame())
+        roles = table[(table["section"] == "role") & (table["tier"] == "all")]
+        assert roles["n"].iloc[0] == 4
+
+    def test_the_summary_names_the_roles_and_the_process(self):
+        from src.constellation import build_process_summary, process_summary
+        table = build_process_summary(_usage_optima(), pd.DataFrame())
+        text = process_summary(table)
+        assert "Review" in text and "Security" in text
+        assert "R = 1" in text and "no feature freeze" in text
+
+    def test_an_empty_frame_yields_nothing(self):
+        from src.constellation import build_process_summary, process_summary
+        table = build_process_summary(pd.DataFrame(), pd.DataFrame())
+        assert table.empty
+        assert "no searched optimum" in process_summary(table)

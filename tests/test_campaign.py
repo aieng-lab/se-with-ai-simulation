@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from src.campaign import (
@@ -379,3 +380,110 @@ class TestBaselineUplift:
     def test_no_baseline_yields_an_empty_table(self, campaign):
         optima, *_ = build_tables(campaign)
         assert baseline_uplift(optima).empty
+
+
+# ---------------------------------------------------------------------------
+# The multiplicative cost model
+# ---------------------------------------------------------------------------
+
+def _multiplier_optima(effects: "dict[str, dict[str, float]] | None" = None,
+                       noise: float = 0.0) -> pd.DataFrame:
+    """A synthetic `optima.csv` whose cost is an exact product of per-tier factors.
+
+    With `noise = 0` the additive log model is exact, so `cost_multipliers` must recover
+    the factors it was built from and report `R^2 = 1`.
+    """
+    import numpy as np
+
+    from src.config import scenario_id, scenario_tier_combinations
+
+    effects = effects or {"bugimpact": {"low": 1.0, "medium": 10.0, "high": 100.0}}
+    rng = np.random.default_rng(0)
+    rows = []
+    for combination in scenario_tier_combinations():
+        tiers = dict(zip(SCENARIO_GROUPS, combination))
+        cost = 100.0
+        for group, factors in effects.items():
+            cost *= factors.get(tiers[group], 1.0)
+        cost *= 10.0 ** (noise * rng.standard_normal())
+        rows.append({
+            "scenario_id": scenario_id(combination), "mode": "search",
+            **{f"tier_{g}": t for g, t in tiers.items()},
+            "cost_mean": cost, "n_indistinguishable": 5, "feasible_throughput": True,
+        })
+    return pd.DataFrame(rows)
+
+
+class TestCostMultipliers:
+    def test_recovers_the_factors_a_noise_free_grid_was_built_from(self):
+        from src.campaign import cost_multipliers
+        table, stats = cost_multipliers(_multiplier_optima())
+        assert stats["r_squared"] == pytest.approx(1.0)
+        assert stats["residual_sd"] == pytest.approx(0.0, abs=1e-9)
+        bug = table[table["group"] == "bugimpact"].set_index("tier")["multiplier"]
+        assert bug["low"] == pytest.approx(1.0)
+        assert bug["medium"] == pytest.approx(10.0)
+        assert bug["high"] == pytest.approx(100.0)
+
+    def test_the_reference_is_the_cheapest_tier_and_has_multiplier_one(self):
+        from src.campaign import cost_multipliers
+        table, _ = cost_multipliers(_multiplier_optima())
+        for _, sub in table.groupby("group"):
+            reference = sub[sub["is_reference"]]
+            assert len(reference) == 1, "exactly one reference tier per group"
+            # No tier is cheaper than the reference, so every multiplier is >= 1.  An
+            # inert group ties all its tiers at 1.0, which reference it picks is moot.
+            assert reference["multiplier"].iloc[0] == pytest.approx(1.0)
+            assert sub["multiplier"].min() == pytest.approx(1.0)
+
+    def test_an_inert_group_explains_no_variance(self):
+        from src.campaign import cost_multipliers
+        _, stats = cost_multipliers(_multiplier_optima())
+        # Only `bugimpact` drives the synthetic cost, so it takes all of the variance.
+        assert stats["eta_squared_bugimpact"] == pytest.approx(1.0)
+        for group in ("human", "project", "debt", "agent"):
+            assert stats[f"eta_squared_{group}"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_two_groups_combine_multiplicatively(self):
+        from src.campaign import cost_multipliers
+        table, stats = cost_multipliers(_multiplier_optima({
+            "bugimpact": {"low": 1.0, "medium": 8.0, "high": 260.0},
+            "debt": {"low": 1.0, "medium": 1.7, "high": 2.4},
+        }))
+        assert stats["r_squared"] == pytest.approx(1.0)
+        debt = table[table["group"] == "debt"].set_index("tier")["multiplier"]
+        assert debt["high"] == pytest.approx(2.4)
+        assert stats["eta_squared_bugimpact"] > stats["eta_squared_debt"]
+
+    def test_the_human_only_baseline_is_excluded(self):
+        from src.campaign import admissible_optima, cost_multipliers
+        optima = _multiplier_optima()
+        baseline = optima.head(5).copy()
+        baseline["mode"] = HUMAN_ONLY_MODE
+        baseline["cost_mean"] = 1e9
+        combined = pd.concat([optima, baseline], ignore_index=True)
+        assert len(admissible_optima(combined)) == len(optima)
+        table, stats = cost_multipliers(combined)
+        assert stats["n"] == len(optima)
+        assert stats["r_squared"] == pytest.approx(1.0)
+
+    def test_an_inadmissible_optimum_is_excluded(self):
+        from src.campaign import cost_multipliers
+        optima = _multiplier_optima()
+        optima.loc[0, "n_indistinguishable"] = 0
+        _, stats = cost_multipliers(optima)
+        assert stats["n"] == len(optima) - 1
+
+    def test_an_empty_frame_yields_nothing(self):
+        from src.campaign import cost_multipliers, multipliers_summary
+        table, stats = cost_multipliers(pd.DataFrame())
+        assert table.empty and stats == {}
+        assert "no admissible" in multipliers_summary(table, stats)
+
+    def test_the_summary_names_every_group_and_the_fit(self):
+        from src.campaign import cost_multipliers, multipliers_summary
+        table, stats = cost_multipliers(_multiplier_optima(noise=0.05))
+        text = multipliers_summary(table, stats)
+        for group in SCENARIO_GROUPS:
+            assert group in text
+        assert "R^2" in text and "residual sd" in text

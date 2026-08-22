@@ -1,11 +1,13 @@
-"""Tests for src/simulation.py — objectives formula, trace capture, cost accounting."""
+"""Tests for src/simulation.py — objectives formula and cost accounting."""
 
 import dataclasses
 
 import pytest
 
 from src.config import SimulationHorizon, TeamConfiguration
-from src.simulation import ConfigResult, ConfigTrace, run_configuration
+from src.rng import generator_for
+from src.simulation import ConfigResult, run_configuration
+from src.sprint import step_sprint
 from src.state import SystemState
 
 
@@ -24,7 +26,7 @@ class TestRunConfigurationBasic:
             assert rep.cost >= 0
             assert rep.cost_quality >= 0
 
-    def test_no_trace_returns_ConfigResult(self, base_config, base_params, small_settings):
+    def test_returns_a_ConfigResult(self, base_config, base_params, small_settings):
         result = run_configuration(base_config, small_settings, base_params)
         assert type(result) is ConfigResult
 
@@ -68,26 +70,6 @@ class TestRunConfigurationBasic:
     def test_K_below_one_raises(self, base_config, base_params, small_settings):
         with pytest.raises(ValueError, match="K must be >= 1"):
             run_configuration(base_config, small_settings, base_params, K=0)
-
-
-class TestTraceCapture:
-    def test_trace_returns_ConfigTrace(self, base_config, base_params, small_settings):
-        trace = run_configuration(base_config, small_settings, base_params, capture_traces=True)
-        assert type(trace) is ConfigTrace
-
-    def test_trace_shape(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
-        trace = run_configuration(base_config, s, base_params, capture_traces=True)
-        assert len(trace.traces) == 2
-        assert all(len(rt.snapshots) == 4 for rt in trace.traces)
-
-    def test_trace_objectives_identical_to_no_trace(self, base_config, base_params):
-        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=42)
-        no_trace = run_configuration(base_config, s, base_params)
-        with_trace = run_configuration(base_config, s, base_params, capture_traces=True)
-        for a, b in zip(no_trace.replications, with_trace.result.replications):
-            assert a.value == b.value and a.cost == b.cost
-            assert a.cost_quality == b.cost_quality
 
 
 class TestDeterminism:
@@ -153,9 +135,9 @@ class TestCostAccounting:
             c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
         )
         s = SimulationHorizon(T=4, K_search=1, K_final=1, master_seed=0)
-        trace = run_configuration(base_config, s, params, capture_traces=True)
-        rep = trace.result.replications[0]
-        F_completed = trace.traces[0].snapshots[-1].F_completed
+        rep = run_configuration(base_config, s, params).replications[0]
+        # Eq. (obj_V): value is F_completed(T)/T, so the horizon recovers the count.
+        F_completed = round(rep.value * s.T)
 
         # Unit token costs, so C_agents is just the total work performed.
         assert rep.cost == pytest.approx(sum(rep.actions) / max(1, F_completed))
@@ -267,26 +249,29 @@ class TestCostAccounting:
         """Eqs. (ntest_update)/(ndoc_update): neither role writes past its ceiling.
 
         Also pins the billing identity for the two capped roles: the total work billed
-        is exactly the cumulative count the transition wrote.
+        is exactly the cumulative count the transition wrote.  Driven sprint by sprint,
+        since the property is about the state the transition leaves behind.
         """
         # r_test/r_doc far above the coverage demand, so the cap is what binds.
         params = dataclasses.replace(base_params, r_test=500.0, r_doc=500.0)
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=10, K_search=1, K_final=1, master_seed=4)
-        trace = run_configuration(config, s, params, capture_traces=True)
-        rep = trace.result.replications[0]
+        T = 10
+        state = SystemState()
+        rng = generator_for(4, config, 0)
+        billed_tests = billed_docs = 0.0
+        for t in range(T):
+            actions = step_sprint(t, state, config, params, rng)
+            billed_tests += actions.units[6]
+            billed_docs  += actions.units[7]
+            assert state.N_test <= params.c_test_ceil * state.F_completed + 1e-9
+            assert state.N_doc <= state.F_completed + 1e-9
 
-        for snap in trace.traces[0].snapshots:
-            assert snap.N_test <= params.c_test_ceil * snap.F_completed + 1e-9
-            assert snap.N_doc <= snap.F_completed + 1e-9
-
-        last = trace.traces[0].snapshots[-1]
-        assert rep.actions[6] == pytest.approx(last.N_test)
-        assert rep.actions[7] == pytest.approx(last.N_doc)
+        assert billed_tests == pytest.approx(state.N_test)
+        assert billed_docs == pytest.approx(state.N_doc)
         # The cap really bit — otherwise this test would prove nothing.
-        assert last.N_test < params.r_test * s.T
+        assert state.N_test < params.r_test * T
 
     def test_capped_output_still_reaches_full_coverage(self, base_params):
         """The cap sits exactly where the coverage formula already clipped, so it costs nothing.
@@ -298,13 +283,14 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
         )
-        s = SimulationHorizon(T=10, K_search=1, K_final=1, master_seed=4)
-        trace = run_configuration(config, s, params, capture_traces=True)
-
-        for snap in trace.traces[0].snapshots:
-            if snap.F_completed > 0:
-                assert snap.N_test == pytest.approx(params.c_test_ceil * snap.F_completed)
-                assert snap.N_doc == pytest.approx(snap.F_completed)
+        state = SystemState()
+        rng = generator_for(4, config, 0)
+        for t in range(10):
+            step_sprint(t, state, config, params, rng)
+            if state.F_completed > 0:
+                assert state.N_test == pytest.approx(
+                    params.c_test_ceil * state.F_completed)
+                assert state.N_doc == pytest.approx(state.F_completed)
 
     def test_cost_split_sums_to_cost(self, base_config, base_params):
         """The three cost drivers partition the total cost exactly."""
@@ -398,13 +384,6 @@ class TestContributionAccounting:
             arch_impl = (rep.actions[0] - rep.impl_agents) / ARCH_IMPL_COST_UNITS
             assert arch_impl >= 0.0
             assert arch_impl == pytest.approx(round(arch_impl))
-
-    def test_replications_keep_distinct_trace_labels(self, base_config, base_params):
-        """Regression: the per-role accumulator used to shadow the replication index,
-        so every ReplicationTrace was labelled with the last role instead of its k."""
-        s = SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=12)
-        trace = run_configuration(base_config, s, base_params, capture_traces=True)
-        assert {tr.k for tr in trace.traces} == set(range(s.K_search))
 
 
 class TestHumanOnlyBaselineCost:

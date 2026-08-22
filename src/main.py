@@ -8,29 +8,22 @@ Run a simulation (smoke-test defaults):
 Run with custom settings and save results:
     python -m src.main run --out results/
 
-Run and also save per-sprint traces:
-    python -m src.main run --out results/ --traces
-
 Load and analyse persisted results:
     python -m src.main analyze results/result.json
-    python -m src.main analyze results/result.json results/traces.csv
 
 Search for the cheapest team that keeps up with the project:
     python -m src.main optimize config/search_default.json --out results/search_default
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
         --samples none --progress-every 500 --out results/one_scenario
 
-Enumerate the zero-agent baseline grid instead of searching:
+Enumerate the zero-agent baseline grid instead of searching (the baseline configs
+carry `"human_only": true`, which is what selects the enumerator):
     python -m src.main optimize config/search_baseline/search_h-h_p-l_d-X_a-X_b-m.json \
-        --human-only --out results/baseline_one
+        --out results/baseline_one
 
 Run the whole campaign:
     ./run_experiments.sh          (see its --help; generate the configs first with
                                    scripts/generate_search_configs.py)
-
-Generate visualizations from optimization results:
-    python -m src.main visualize results/search_default [--out results/search_default/plots]
-    python -m src.main visualize results/run1 results/run2 --out results/comparison
 
 Consolidate a finished campaign into its tables and the five-channel optima figures:
     python -m src.main campaign [results/experiments] [--out results/analysis]
@@ -70,7 +63,7 @@ from .io import (
     load_team_config,
 )
 from .parameters import ScenarioParameters
-from .results import load_result, load_traces, save_result, save_traces
+from .results import load_result, save_result
 from .search import (
     SearchOutcome,
     SelectionReport,
@@ -86,13 +79,13 @@ from .selection import (
     satisfies_throughput,
     throughput_floor,
 )
-from .campaign import baseline_uplift, build_tables, convergence_summary
+from .campaign import (baseline_uplift, build_tables, convergence_summary,
+                       cost_multipliers, multipliers_summary)
 from .constellation import (CELL_GROUPS, build_constellation,
-                            build_indistinguishable, constellation_summary,
-                            role_bill)
-from .simulation import ConfigTrace, run_configuration
-from .visualization import (visualize_campaign, visualize_constellation,
-                            visualize_multi, visualize_single, visualize_team_summary)
+                            build_indistinguishable, build_process_summary,
+                            constellation_summary, process_summary, role_bill)
+from .simulation import run_configuration
+from .visualization import visualize_campaign, visualize_team_summary
 
 
 #: Default file per scenario group; every group defaults to its medium tier.
@@ -159,18 +152,10 @@ def _cmd_run(args: argparse.Namespace) -> None:
     print(f"Start state:{args.start_state}")
     print(f"Horizon:   K={horizon.K_search} replications * T={horizon.T} sprints  "
           f"(seed={horizon.master_seed})")
-    print(f"Traces:     {'yes' if args.traces else 'no'}")
     print()
     print("Running …")
 
-    trace: ConfigTrace | None = None
-
-    if args.traces:
-        trace = run_configuration(config, horizon, params, capture_traces=True,
-                                  initial_state=initial_state)
-        cr = trace.result
-    else:
-        cr = run_configuration(config, horizon, params, initial_state=initial_state)
+    cr = run_configuration(config, horizon, params, initial_state=initial_state)
 
     agg = aggregate_config_result(cr, master_seed=horizon.master_seed)
 
@@ -183,23 +168,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
         result_path = out / "result.json"
         save_result(cr, agg, result_path)
         print(f"\nSaved result  → {result_path}")
-        if args.traces and trace is not None:
-            traces_path = out / "traces.csv"
-            save_traces(trace, traces_path)
-            print(f"Saved traces  → {traces_path}")
-
-
-#: Trajectory columns the `analyze` subcommand tabulates, and the heading each gets.
-#: Every key must be a persisted SprintSnapshot field, i.e. a column
-#: `results.to_dataframe` writes.
-ANALYZE_TRAJECTORY_FIELDS: dict[str, str] = {
-    "F_completed": "F_done",
-    "D_tech": "Debt",
-    "B_kno_min": "B_kno_min",
-    "B_kno_maj": "B_kno_maj",
-    "N_test": "N_test",
-    "N_doc": "N_doc",
-}
 
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
@@ -214,43 +182,6 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print(f"Replications: K={len(result.replications)}")
     print()
     _print_objectives(agg)
-
-    if not args.traces:
-        return
-
-    df = load_traces(args.traces)
-    T = df.index.get_level_values("sprint").max() + 1
-    print()
-    print(f"Trace file:  {args.traces}  ({len(result.replications)} reps × {T} sprints)")
-    print()
-
-    fields = list(ANALYZE_TRAJECTORY_FIELDS)
-    labels = list(ANALYZE_TRAJECTORY_FIELDS.values())
-
-    # Header
-    col_w = 10
-    header = f"{'sprint':>6}  " + "  ".join(f"{lbl:>{col_w}}" for lbl in labels)
-    print(header)
-    print("-" * len(header))
-
-    # Print every sprint (or every 5th if T > 20)
-    step = max(1, T // 20)
-    sprints_to_show = list(range(0, T, step))
-    if (T - 1) not in sprints_to_show:
-        sprints_to_show.append(T - 1)
-
-    means = {f: df.groupby("sprint")[f].mean() for f in fields}
-    for s in sprints_to_show:
-        row = f"{s:>6}  "
-        row += "  ".join(f"{means[f].iloc[s]:>{col_w}.3f}" for f in fields)
-        print(row)
-
-    print()
-    print("Final-sprint distribution (across replications):")
-    final = df.xs(T - 1, level="sprint")
-    for f, lbl in zip(fields, labels):
-        fd = final[f]
-        print(f"  {lbl:<12}  min={fd.min():.3f}  mean={fd.mean():.3f}  max={fd.max():.3f}")
 
 
 def _objective_entry(config: TeamConfiguration, agg: AggregatedObjectives,
@@ -448,7 +379,9 @@ def _print_optimum(report: SelectionReport, horizon: SimulationHorizon, floor: f
 def _cmd_optimize(args: argparse.Namespace) -> None:
     cfg_path = Path(args.search_config)
     search_cfg = load_search_config(cfg_path)
-    human_only = args.human_only or search_cfg.human_only
+    # The zero-agent enumerator is selected by the search config alone; the baseline
+    # configs that scripts/generate_search_configs.py --baseline writes carry the flag.
+    human_only = search_cfg.human_only
     mode = HUMAN_ONLY_MODE if human_only else SEARCH_MODE
     if args.samples is not None:
         search_cfg = replace(search_cfg, samples=args.samples)
@@ -526,28 +459,6 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Results saved to: {out_dir}")
 
 
-def _cmd_visualize(args: argparse.Namespace) -> None:
-    result_dirs = [Path(d) for d in args.result_dirs]
-    for d in result_dirs:
-        if not d.is_dir():
-            print(f"Error: {d} is not a directory.", file=sys.stderr)
-            sys.exit(1)
-
-    fmt = args.format
-    multi = len(result_dirs) > 1
-
-    if multi:
-        for rd in result_dirs:
-            visualize_single(rd, rd / "plots", fmt)
-        cmp_out = Path(args.out) if args.out else Path("plots")
-        visualize_multi(result_dirs, cmp_out, fmt)
-    else:
-        out = Path(args.out) if args.out else result_dirs[0] / "plots"
-        visualize_single(result_dirs[0], out, fmt)
-
-    print("\nDone.")
-
-
 #: Which scenario group drives which visual channel of the optima matrices, by default.
 CAMPAIGN_CHANNEL_DEFAULTS: dict[str, str] = {
     "x": "agent", "y": "human", "color": "debt", "marker": "project", "size": "bugimpact",
@@ -602,6 +513,11 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
     if not uplift.empty:
         uplift.to_csv(uplift_path, index=False)
 
+    multipliers, multiplier_stats = cost_multipliers(optima)
+    multipliers_path = out_dir / "multipliers.csv"
+    if not multipliers.empty:
+        multipliers.to_csv(multipliers_path, index=False)
+
     # One `scenarios` row per finished run, so the two counts come off that table.
     n_searches = len(scenarios)
     print(f"Collected {n_searches} search(es) over "
@@ -614,12 +530,20 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print(f"  {convergence_path}   {len(convergence)} search(es) with convergence measures")
     if not turnover.empty:
         print(f"  {turnover_path}   {len(turnover)} generation(s) of elite turnover")
+    if not multipliers.empty:
+        print(f"  {multipliers_path}   {len(multipliers)} (group, tier) cost multipliers")
     if len(optima) < n_searches:
         print(f"  note: {n_searches - len(optima)} search(es) simulated no candidate")
 
     if not convergence.empty:
         summary = convergence_summary(convergence)
         (out_dir / "convergence_summary.txt").write_text(summary, encoding="utf-8")
+        print()
+        print(summary, end="")
+
+    if not multipliers.empty:
+        summary = multipliers_summary(multipliers, multiplier_stats)
+        (out_dir / "multipliers_summary.txt").write_text(summary, encoding="utf-8")
         print()
         print(summary, end="")
 
@@ -645,16 +569,14 @@ def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
     )
 
 
-def _constellation_figures(cells: pd.DataFrame, optima: pd.DataFrame, out_dir: Path,
+def _constellation_figures(bills: pd.DataFrame, out_dir: Path,
                            args: argparse.Namespace) -> None:
-    """Map the subcommand's `--rows` / `--cols` flags onto the two figure sets.
+    """Map the subcommand's `--rows` / `--cols` flags onto the team-summary figures.
 
-    The team-summary figures read the per-scenario `optima` rather than the aggregated
-    `cells`: their shares are formed within a scenario, which an aggregate cannot undo.
+    `bills` is a `role_bill` frame of the per-scenario optima rather than the aggregated
+    cell table: its shares are formed within a scenario, which an aggregate cannot undo.
     """
-    visualize_constellation(cells, out_dir, args.format,
-                            rows_group=args.rows, cols_group=args.cols)
-    visualize_team_summary(role_bill(optima, args.config_dir), out_dir, args.format,
+    visualize_team_summary(bills, out_dir, args.format,
                            block_group=args.cols, bar_group=args.rows)
 
 
@@ -674,10 +596,8 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     optima_hint = "run `python -m src.main campaign` first."
 
     if args.figures_only:
-        cells = _read_table(cells_path, "cell statistic(s)",
-                            "run the constellation analysis without --figures-only first.")
         optima = _read_table(optima_path, "reported optima", optima_hint)
-        _constellation_figures(cells, optima, out_dir, args)
+        _constellation_figures(role_bill(optima, args.config_dir), out_dir, args)
         print("\nDone.")
         return
 
@@ -709,7 +629,20 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     summary_path.write_text(summary, encoding="utf-8")
     print(f"  {summary_path}")
 
-    _constellation_figures(cells, optima, out_dir, args)
+    # What the optima staff and how they set the process — the composition statistics
+    # that are quoted as shares rather than read off the cell grid.
+    bills = role_bill(optima, args.config_dir)
+    usage = build_process_summary(bills, istar)
+    if not usage.empty:
+        usage_path = out_dir / "process_summary.csv"
+        usage.to_csv(usage_path, index=False)
+        usage_text = process_summary(usage)
+        (out_dir / "process_summary.txt").write_text(usage_text, encoding="utf-8")
+        print(f"  {usage_path}   {len(usage)} role/process/I* statistics")
+        print()
+        print(usage_text, end="")
+
+    _constellation_figures(bills, out_dir, args)
     print("\nDone.")
 
 
@@ -733,9 +666,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Simulation horizon JSON file (default: config/horizon_default.json)",
     )
     p_run.add_argument("--out", metavar="DIR",
-                       help="Directory to write result.json [and traces.csv]")
-    p_run.add_argument("--traces", action="store_true",
-                       help="Capture and save full per-sprint time-series traces")
+                       help="Directory to write result.json")
     p_run.add_argument(
         "--start-state", default="config/startstate_default.json", metavar="PATH",
         help="JSON file with initial SystemState values "
@@ -747,8 +678,6 @@ def main(argv: list[str] | None = None) -> None:
     p_ana = sub.add_parser("analyze", help="Analyse persisted results.")
     p_ana.add_argument("result", metavar="result.json",
                        help="Path to result.json written by 'run --out'")
-    p_ana.add_argument("traces", nargs="?", metavar="traces.csv",
-                       help="Path to traces.csv written by 'run --out --traces' (optional)")
     p_ana.set_defaults(func=_cmd_analyze)
 
     # -- optimize --
@@ -757,11 +686,6 @@ def main(argv: list[str] | None = None) -> None:
                          help="Path to search config JSON (e.g. config/search_default.json)")
     p_optimize.add_argument("--out", required=True, metavar="DIR",
                          help="Output directory for optimization results")
-    p_optimize.add_argument(
-        "--human-only", action="store_true",
-        help="Enumerate the zero-agent baseline grid instead of searching "
-             "(also settable in the search config)",
-    )
     p_optimize.add_argument(
         "--samples", choices=list(SAMPLE_POLICIES), default=None,
         help="Which candidates get a samples/<key>.json file: 'all', 'best' "
@@ -778,16 +702,6 @@ def main(argv: list[str] | None = None) -> None:
              "(default: config/startstate_default.json, which is all-zero)",
     )
     p_optimize.set_defaults(func=_cmd_optimize)
-
-    # -- visualize --
-    p_vis = sub.add_parser("visualize", help="Generate plots from sweep results.")
-    p_vis.add_argument("result_dirs", nargs="+", metavar="RESULT_DIR",
-                       help="One or more result directories produced by 'optimize'")
-    p_vis.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
-                       help="Output image format (default: png)")
-    p_vis.add_argument("--out", default=None, metavar="DIR",
-                       help="Output directory for plots (default: RESULT_DIR/plots/)")
-    p_vis.set_defaults(func=_cmd_visualize)
 
     # -- campaign --
     p_camp = sub.add_parser(

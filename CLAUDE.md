@@ -28,23 +28,26 @@ src/                    Python simulation package
     feasibility.py      check_feasibility — human-capacity feasibility condition (§3.6)
     sprint.py           step_sprint — full 10-step sprint transition; returns SprintActions
     simulation.py       run_configuration (K replications, `K=` overridable);
-                        escaped_bug_cost, cost_components; SprintSnapshot / ConfigTrace
+                        escaped_bug_cost, cost_components
     selection.py        aggregate_config_result (bootstrap CI), the throughput constraint,
                         the `preference_key` ranking, report_optimum (the (c*, I*) pair)
-    results.py          to_dataframe, save_result/load_result, save_traces/load_traces
+    results.py          save_result/load_result (the per-candidate sample JSON)
     campaign.py         minimal campaign consolidation: optima.csv + scenarios.csv +
-                        convergence.csv + elite_turnover.csv schemas, convergence_summary
+                        convergence.csv + elite_turnover.csv schemas, convergence_summary,
+                        and cost_multipliers — the §5.2 log-cost model (multipliers.csv)
     constellation.py    what the optima are *made of*: the final I* extraction
                         (indistinguishable.csv), the mean/sd of every control
                         variable per cell of a two-group tier grid
-                        (constellation_cells.csv + constellation_summary), and
-                        role_bill — the per-role split of Eq. (cost_agents)
+                        (constellation_cells.csv + constellation_summary),
+                        role_bill — the per-role split of Eq. (cost_agents) — and
+                        build_process_summary, the §5.3 role/process shares
+                        (process_summary.csv)
     search.py           run_search (the only search) + run_human_only /
                         human_only_grid (the §4.1 baseline) +
                         two_stage_selection (the K'/K selection of §3.10)
-    visualization.py    matplotlib plot functions + visualize_single/visualize_multi/
-                        visualize_campaign helpers
-    main.py             CLI: `python -m src.main run|analyze|optimize|visualize|campaign|constellation`
+    visualization.py    matplotlib plot functions + visualize_campaign /
+                        visualize_team_summary helpers
+    main.py             CLI: `python -m src.main run|analyze|optimize|campaign|constellation`
 
 config/
     horizon_default.json      Monte Carlo protocol of §4.2: T=104, K_search=100 (the
@@ -76,7 +79,7 @@ scripts/
 run_experiments.sh      campaign driver: 432 searches in parallel, resumable (§4.2);
                         MODE=human_only runs the 36 §4.1 baselines instead
 
-tests/                  pytest suite (572 tests, ~125 s — the campaign figures dominate)
+tests/                  pytest suite (558 tests, ~100 s — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
     experiments/        the campaign re-run of 2026-08-20: 432 `search` +
                         36 `human_only` scenario dirs, current as of that date.
@@ -84,13 +87,29 @@ results/                persisted search and campaign results (not committed)
     analysis/           the consolidation of it — the CSVs and figures below
 ```
 
-**The §4.2 campaign is complete and §5.1 is drafted from it; the rest of §5 is not.**
-An earlier §5 outline was deleted together with the three-objective Pareto formulation, and
-the ~2,200 lines of analysis built on it (`results_analysis.py`, `composition_analysis.py`,
-`latex_tables.py`, `scripts/analyze_results.py`) went with it; `src/campaign.py` and
-`src/constellation.py` are what replaced them. Do not resurrect the deleted modules — every
-concept they were built on (front position, quality/cost index, filtered front, archetype
-ladders ordered by quality) requires a frontier the model no longer has.
+**The §4.2 campaign is complete and §5 is drafted from it in full** (§5.1 convergence,
+§5.2 cost trade-offs, §5.3 composition); §6 Discussion and §7 Conclusion are still empty,
+as is §2. §5 therefore pins the deliverable exactly: **seven figures and two tables**, and
+nothing else. The seven are `elite_turnover`, `human_agent_matrix`,
+`quality_development_matrix`, `agent_human_ratio_matrix`, `team_drivers`,
+`composition_agent_bill` and `composition_team_bill`; the two tables are the `I*` stage
+sizes (from `convergence.csv`) and the cost multipliers (`multipliers.csv`).
+`paper/figures/` holds a copy of each under exactly the name the code emits — keep the two
+in sync, the four matrix figures once carried a stale `_evolutionary` suffix.
+
+Two rounds of analysis code have been deleted; do not resurrect either. **(1)** An earlier
+§5 outline went with the three-objective Pareto formulation, taking ~2,200 lines
+(`results_analysis.py`, `composition_analysis.py`, `latex_tables.py`,
+`scripts/analyze_results.py`) — every concept they were built on (front position,
+quality/cost index, filtered front, archetype ladders ordered by quality) requires a
+frontier the model no longer has. **(2)** The `visualize` subcommand
+(`plot_cost_vs_value` / `plot_cost_split` / `plot_comparison_optima` /
+`visualize_single` / `visualize_multi`), the two constellation figures, and the whole
+per-sprint trace path (`run --traces`, `analyze traces.csv`, `SprintSnapshot` /
+`ReplicationTrace` / `ConfigTrace`, `results.to_dataframe` / `save_traces` / `load_traces`)
+were removed once §5 was drafted: the paper reports **nothing** per-sprint — every
+objective comes from the terminal state `S(T)` plus an aggregated work record — and none of
+those figures appears in it.
 
 ---
 
@@ -135,11 +154,14 @@ enumerated exhaustively rather than searched, ~20 s per scenario):
 ```bash
 python scripts/generate_search_configs.py --baseline   # 36 config/search_baseline/*.json
 python -m src.main optimize config/search_baseline/search_h-h_p-l_d-X_a-X_b-m.json \
-    --human-only --out results/baseline_one
+    --out results/baseline_one
 CONFIG_DIR=config/search_baseline MODE=human_only ./run_experiments.sh   # all 36
 ```
-The generated baseline configs already carry `"human_only": true`, so `--human-only` /
-`MODE=human_only` only has to be repeated because the result *directory* is named from it.
+The enumerator is selected by the search config's `human_only` key alone — the generated
+baseline configs carry `"human_only": true` — so there is **no `--human-only` flag**.
+`MODE=human_only` still has to be given to the driver, because it names the result
+*directory* and does not reach the Python; `CONFIG_DIR` is what picks the 36 baseline
+configs, and omitting it would enumerate over the 432 campaign ones.
 Results land in `results/experiments/<scenario_id>/human_only/`, beside `search/`,
 and `python -m src.main campaign` picks them up automatically.
 
@@ -202,10 +224,21 @@ early runs fewer than `G` generations, so a wide table would need padding.
 `campaign` prints and writes to `convergence_summary.txt`: order statistics rather than
 means, since §5.1 expects those distributions to be strongly skewed.
 
+`multipliers.csv` + `multipliers_summary.txt` are §5.2's Table (results:multipliers):
+`campaign.cost_multipliers` fits an additive model on `log10(cost_mean)` over the **431
+admissible search optima** (`campaign.admissible_optima` — an inadmissible search has an
+empty `I*`, so `n_indistinguishable == 0` is the marker) with one dummy per tier and no
+interactions. A coefficient exponentiates to a multiplier, so the five groups read as
+independent multipliers on the cost per feature, each relative to the **cheapest tier of
+its own group** — which is why `multiplier` is 1.0 exactly on the reference row and never
+below it. `eta_squared` is the R² of the *single-group* model, i.e. what that group
+explains on its own, and is what orders the summary's rows. On the current campaign the fit
+is R² = 0.983 at a residual sd of 0.14 decades, and it reproduces the paper's table exactly.
+
 **Analyse the team constellation** (`src/constellation.py`) — what the optimal teams are
 *made of*, cut along two scenario groups; `campaign` answers what they cost:
 ```bash
-python -m src.main constellation                          # → the three tables + two figures
+python -m src.main constellation                          # → the four tables + three figures
 python -m src.main constellation --rows human --cols agent   # re-cut the grid
 python -m src.main constellation --figures-only           # redraw from constellation_cells.csv
 ```
@@ -227,7 +260,7 @@ members' objective dicts are then *looked up* in
 `final_objectives` wholesale would inflate every cell with configurations the selection
 rule rejected.
 
-Three tables and two figures land in `results/analysis/`. **Two populations are reported
+Four tables and three figures land in `results/analysis/`. **Two populations are reported
 separately**: `c_star`, the reported `c*` of each scenario, and `i_star`, the whole
 indistinguishable set — `|I*|` has median 36 and reaches 338, so a `c*`-only table partly
 tabulates an arbitrary pick inside a statistical tie, and the `i_star` table is what says
@@ -259,40 +292,35 @@ there — so a zero `A_qa` cell means "no feature freeze", not "a freeze with no
 On the current campaign `F_freeze == 0` in 68 % of optima and in all but one `p-v` one,
 which is what empties that whole row of the `A_qa` block to rounding.
 
-The two figures are `visualization.plot_constellation_profile` and
-`plot_constellation_heatmap`, driven by `visualize_constellation`; they deliberately do
-**not** go through `_draw_matrix`, which is a scatter of two numeric columns per facet.
-Their file names carry the two faceting groups (`constellation_profile_project_bugimpact.png`)
-rather than the result mode: the mode is fixed at the search by construction, while the
-grid is what the caller can change and must not silently overwrite.
+`process_summary.csv` + `process_summary.txt` are the §5.3 statistics that are quoted as
+*shares* rather than read off the cell grid: `constellation.build_process_summary` over the
+same 431 admissible search optima. Three sections in one long table — `role` (per role: how
+often it is staffed, and its share of the head count and of the bill, overall and split by
+agent tier), `process` (the share of optima at each `R`, and the share with no feature
+freeze), and `istar` (per search, how many distinct `(N, R, F_freeze)` triples its `I*`
+spans, and how often `R` / `N` is unique across the tie). **Every share is formed within a
+scenario before being averaged** — `role_usage` does this deliberately, since the optimal
+team size spans four decades and a ratio of aggregates would report the largest scenario's
+composition rather than the typical one; a test pins that a 1000x scenario does not move the
+means. The head-count and bill shares disagree sharply and that disagreement *is* the result
+(Code Review 69 % of the team, 20 % of the bill; Security 22 % → 46 %; Feature
+Implementation 2 % → 21 %), which is also why `_SHARE_WEIGHTS["count"]` is kept in
+`visualization` even though nothing writes it. The table reproduces every §5.3 percentage
+exactly, including the architecture agent's 52/61/22/21 % staffing split by agent tier.
 
-- `constellation_profile_<cols>_<rows>.png`: one panel per cell, a horizontal bar chart
-  over the eight **development-phase** roles (`AGENT_ROLE_ABBREV`, role 1 at the top) with
-  the two populations side by side in the same red/blue the per-search landscape gives
-  `c*` and `I*`, and `sd` as a whisker. The x axis is **logarithmic and shared by every
-  panel** — the counts run 0 to ~5,900, so a linear axis flattens every panel but the
-  `p-v` column and a per-panel axis destroys the one comparison the figure exists for. It
-  gets an extra decade of run-up at the low end so a small mean is still a visible bar, and
-  the whiskers are clipped at the frame: `sd` exceeds the mean wherever a role is staffed
-  in only part of a cell, which is a statement about the mean, not a negative count. A role
-  with a mean of exactly 0 has no bar a log axis can draw and is marked `0` at the frame
-  rather than dropped.
-- `constellation_heatmap_<cols>_<rows>.png`: the whole table as a picture — all 12 cells
-  down one axis, all 23 parameters across, one panel per population, block rules between
-  the process / `A_dev` / `A_qa` / totals groups. Colour is the mean **normalised within
-  its own column and across both populations**: the parameters share no unit (`a_dev_5`
-  reaches the thousands, `F_freeze` never passes 1) so one shared scale would leave every
-  column but one flat, while a per-panel scale would stop the two populations being
-  comparable, which is the point of drawing them together. `log1p` before the min–max,
-  since the columns are skewed too and it maps an exact zero to an exact zero. The raw
-  `mean ± sd` is printed in every cell — the colour is a reading aid, the number is the
-  result.
+The cell table has **no figures of its own.** `plot_constellation_profile` and
+`plot_constellation_heatmap` used to draw it — a per-cell bar chart over the eight roles and
+a 12 x 23 heatmap of the whole table — and were **deleted**: §5.3 is written entirely off
+`team_drivers` and the two `composition_*` figures below, which state the two facts the 23
+parameters collapse onto instead of reporting every parameter. The table itself stays: §5.3's
+robustness paragraph ("the mean staffing level of `I*` differs from that of `c*` by a median
+of 2 % and at most 14 %") is read off `constellation_cells.csv`. Do not reinstate the two
+figures without a place in the paper for them.
 
-**Three more figures sit beside those, and they are the ones to read first.** The 23
-parameters collapse onto two nearly independent facts, and `constellation_profile` /
-`_heatmap` report every parameter rather than stating them; `visualize_team_summary`
-(called from the same subcommand, and redrawn by `--figures-only`) draws one figure per
-fact. Both take **`optima.csv`, not `constellation_cells.csv`**: their shares and rates
+**Three figures are drawn from the constellation pass, and they are what §5.3 reports.** The 23
+parameters collapse onto two nearly independent facts; `visualize_team_summary`
+(called from the constellation subcommand, and redrawn by `--figures-only`) draws one
+figure per fact. Both take **`optima.csv`, not `constellation_cells.csv`**: their shares and rates
 must be formed *within* a scenario before being averaged, and a ratio of aggregates would
 be the largest scenario's ratio rather than the typical one. Do not "simplify" them onto
 the cell table. `_cmd_constellation` feeds `--cols` / `--rows` into the composition
@@ -536,19 +564,6 @@ figure no longer draws it.
   above it, and they are concentrated in the two dearest agent columns (median ratio 0.52 at
   `a-p` and 0.50 at `a-h`, against 0.035 / 0.228 at the `low` / `medium` agent tiers).
 
-**Generate visualizations:**
-```bash
-python -m src.main visualize results/search_default [--out results/search_default/plots]
-python -m src.main visualize results/run1 results/run2 --out results/comparison
-```
-`visualize_single` writes `cost_vs_value` (every evaluated candidate against the throughput
-floor, with `c*` and `I*` highlighted and `c*`'s cost CI drawn — the search problem of §3.9
-in one picture) and `cost_split` (the three cost drivers of the reported optima).
-`visualize_multi` adds `comparison_optima`, one point per scenario. There is **no
-per-candidate trajectory figure**: `optimize` never writes per-sprint traces, so the
-`plot_trajectories` that used to look for `samples/<key>_traces.csv` was unreachable and
-has been removed. Traces exist only via `run --traces`, and `analyze` tabulates them.
-
 **Run tests:**
 ```bash
 .venv/bin/python -m pytest tests/ -v
@@ -600,7 +615,7 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 - **Feasibility pre-filter** runs before any simulation. One rejection path, recorded and skipped: the human-capacity condition of §3.6 Eq. (feas_monitoring) (the manifest entry carries `feasible: false` and a `reason`). It still **counts as one evaluation** (§3.11.2 step 7, §4.3), so `n_evaluated` is the budget spend and `n_simulated` the realised simulation count; both are written to `manifest.json`. Rejected candidates are reported, never silently redrawn — the paper says so explicitly, and a rejection loop would condition every draw on the staffing level drawn with it. `_mutate` likewise tests only the *structural* constraints, so a monitoring-infeasible child is evaluated and rejected rather than retried.
 - **Scenario parameters are fixed constants**, not sampled: every value in a scenario JSON must be a plain number.
 - **Five orthogonal scenario groups** (paper §4.1), each with a `low`/`medium`/`high` tier grounded in literature: `human`, `project`, `debt`, `agent`, `bugimpact` (`SCENARIO_GROUPS` in `src/config.py`). The groups partition the 39 `ScenarioParameters` fields exactly, so `load_scenario_params` takes a `{group: path}` mapping with one file per group and rejects a field defined in two files. Tiers combine freely, but **the grid is not a cube**: two groups carry a fourth tier, each a deliberate stress case rather than an observed operating point — `project`'s `veryhigh` (`r_arrival = 1000` issues/week, unrealistic extreme velocity; the high tier at 75 is already managed by two FTE) and `agent`'s `pessimistic` (the low tier's capability at 10× the high tier's `c_token`; both halves of the agent grounding, the SWE-bench scores and the token prices, are optimistic). That gives 3^3 · 4 · 4 = 432 scenarios. Read the tiers through `config.scenario_tiers(group)` / `config.scenario_tier_combinations()` / `config.scenario_id(tiers)`, never `SCENARIO_TIERS` (the three base tiers) — anything iterating `SCENARIO_TIERS` per group silently drops the `p-v` and `a-p` scenarios. `ALL_SCENARIO_TIERS` is the plotting/ordinal order and `TIER_INITIALS` the `l`/`m`/`h`/`v`/`p` codes the scenario ids and the LaTeX scenario codes share; a tier initial may coincide with a *group* initial (`a-p`), since the id token format is `<group>-<tier>`. Note tier direction is per-group and not always "high = best": e.g. `debt`'s `delta_min` and `Gamma_doc` both *decrease* as the tier rises (severity up, relief down), while the `agent` group's `r_bugs` falls and its `d_test` rises with price — the paper's footnote resolves the leaderboard's Opus/Fable near-tie in favour of the high tier, so both rows are monotone. `tests/test_io.py` pins all three directions; they have been swapped in the config once already. `pessimistic` is the only tier that changes cost without changing behaviour — `c_token` enters `simulation.cost_components` alone, so it can neither make a candidate infeasible nor move a saturation bound.
-- **The human-only baseline is gated structurally, on the team having no agents at all** (paper §4.1). `config.is_human_only(cfg)` is `not any(cfg.A_dev)` — `TeamConfiguration` forces `A_qa` to zero whenever `A_dev` is zero — and it is the single switch for both baseline changes in `step_sprint`: the `f_qa` capacity reservation of Eq. (hafter_qa), and the human review stage of Eqs. (cov_qa)/(qa_human) that **replaces** Step 5's Test → CR → SA pipeline. There is no `_solo` parameter file: `f_qa` / `h_qa` / `d_qa` sit in the ordinary `config/human_*.json`, and `SearchConfiguration.human_only` / `optimize --human-only` only chooses the *enumerator* and are simply never read by an agent-supported team. Consequence worth keeping: an agent-supported run is bit-identical to before the baseline landed — the two paths are mutually exclusive, so no stray RNG draw enters. `tests/test_sprint.py` pins that in both directions.
+- **The human-only baseline is gated structurally, on the team having no agents at all** (paper §4.1). `config.is_human_only(cfg)` is `not any(cfg.A_dev)` — `TeamConfiguration` forces `A_qa` to zero whenever `A_dev` is zero — and it is the single switch for both baseline changes in `step_sprint`: the `f_qa` capacity reservation of Eq. (hafter_qa), and the human review stage of Eqs. (cov_qa)/(qa_human) that **replaces** Step 5's Test → CR → SA pipeline. There is no `_solo` parameter file: `f_qa` / `h_qa` / `d_qa` sit in the ordinary `config/human_*.json`, and `SearchConfiguration.human_only` only chooses the *enumerator* and is simply never read by an agent-supported team. Consequence worth keeping: an agent-supported run is bit-identical to before the baseline landed — the two paths are mutually exclusive, so no stray RNG draw enters. `tests/test_sprint.py` pins that in both directions.
 - **`A_dev` may be the all-zero vector, and only the all-zero vector.** `TeamConfiguration.__post_init__` accepts either an all-zero `A_dev` (with an all-zero `A_qa`) or one with `a_dev,1 ≥ 1`; `(0,1,0,…)` still raises. The samplers and `_mutate_composition` all keep their `a_1 ≥ 1` floor, so **the search can never reach a zero-agent team** — `_run_human_only` is its sole producer.
 - **The baseline is provably independent of the `debt` and `agent` groups**, which is why its grid is human(3) × project(4) × bugimpact(3) = **36 scenarios** and not 432. Every `delta_D` consumer multiplies an agent count or `W_agent`; every agent-group parameter multiplies an agent count, or dies in `Φ(·,0) = 0`, or acts on a test suite that never grows. §4.1's "simplified model without debt dynamics" therefore needs **no bypass code** — it is already true, and `tests/test_sprint.py::TestHumanOnlyDebtIsInert` pins it rather than the transition enforcing it. The two inert groups take the `UNUSED_TIER` sentinel, rendered `X`, so a baseline id reads `h-m_p-v_d-X_a-X_b-l`; `config/{debt,agent}_unused.json` supply the placeholder values so the `<group>_<tier>.json` convention holds and `campaign.scenario_params_for_id` needs no special case. `UNUSED_TIER` is deliberately **outside** `TIER_INITIALS` and `ALL_SCENARIO_TIERS` — it must never enter `scenario_tier_combinations()` nor the figure tier channels.
 - **`r_bugs_human` is an absolute per-feature rate, not a scale factor** (paper Eq. Binj-human): `B_human(t) ~ Poisson(impl_human'(t) · r_bugs,human)`, with **no** `(2 − δ_D)` amplifier. Human-written code injects at a fixed rate; only the agent stream of Eq. (Binj-agent) is debt-amplified. Values are 0.20 / 0.12 / 0.08 by human tier. It is part of the **shared** model, so it moves mixed-team results too (roughly ×4 on the escaped-bug cost at the medium agent tier). `saturation_bounds`' `λ_3` deliberately still counts only the agent stream, matching the paper's Eq. (workload); it under-counts, but `ā_3 = 1` regardless because `η_3 = r_fix·δ_min` is in the hundreds.
@@ -631,8 +646,7 @@ initialiser (`_random_draws`) the search seeds from (§3.11.2).
 
 The §4.1 human-only baseline is a **result mode** beside the search, not a second search:
 its configuration space is 99 points, so `search.run_human_only` enumerates it outright and
-`budget` is never read.  `SearchConfiguration.human_only` (or `optimize --human-only`)
-selects it.  `RESULT_MODES = ("search", "human_only")` is what `campaign.search_dirs`, the
+`budget` is never read.  `SearchConfiguration.human_only` selects it.  `RESULT_MODES = ("search", "human_only")` is what `campaign.search_dirs`, the
 result-tree directory names, the `mode` column of the campaign CSVs and
 `manifest["mode"]` all range over.
 

@@ -495,8 +495,8 @@ resolved as a five-stage cascade, each stage consuming time that is remaining fr
 \end{equation}
 per FTE. Communication is a per-person cost that does not shrink when a person invests only
 part of their time in the project, so the overhead is driven by the headcount rather than by
-the staffing level. $\lceil N \rceil$ is the smallest
-headcount that can supply $N$ FTE. Since $n_\mathrm{sup}(t)$ is the number of active supervised agents, each FTE supervises
+the staffing level: $\lceil N \rceil$ is the smallest headcount that can supply $N$ FTE,
+so $\lceil N-1 \rceil$ is the number of peers each of them communicates with. Since $n_\mathrm{sup}(t)$ is the number of active supervised agents, each FTE supervises
 $\frac{n_\mathrm{sup}(t)}{N}$ agents, consuming $\frac{n_\mathrm{sup}(t)}{N} \cdot H_\mathrm{mon,eff}(t)$ hours of monitoring effort. The per-agent monitoring effort is reduced by the documentation coverage $\mathrm{doc\_cov}(t-1)$ (from the previous sprint) and the reduction is calibrated by $\Gamma_\mathrm{doc}$
 \begin{equation}
   H_\mathrm{mon,eff}(t) = H_\mathrm{mon,overhead}\,
@@ -1153,7 +1153,7 @@ The search needs a way to produce valid initial configurations. We sample these 
         i.e., we allow up to one instance of each service per two features that arrive in a sprint.\footnote{While this is only based on features, the number of bugs is limited by the number of features, which also limits the refactorings.}
   \item Check the candidate against the human-capacity feasibility condition of
         Eq.~\eqref{eq:feas_monitoring}. A candidate that violates it is recorded as
-        infeasible not not simulated.
+        infeasible and not simulated.
 \end{enumerate}
 
 Note that the sampling does not require that the throughput constraint for the value achieved is fulfilled. 
@@ -1203,7 +1203,7 @@ first three when $F_\mathrm{freeze} = 0$:
         \end{itemize}
   \item \emph{Mutate $\mathbf{A}_\mathrm{qa}$:} works the same as for $\mathbf{A}_\mathrm{dev}$, except that the implementation and architecture roles ($k = 1, 2$) remain fixed at zero. This choice is only available when $F_\mathrm{freeze} \geq 1$, i.e., the QA composition can only be modified, if it is active.
 \end{itemize}
-The adjustment of the three autonomous roles uses the expontential set of step size option to be able to navigate the large range of possible counts efficiently. 
+The adjustment of the three autonomous roles uses the exponential set of step size options to be able to navigate the large range of possible counts efficiently. 
 
 If a mutation attempt violates the structural constraints of Section~\ref{sec:model:team} or
 leaves the parent unchanged (e.g.\ because the chosen role is already at its
@@ -1546,7 +1546,7 @@ The turnover does not reach zero, but this does not mean that the search was sti
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{figures/elite_turnover_evolutionary.png}
+  \includegraphics[width=\linewidth]{figures/elite_turnover.png}
   \caption{Elite turnover $\tau_g$ of Eq.~\eqref{eq:elite_turnover} (blue, left axis) and the mean relative improvement of the incumbent's cost per generation (green, logarithmic right axis), aggregated over the 432 evolutionary searches. The turnover is shown as the mean (solid) and the median (dotted) over the searches; the improvement is shown as the mean only, since its median is exactly zero in every generation.}
   \label{fig:results:turnover}
 \end{figure}
@@ -1613,7 +1613,7 @@ Averaged over the final $\mathcal{I}^\star$ of a search, $\rho_\mathbf{c}$ after
 \subsection{Cost trade-offs}
 \label{sec:results:tradeoffs}
 
-We now turn to what the reported optima cost and where that money goes; Section~\ref{sec:results:composition} then describes the same optima structurally. All numbers in this section are the $K$-replication estimates of $\mathbf{c}^\star$ of the 431 admissible searches; the one inadmissible search of Section~\ref{sec:results:convergence} is excluded throughout. We report trends over the scenario grid rather than individual configurations, both because a single scenario is one point of a five-dimensional design and because the indistinguishable set $\mathcal{I}^\star$ means that the individual configuration we report is one of many that we cannot tell apart. Three figures support the discussion, all of them drawn as the same grid: one point per scenario, the agent tier on the columns and the human developer tier on the rows, and the remaining three scenario groups encoded as marker colour (debt), shape (project dynamics) and size (bug impact). Figure~\ref{fig:results:humanagent} splits the two cost drivers that the team composition directly controls, Figure~\ref{fig:results:qualitydev} contrasts their sum with the escaped-defect cost, and Figure~\ref{fig:results:ratio} collapses the human/agent trade-off into a single ratio. The human-only baseline of Section~\ref{sec:setup:baseline} is drawn into the first two figures in black as a reference level; since it is inert in the debt and agent groups, the same baseline points repeat across all four columns.
+We now turn to what the reported optima cost and where that money goes; Section~\ref{sec:results:composition} then describes the same optima structurally. All statistics in this section are the $K$-replication estimates of $\mathbf{c}^\star$ of the 431 admissible searches, i.e.\ the one inadmissible search of Section~\ref{sec:results:convergence} is excluded from every number we quote; the three figures below draw all 432 scenarios, since a single point that misses the throughput constraint is worth seeing in its place on the grid. We report trends over the scenario grid rather than individual configurations, both because a single scenario is one point of a five-dimensional design and because the indistinguishable set $\mathcal{I}^\star$ means that the individual configuration we report is one of many that we cannot tell apart. Three figures support the discussion, all of them drawn as the same grid: one point per scenario, the agent tier on the columns and the human developer tier on the rows, and the remaining three scenario groups encoded as marker colour (debt), shape (project dynamics) and size (bug impact). Figure~\ref{fig:results:humanagent} splits the two cost drivers that the team composition directly controls, Figure~\ref{fig:results:qualitydev} contrasts their sum with the escaped-defect cost, and Figure~\ref{fig:results:ratio} collapses the human/agent trade-off into a single ratio. The human-only baseline of Section~\ref{sec:setup:baseline} is drawn into the first two figures in black as a reference level; since it is inert in the debt and agent groups, the same baseline points repeat across all four columns.
 
 \paragraph{The cost of an optimal team spans four orders of magnitude.}
 The reported optima cost between \$55.73 and \$847{,}656 per feature, with a median of \$3{,}658. This spread is a property of the scenario grid and not of the optimisation: within one scenario the searches are precise to about one per cent (Section~\ref{sec:results:convergence}), so the four decades separate operating contexts rather than measurements. What the optima have in common is that they deliver essentially all of the arriving work, at a median of 99.98\% of $r_\mathrm{arrival}$ against the 98\% that Eq.~\eqref{eq:throughput_constraint} demands, so the cost differences are not bought by delivering less.
@@ -1654,21 +1654,21 @@ The comparison changes character entirely at high project velocity, where it sto
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{figures/human_agent_matrix_evolutionary.png}
+  \includegraphics[width=\linewidth]{figures/human_agent_matrix.png}
   \caption{The two cost drivers that the team composition controls, at $\mathbf{c}^\star$: developer cost against agent cost, both in dollars per feature and on a common logarithmic scale, with the 1:1 diagonal drawn. Points above the diagonal spend more on developers than on agents. One point per scenario; columns are the agent tier, rows the human developer tier, and colour, shape and size encode the debt, project dynamics and bug impact tiers respectively. Black markers are the human-only baselines, which vary only in the human, project and bug impact groups and are therefore repeated across all four columns as a reference level; the baseline has no agent cost and is drawn at the left edge of the axis.}
   \label{fig:results:humanagent}
 \end{figure}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{figures/quality_development_matrix_evolutionary.png}
+  \includegraphics[width=\linewidth]{figures/quality_development_matrix.png}
   \caption{Escaped-defect cost against the cost of the team that produced the features (developers and agents combined), at $\mathbf{c}^\star$, both in dollars per feature on a common logarithmic scale with the 1:1 diagonal. Points above the diagonal are optima whose escaped defects cost more than the entire team. Channels as in Figure~\ref{fig:results:humanagent}.}
   \label{fig:results:qualitydev}
 \end{figure}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{figures/agent_human_ratio_matrix_evolutionary.png}
+  \includegraphics[width=\linewidth]{figures/agent_human_ratio_matrix.png}
   \caption{Ratio of agent to developer cost at $\mathbf{c}^\star$ (logarithmic) against its percentile rank within all 432 scenarios. The panels share one empirical distribution, so the reading is which part of the horizontal axis a panel occupies, not the slope. Channels as in Figure~\ref{fig:results:humanagent}; the baseline has no agent cost and is therefore not shown.}
   \label{fig:results:ratio}
 \end{figure}

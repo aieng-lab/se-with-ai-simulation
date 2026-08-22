@@ -1,16 +1,10 @@
-"""Tests for src/results.py — DataFrame shape and save/load round-trips."""
+"""Tests for src/results.py — the JSON save/load round-trip."""
 
 import pytest
 
 from src.config import SimulationHorizon
-from src.results import load_result, load_traces, save_result, save_traces, to_dataframe
+from src.results import load_result, save_result
 from src.simulation import run_configuration
-
-
-@pytest.fixture
-def small_trace(base_config, base_params):
-    s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
-    return run_configuration(base_config, s, base_params, capture_traces=True)
 
 
 @pytest.fixture
@@ -23,33 +17,6 @@ def small_result(base_config, base_params):
 def small_agg(small_result):
     from src.selection import aggregate_config_result
     return aggregate_config_result(small_result, master_seed=0)
-
-
-class TestToDataframe:
-    def test_shape(self, small_trace):
-        df = to_dataframe(small_trace)
-        assert len(df) == 2 * 4  # K=2, T=4
-
-    def test_multiindex(self, small_trace):
-        df = to_dataframe(small_trace)
-        assert list(df.index.names) == ["replication", "sprint"]
-
-    def test_sprint_range(self, small_trace):
-        df = to_dataframe(small_trace)
-        sprints = df.index.get_level_values("sprint").unique().tolist()
-        assert sorted(sprints) == [0, 1, 2, 3]
-
-    def test_no_nans(self, small_trace):
-        df = to_dataframe(small_trace)
-        assert not df.isnull().any().any()
-
-    def test_F_completed_present(self, small_trace):
-        df = to_dataframe(small_trace)
-        assert "F_completed" in df.columns
-
-    def test_no_t_column(self, small_trace):
-        df = to_dataframe(small_trace)
-        assert "t" not in df.columns
 
 
 class TestSaveLoadResult:
@@ -110,35 +77,3 @@ class TestSaveLoadResult:
         p.write_text(json.dumps(bad))
         with pytest.raises(ValueError):
             load_result(p)
-
-
-class TestSaveLoadTraces:
-    def test_round_trip_shape(self, tmp_path, small_trace):
-        path = tmp_path / "traces.csv"
-        save_traces(small_trace, path)
-        df = load_traces(path)
-        assert len(df) == 2 * 4
-
-    def test_round_trip_values(self, tmp_path, small_trace):
-        path = tmp_path / "traces.csv"
-        original_df = to_dataframe(small_trace)
-        save_traces(small_trace, path)
-        loaded_df = load_traces(path)
-        assert list(loaded_df.columns) == list(original_df.columns)
-        assert (loaded_df["F_completed"] == original_df["F_completed"]).all()
-
-
-class TestTrajectoryFieldNames:
-    """Every field the CLI tabulates must actually be persisted."""
-
-    @staticmethod
-    def _snapshot_fields() -> set[str]:
-        import dataclasses
-
-        from src.simulation import SprintSnapshot
-        return {f.name for f in dataclasses.fields(SprintSnapshot)}
-
-    def test_analyze_fields_are_snapshot_fields(self):
-        from src.main import ANALYZE_TRAJECTORY_FIELDS
-        missing = set(ANALYZE_TRAJECTORY_FIELDS) - self._snapshot_fields()
-        assert not missing, f"{sorted(missing)} are not persisted"

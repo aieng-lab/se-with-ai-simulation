@@ -1,8 +1,4 @@
-"""Monte Carlo execution protocol.
-
-Pass `capture_traces=True` to `run_configuration` to record the full per-sprint
-state evolution as a `ConfigTrace`; the default returns the lightweight `ConfigResult`.
-"""
+"""Monte Carlo execution protocol."""
 
 from __future__ import annotations
 
@@ -40,54 +36,6 @@ class ReplicationResult:
 class ConfigResult:
     config: TeamConfiguration
     replications: tuple[ReplicationResult, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SprintSnapshot:
-    """The system state at the end of sprint `t`: every SystemState field, plus `t`.
-
-    The field order is the column order of `results.to_dataframe`, so it is part of the
-    persisted trace format and is not the same as SystemState's.
-    """
-
-    t: int
-    F_backlog: int
-    F_completed: int
-    B_kno_min: int
-    B_kno_maj: int
-    B_kno_sec: int
-    B_hid_min: int
-    B_hid_maj: int
-    B_hid_sec: int
-    B_escaped_min: int
-    B_escaped_maj: int
-    B_escaped_sec: int
-    B_rel_min: int
-    B_rel_maj: int
-    B_rel_sec: int
-    D_tech: float
-    Q_rev: int
-    Q_arch: int
-    Q_arch_impl: int
-    Q_esc: int
-    N_test: float
-    N_doc: float
-
-
-@dataclass(frozen=True, slots=True)
-class ReplicationTrace:
-    """Full per-sprint history for one replication."""
-
-    k: int
-    snapshots: tuple[SprintSnapshot, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ConfigTrace:
-    """A ConfigResult plus the per-sprint history of each of its replications."""
-
-    result: ConfigResult
-    traces: tuple[ReplicationTrace, ...]
 
 
 def phase_sprint_counts(config: TeamConfiguration, T: int) -> tuple[int, int]:
@@ -132,40 +80,31 @@ def run_configuration(
     settings: SimulationHorizon,
     params: ScenarioParameters,
     *,
-    capture_traces: bool = False,
     initial_state: SystemState | None = None,
     K: int | None = None,
     k_offset: int = 0,
-) -> ConfigResult | ConfigTrace:
+) -> ConfigResult:
     """Run K independent replications of `config` under `settings` and `params`.
 
-    With `capture_traces=False` (default) returns a lightweight `ConfigResult`.
-    With `capture_traces=True` returns a `ConfigTrace` with full per-sprint history.
     `initial_state` sets the starting system state; defaults to all-zero if not provided.
 
     `K` overrides the replication count, which otherwise is `settings.K_search`, and
     `k_offset` shifts the block of replication indices from `[0, K)` to
     `[k_offset, k_offset + K)`, which is how a caller requests a disjoint block.
     """
-    rep_results: list[ReplicationResult] = []
-    rep_traces: list[ReplicationTrace] = []
-
     n_replications = settings.K_search if K is None else K
     if n_replications < 1:
         raise ValueError(f"K must be >= 1, got {n_replications}")
     if k_offset < 0:
         raise ValueError(f"k_offset must be >= 0, got {k_offset}")
 
-    for k in range(k_offset, k_offset + n_replications):
-        rep, trace = _run_replication(config, settings, params, k, capture_traces, initial_state)
-        rep_results.append(rep)
-        if trace is not None:
-            rep_traces.append(trace)
-
-    result = ConfigResult(config=config, replications=tuple(rep_results))
-    if capture_traces:
-        return ConfigTrace(result=result, traces=tuple(rep_traces))
-    return result
+    return ConfigResult(
+        config=config,
+        replications=tuple(
+            _run_replication(config, settings, params, k, initial_state)
+            for k in range(k_offset, k_offset + n_replications)
+        ),
+    )
 
 
 def _run_replication(
@@ -173,14 +112,12 @@ def _run_replication(
     settings: SimulationHorizon,
     params: ScenarioParameters,
     k: int,
-    capture_traces: bool,
     initial_state: SystemState | None = None,
-) -> tuple[ReplicationResult, ReplicationTrace | None]:
+) -> ReplicationResult:
     rng = generator_for(settings.master_seed, config, k)
     # Copied, so a shared initial_state is not mutated across replications.
     state = dataclasses.replace(initial_state) if initial_state is not None else SystemState()
 
-    snapshots: list[SprintSnapshot] = []
     actions = [0.0] * AGENT_ROLE_COUNT
     impl_human = impl_agents = fixes_human = fixes_agent = 0.0
 
@@ -193,9 +130,6 @@ def _run_replication(
         fixes_human += sprint_actions.fixes_human
         fixes_agent += sprint_actions.fixes_agent
 
-        if capture_traces:
-            snapshots.append(SprintSnapshot(t=t, **dataclasses.asdict(state)))
-
     C_human, C_agents = cost_components(config, params, settings.T, actions)
     C_quality = escaped_bug_cost(
         params, state.B_escaped_min, state.B_escaped_maj, state.B_escaped_sec
@@ -205,7 +139,7 @@ def _run_replication(
     F_done = state.F_completed
     # A horizon can legitimately complete no feature at all, so floor the denominator.
     denom = max(1, F_done)
-    result = ReplicationResult(
+    return ReplicationResult(
         value=F_done / settings.T,
         cost=C_total / denom,
         cost_quality=C_quality / denom,
@@ -217,6 +151,3 @@ def _run_replication(
         fixes_human=fixes_human,
         fixes_agent=fixes_agent,
     )
-
-    trace = ReplicationTrace(k=k, snapshots=tuple(snapshots)) if capture_traces else None
-    return result, trace

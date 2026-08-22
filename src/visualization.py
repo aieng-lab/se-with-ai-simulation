@@ -1,20 +1,12 @@
-"""Figures for search results and for a consolidated campaign.
+"""Figures for a consolidated campaign.
 
-Every function takes plain dicts or pandas DataFrames derived from the persisted result
-files and returns a matplotlib Figure; the caller decides how to save it.
-
-Per-search plots
-----------------
-    plot_cost_vs_value, plot_cost_split, plot_comparison_optima
-
-Campaign plots
---------------
-These take the consolidated tables of :mod:`src.campaign` and :mod:`src.constellation`
-rather than a per-search `objectives` dict:
+Every function takes a pandas DataFrame derived from the consolidated tables of
+:mod:`src.campaign` and :mod:`src.constellation` and returns a matplotlib Figure; the
+caller decides how to save it.
 
     plot_human_agent_matrix, plot_quality_development_matrix,
-    plot_agent_human_ratio_matrix, plot_elite_turnover, plot_constellation_profile,
-    plot_constellation_heatmap, plot_team_shape, plot_team_drivers
+    plot_agent_human_ratio_matrix, plot_elite_turnover, plot_team_shape,
+    plot_team_drivers
 
 The first three share `_draw_matrix`, the five-channel tier grid, and differ only in the
 pair of columns they put on the axes.  All but the ratio figure take an optional
@@ -22,13 +14,11 @@ pair of columns they put on the axes.  All but the ratio figure take an optional
 
 Directory-level helpers
 -----------------------
-    visualize_single, visualize_multi, visualize_campaign, visualize_constellation,
-    visualize_team_summary, save_figure
+    visualize_campaign, visualize_team_summary, save_figure
 """
 
 from __future__ import annotations
 
-import json
 import warnings
 from collections.abc import Callable
 from pathlib import Path
@@ -56,186 +46,22 @@ from .config import (
     HUMAN_ONLY_MODE,
     SCENARIO_GROUPS,
     require_distinct_groups,
-    require_group_pair,
     SUPERVISED_ROLE_INDICES,
     UNUSED_TIER,
 )
 from .constellation import (
     AGENT_COST_PARAMETERS,
     BILL_PARAMETERS,
-    C_STAR,
     DEV_PARAMETERS,
-    I_STAR,
-    PARAMETER_BLOCKS,
-    POPULATIONS,
 )
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 # Shared palette
-_BEST_COLOR  = cm.tab10(3)     # red — c*
-_KEEP_COLOR  = cm.tab10(0)     # blue — the indistinguishable set I*
-_OK_COLOR    = "#88bb88"       # green-grey — admissible but distinguishably worse
-_OTHER_COLOR = "#cccccc"       # grey — violates the throughput constraint
+_KEEP_COLOR  = cm.tab10(0)     # blue — elite turnover
 _CHANGE_COLOR = cm.tab10(2)    # green — cumulative change in c*'s cost
 _STYLE       = "seaborn-v0_8-whitegrid"
-
-#: Most bars plot_cost_split will draw; a search evaluates far more candidates than fit.
-_BAR_LIMIT = 60
-
-
-# ---------------------------------------------------------------------------
-# The search landscape: cost against the constrained quantity
-# ---------------------------------------------------------------------------
-
-def plot_cost_vs_value(
-    objectives: dict[str, dict],
-    best_key: str | None,
-    keep_keys: list[str],
-    floor: float,
-    title: str = "",
-) -> "Figure":
-    """Every evaluated candidate as (value, cost), with the throughput floor marked.
-
-    Everything left of the floor is inadmissible.  `c*` and the indistinguishable set
-    `I*` are highlighted, and `c*` carries the cost CI that `I*` membership is decided on.
-    """
-    keep = set(keep_keys) - ({best_key} if best_key else set())
-    with plt.style.context(_STYLE):
-        fig, ax = plt.subplots(figsize=(8, 5.5))
-        if title:
-            ax.set_title(title, fontsize=11)
-
-        tiers: list[tuple[list[str], str, str, float, float]] = [
-            ([k for k, o in objectives.items()
-              if not o["feasible_throughput"]], _OTHER_COLOR,
-             "violates throughput constraint", 12.0, 0.35),
-            ([k for k, o in objectives.items()
-              if o["feasible_throughput"] and k not in keep and k != best_key], _OK_COLOR,
-             "admissible", 16.0, 0.55),
-            (sorted(keep), _KEEP_COLOR,
-             f"indistinguishable from $c^\\star$ ({len(keep_keys)})", 34.0, 0.9),
-        ]
-        for keys, color, label, size, alpha in tiers:
-            if not keys:
-                continue
-            ax.scatter([objectives[k]["value_mean"] for k in keys],
-                       [objectives[k]["cost_mean"] for k in keys],
-                       s=size, c=[color], alpha=alpha, label=label,
-                       edgecolors="none", zorder=2)
-
-        ax.axvline(floor, color="black", linestyle="--", linewidth=1.1, zorder=1,
-                   label=f"throughput floor ({floor:.2f})")
-
-        if best_key is not None:
-            obj = objectives[best_key]
-            ax.errorbar(obj["value_mean"], obj["cost_mean"],
-                        yerr=[[obj["cost_mean"] - obj["cost_ci"][0]],
-                              [obj["cost_ci"][1] - obj["cost_mean"]]],
-                        fmt="*", markersize=17, color=_BEST_COLOR, ecolor=_BEST_COLOR,
-                        elinewidth=1.4, capsize=4, zorder=4,
-                        label=f"$c^\\star$ = {best_key}")
-
-        ax.set_xlabel("value   (features / sprint)", fontsize=9)
-        ax.set_ylabel("cost   (\\$ / feature)", fontsize=9)
-        ax.set_yscale("log")
-        ax.legend(fontsize=7, loc="best")
-        fig.tight_layout()
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# What the cost is made of
-# ---------------------------------------------------------------------------
-
-_COST_DRIVERS: tuple[tuple[str, str], ...] = (
-    ("cost_quality_mean", "escaped bugs"),
-    ("cost_human_mean",   "developers"),
-    ("cost_agent_mean",   "agents"),
-)
-
-
-def plot_cost_split(
-    objectives: dict[str, dict],
-    keys: list[str],
-    title: str = "",
-) -> "Figure":
-    """Stacked bars of the three cost drivers, one bar per key.
-
-    The three sum to `cost_mean` by construction.  Truncated at `_BAR_LIMIT` bars.
-    """
-    shown = keys[:_BAR_LIMIT]
-    if not shown:
-        raise ValueError("plot_cost_split needs at least one key")
-    truncated = len(keys) - len(shown)
-
-    with plt.style.context(_STYLE):
-        fig, ax = plt.subplots(figsize=(max(6.0, 0.42 * len(shown) + 3.0), 4.6))
-        if title:
-            ax.set_title(title, fontsize=11)
-
-        x = np.arange(len(shown))
-        bottom = np.zeros(len(shown))
-        for i, (field, label) in enumerate(_COST_DRIVERS):
-            vals = np.array([objectives[k][field] for k in shown], dtype=float)
-            ax.bar(x, vals, bottom=bottom, label=label, color=cm.tab10(i), width=0.8)
-            bottom += vals
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(shown, rotation=90, fontsize=6)
-        ax.set_ylabel("cost   (\\$ / feature)", fontsize=9)
-        ax.legend(fontsize=8, loc="upper right")
-        if truncated:
-            ax.set_xlabel(f"(+{truncated} further configuration(s) not shown)", fontsize=8)
-        fig.tight_layout()
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# Cross-experiment comparison of the reported optima
-# ---------------------------------------------------------------------------
-
-def plot_comparison_optima(
-    scenarios: dict[str, dict],
-    title: str = "",
-) -> "Figure":
-    """One point per scenario: the cost of its `c*` with the CI that defines its `I*`.
-
-    `scenarios` maps a label to the `objectives` entry of that scenario's `c*`, so a
-    scenario whose search simulated nothing simply has no row.
-    """
-    labels = list(scenarios)
-    if not labels:
-        raise ValueError("plot_comparison_optima needs at least one scenario")
-
-    with plt.style.context(_STYLE):
-        fig, ax = plt.subplots(figsize=(8, max(3.0, 0.42 * len(labels) + 1.6)))
-        if title:
-            ax.set_title(title, fontsize=11)
-
-        y = np.arange(len(labels))
-        means = np.array([scenarios[key]["cost_mean"] for key in labels], dtype=float)
-        lo = np.array([scenarios[key]["cost_ci"][0] for key in labels], dtype=float)
-        hi = np.array([scenarios[key]["cost_ci"][1] for key in labels], dtype=float)
-        admissible = [scenarios[key]["feasible_throughput"] for key in labels]
-
-        ax.errorbar(means, y, xerr=[means - lo, hi - means], fmt="none",
-                    ecolor="#888888", elinewidth=1.2, capsize=3, zorder=1)
-        for ok, colour, label in ((True, _BEST_COLOR, "admissible $c^\\star$"),
-                                  (False, _OTHER_COLOR, "no admissible candidate")):
-            sel = [i for i, a in enumerate(admissible) if a == ok]
-            if sel:
-                ax.scatter(means[sel], y[sel], s=44, c=[colour], zorder=2, label=label)
-
-        ax.set_yticks(y)
-        ax.set_yticklabels(labels, fontsize=7)
-        ax.invert_yaxis()
-        ax.set_xscale("log")
-        ax.set_xlabel("cost of $c^\\star$   (\\$ / feature)", fontsize=9)
-        ax.legend(fontsize=8, loc="best")
-        fig.tight_layout()
-    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -1012,295 +838,6 @@ def plot_agent_human_ratio_matrix(
 
 
 # ---------------------------------------------------------------------------
-# What the optimal teams are made of, by two scenario groups
-# ---------------------------------------------------------------------------
-
-# The two populations of `src.constellation`, and the colours they keep across both
-# figures: the same red and blue the per-search landscape gives `c*` and `I*`.
-_POPULATION_COLORS = {C_STAR: _BEST_COLOR, I_STAR: _KEEP_COLOR}
-_POPULATION_LABELS = {C_STAR: "$c^\\star$", I_STAR: "$\\mathcal{I}^\\star$ (mean per scenario)"}
-
-
-def _check_cell_channels(cells: "pd.DataFrame", groups: tuple[str, ...]) -> None:
-    """Validate the two faceting groups of the constellation figures."""
-    require_group_pair(groups)
-    missing = [f"tier_{g}" for g in groups if f"tier_{g}" not in cells.columns]
-    if missing:
-        raise KeyError(f"{missing} are not columns of the constellation table")
-
-
-def _cell_lookup(cells: "pd.DataFrame", row_column: str, col_column: str) -> dict:
-    """(population, row tier, col tier, parameter) -> (mean, sd), for O(1) panel lookup.
-
-    Keyed on the two faceting columns by name, since a caller may hand in a wider table
-    and a positional key would then line up with the wrong group.
-    """
-    return dict(zip(
-        zip(cells["population"], cells[row_column], cells[col_column],
-            cells["parameter"]),
-        zip(cells["mean"], cells["sd"]),
-    ))
-
-
-def _profile_limits(cells: "pd.DataFrame", parameters: tuple[str, ...]) -> tuple[float, float]:
-    """One padded log range covering every bar and whisker of the profile figure.
-
-    Includes `mean + sd`, since the upper whisker is drawn.  A role no optimum staffs has
-    a mean of exactly 0, which a log axis cannot place; `_zero_marks` annotates those.
-    """
-    sub = cells[cells["parameter"].isin(parameters)]
-    upper = (sub["mean"].fillna(0.0) + sub["sd"].fillna(0.0)).to_numpy(dtype=float)
-    means = sub["mean"].to_numpy(dtype=float)
-    # The bars grow from the left frame, so the low end gets an extra decade of run-up:
-    # without it the smallest mean is a bar of zero length and reads as an absent role.
-    return _padded_log_range(np.concatenate([means, upper]), "the parameter means",
-                             extra_decades_below=1.0)
-
-
-def plot_constellation_profile(
-    cells: "pd.DataFrame",
-    rows_group: str = "bugimpact",
-    cols_group: str = "project",
-    title: str = "",
-) -> "Figure":
-    """The development-phase composition of the optimal team, per cell of a tier grid.
-
-    One panel per (rows_group tier, cols_group tier) cell of the ``constellation_cells``
-    table of :mod:`src.constellation`, each a horizontal bar chart over the eight agent
-    roles with the two populations side by side and the between-scenario standard
-    deviation as a whisker.
-
-    The x axis is logarithmic and shared by every panel, since the counts span several
-    decades and the panels have to be comparable.  A role with a mean of exactly 0 has no
-    bar a log axis can draw and is marked `0` at the left frame; the whiskers are clipped
-    at the frame, `sd` exceeding the mean wherever a role is staffed in only part of the
-    cell.
-    """
-    _check_cell_channels(cells, (rows_group, cols_group))
-    parameters, labels = DEV_PARAMETERS, AGENT_ROLE_ABBREV
-    row_column, col_column = f"tier_{rows_group}", f"tier_{cols_group}"
-    row_tiers = _tiers_present(cells, row_column)
-    col_tiers = _tiers_present(cells, col_column)
-    if not row_tiers or not col_tiers:
-        raise ValueError("no rows for any tier of the faceting groups")
-    populations = [p for p in POPULATIONS if (cells["population"] == p).any()]
-
-    lookup = _cell_lookup(cells, row_column, col_column)
-    x_lo, x_hi = _profile_limits(cells, parameters)
-    y = np.arange(len(parameters), dtype=float)
-    height = 0.8 / max(1, len(populations))
-
-    with plt.style.context(_STYLE):
-        fig, axes = plt.subplots(
-            len(row_tiers), len(col_tiers),
-            figsize=(3.6 * len(col_tiers), 0.34 * len(parameters) * len(row_tiers) + 1.2),
-            sharex=True, sharey=True, squeeze=False,
-        )
-        fig.suptitle(title, fontsize=12, y=1.0)
-
-        for r, row_tier in enumerate(row_tiers):
-            for c, col_tier in enumerate(col_tiers):
-                ax = axes[r][c]
-                for i, population in enumerate(populations):
-                    offset = (i - (len(populations) - 1) / 2.0) * height
-                    means, lower, upper, zeros = [], [], [], []
-                    for j, parameter in enumerate(parameters):
-                        mean, sd = lookup.get(
-                            (population, row_tier, col_tier, parameter),
-                            (np.nan, np.nan))
-                        mean = 0.0 if np.isnan(mean) else float(mean)
-                        sd = 0.0 if np.isnan(sd) else float(sd)
-                        means.append(mean)
-                        # Clipped at the frame; mean - sd is often negative here.
-                        lower.append(max(0.0, mean - max(x_lo, mean - sd)))
-                        upper.append(sd)
-                        if mean <= 0:
-                            zeros.append(j)
-                    ax.barh(y + offset, means, height=height * 0.92,
-                            color=_POPULATION_COLORS[population], alpha=0.75,
-                            label=_POPULATION_LABELS[population],
-                            xerr=[lower, upper],
-                            error_kw={"elinewidth": 0.8, "ecolor": "0.3", "capsize": 1.5})
-                    for j in zeros:
-                        ax.text(x_lo, y[j] + offset, " 0", fontsize=6, va="center",
-                                ha="left", color=_POPULATION_COLORS[population])
-                ax.set_xscale("log")
-                ax.set_xlim(x_lo, x_hi)
-                ax.set_ylim(len(parameters) - 0.5, -0.5)   # role 1 at the top
-                ax.set_yticks(y)
-                ax.set_yticklabels(labels, fontsize=8)
-                ax.grid(axis="y", visible=False)
-                if r == 0:
-                    ax.set_title(f"{cols_group} = {col_tier}", fontsize=10)
-                if r == len(row_tiers) - 1:
-                    ax.set_xlabel("agents per role (mean ± sd over scenarios)", fontsize=9)
-                if c == 0:
-                    ax.set_ylabel(f"{rows_group} = {row_tier}", fontsize=9)
-
-        handles, legend_labels = axes[0][0].get_legend_handles_labels()
-        fig.legend(handles[:len(populations)], legend_labels[:len(populations)],
-                   loc="lower center", ncol=len(populations), frameon=True, fontsize=9,
-                   bbox_to_anchor=(0.5, -0.02))
-        fig.tight_layout(rect=(0.0, 0.02, 1.0, 0.98))
-    return fig
-
-
-def _normalised_columns(
-    cells: "pd.DataFrame",
-    parameters: tuple[str, ...],
-) -> "dict[str, tuple[float, float]]":
-    """Per parameter, the (min, max) of ``log1p(mean)`` over both populations.
-
-    Each parameter gets its own colour range: they share no unit and span four decades
-    between them, so one range would paint every column but the largest flat.  The range
-    covers both populations, so the heatmap's two panels stay comparable.  `log1p` rather
-    than a plain min-max, since the counts are skewed within a column too and it maps an
-    exact zero to an exact zero.
-    """
-    ranges = {}
-    for parameter in parameters:
-        values = cells.loc[cells["parameter"] == parameter, "mean"].to_numpy(dtype=float)
-        values = np.log1p(np.clip(values[~np.isnan(values)], 0.0, None))
-        if values.size == 0:
-            ranges[parameter] = (0.0, 1.0)
-        else:
-            lo, hi = float(values.min()), float(values.max())
-            ranges[parameter] = (lo, hi if hi > lo else lo + 1.0)
-    return ranges
-
-
-def _cell_annotation(mean: float, sd: float) -> str:
-    """`mean` over `±sd`, three significant digits, for one heatmap cell."""
-    if np.isnan(mean):
-        return ""
-    top = f"{mean:.3g}"
-    return top if np.isnan(sd) else f"{top}\n±{sd:.2g}"
-
-
-def plot_constellation_heatmap(
-    cells: "pd.DataFrame",
-    rows_group: str = "project",
-    cols_group: str = "bugimpact",
-    title: str = "",
-) -> "Figure":
-    """The whole constellation table as a picture, one panel per population.
-
-    Rows are the cells of the tier grid, both faceting groups on one axis so that all of
-    them are visible at once; columns are the control variables, grouped into the process
-    triple, the two composition vectors and the derived totals, with a rule between the
-    blocks.
-
-    Colour is the mean normalised within its own column and across both populations (see
-    :func:`_normalised_columns`).  The raw `mean ± sd` is printed in each cell, so the
-    colour is a reading aid and the number is the result.
-    """
-    _check_cell_channels(cells, (rows_group, cols_group))
-    row_column, col_column = f"tier_{rows_group}", f"tier_{cols_group}"
-    row_tiers = _tiers_present(cells, row_column)
-    col_tiers = _tiers_present(cells, col_column)
-    if not row_tiers or not col_tiers:
-        raise ValueError("no rows for any tier of the faceting groups")
-    populations = [p for p in POPULATIONS if (cells["population"] == p).any()]
-
-    parameters = tuple(p for _, block in PARAMETER_BLOCKS for p in block
-                       if (cells["parameter"] == p).any())
-    if not parameters:
-        raise ValueError("none of the requested parameters is in the table")
-    # Where each block ends, for the separator rules; the last one needs no rule.
-    edges, seen = [], 0
-    for _, block in PARAMETER_BLOCKS:
-        seen += sum(1 for p in block if p in parameters)
-        edges.append(seen)
-    edges = [e for e in edges[:-1] if 0 < e < len(parameters)]
-
-    grid = [(row_tier, col_tier) for row_tier in row_tiers for col_tier in col_tiers]
-    lookup = _cell_lookup(cells, row_column, col_column)
-    ranges = _normalised_columns(cells, parameters)
-    cmap = plt.get_cmap("YlGnBu")
-
-    with plt.style.context(_STYLE):
-        fig, axes = plt.subplots(
-            len(populations), 1,
-            figsize=(0.78 * len(parameters) + 2.6, 0.46 * len(grid) * len(populations) + 1.4),
-            sharex=True, squeeze=False,
-        )
-        fig.suptitle(title, fontsize=12, y=1.0)
-
-        for a, population in enumerate(populations):
-            ax = axes[a][0]
-            shades = np.full((len(grid), len(parameters)), np.nan)
-            for i, (row_tier, col_tier) in enumerate(grid):
-                for j, parameter in enumerate(parameters):
-                    mean, sd = lookup.get(
-                        (population, row_tier, col_tier, parameter), (np.nan, np.nan))
-                    if np.isnan(mean):
-                        continue
-                    lo, hi = ranges[parameter]
-                    shade = (np.log1p(max(mean, 0.0)) - lo) / (hi - lo)
-                    shades[i, j] = shade
-                    ax.text(j, i, _cell_annotation(mean, sd), fontsize=5.5,
-                            ha="center", va="center", linespacing=0.95,
-                            # The map runs light→dark, so the annotation has to flip
-                            # before the background swallows it.
-                            color="white" if shade > 0.62 else "0.12")
-            ax.imshow(np.ma.masked_invalid(shades), cmap=cmap, vmin=0.0, vmax=1.0,
-                      aspect="auto", interpolation="nearest")
-            for edge in edges:
-                ax.axvline(edge - 0.5, color="0.25", linewidth=1.2)
-            ax.set_yticks(range(len(grid)))
-            ax.set_yticklabels([f"{r} / {c}" for r, c in grid], fontsize=8)
-            ax.set_ylabel(f"{rows_group} / {cols_group}", fontsize=9)
-            ax.set_title(_POPULATION_LABELS[population], fontsize=10, loc="left")
-            ax.grid(visible=False)
-            ax.set_xticks(range(len(parameters)))
-            if a == len(populations) - 1:
-                ax.set_xticklabels(parameters, fontsize=7, rotation=90)
-            ax.tick_params(length=0)
-        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.98))
-    return fig
-
-
-def visualize_constellation(
-    cells: "pd.DataFrame",
-    out_dir: Path,
-    fmt: str = "png",
-    rows_group: str = "bugimpact",
-    cols_group: str = "project",
-) -> None:
-    """Both constellation figures for one ``constellation_cells`` table.
-
-    The file names carry the two faceting groups rather than the result mode: the table is
-    built from the searched optima only — a human-only team has no composition — so the
-    mode is fixed, while the grid is the thing the caller can change and must not silently
-    overwrite.
-    """
-    if cells.empty:
-        warnings.warn("the constellation table is empty; nothing to plot.", stacklevel=2)
-        return
-
-    populations = [p for p in POPULATIONS if (cells["population"] == p).any()]
-    n_cells = cells.drop_duplicates(
-        [f"tier_{rows_group}", f"tier_{cols_group}"]).shape[0]
-    suffix = f"{cols_group}_{rows_group}"
-    print(f"\n── Team constellation: {rows_group} × {cols_group} "
-          f"({n_cells} cells, {len(populations)} population(s)) ──")
-
-    fig = plot_constellation_profile(
-        cells, rows_group=rows_group, cols_group=cols_group,
-        title=f"Development-phase composition of the optimal team, "
-              f"by {cols_group} and {rows_group}",
-    )
-    save_figure(fig, out_dir, f"constellation_profile_{suffix}", fmt)
-
-    fig = plot_constellation_heatmap(
-        cells, rows_group=cols_group, cols_group=rows_group,
-        title=f"Every control variable of the optimal team, "
-              f"by {cols_group} and {rows_group}",
-    )
-    save_figure(fig, out_dir, f"constellation_heatmap_{suffix}", fmt)
-
-
-# ---------------------------------------------------------------------------
 # The summary of team structure
 # ---------------------------------------------------------------------------
 #
@@ -1809,27 +1346,6 @@ def visualize_team_summary(
 # Result-directory helpers
 # ---------------------------------------------------------------------------
 
-def _load_summary(result_dir: Path) -> dict:
-    path = result_dir / "search_summary.json"
-    if not path.exists():
-        raise FileNotFoundError(f"No search_summary.json in {result_dir}.")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _load_manifest(result_dir: Path) -> dict:
-    path = result_dir / "manifest.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-
-
-def _scenario_label(result_dir: Path, manifest: dict) -> str:
-    """Human-readable scenario name: the scenario id if present, else the directory."""
-    scenario_id = manifest.get("scenario_id", "")
-    if scenario_id:
-        mode = manifest.get("mode", "")
-        return f"{scenario_id} / {mode}" if mode else scenario_id
-    return result_dir.name
-
-
 def save_figure(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
     """Write `fig` to ``<out_dir>/<name>.<fmt>``, close it, and report the path."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1837,61 +1353,6 @@ def save_figure(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
     fig.savefig(dest, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {dest}")
-
-
-def visualize_single(result_dir: Path, out_dir: Path, fmt: str) -> None:
-    """Generate all plots for a single search result directory."""
-    summary  = _load_summary(result_dir)
-    manifest = _load_manifest(result_dir)
-    label    = _scenario_label(result_dir, manifest)
-
-    # The whole evaluated pool at K_search, i.e. the landscape the search saw, with the
-    # reported candidates overwritten by their K_final estimates so that c*'s CI is drawn
-    # at the width it is reported with.
-    objectives = dict(summary["objectives"])
-    objectives.update(summary["final_objectives"])
-    best_key   = summary["best"]
-    keep_keys  = summary["indistinguishable"]
-    floor      = summary["throughput_floor"]
-    title_base = f"Scenario: {label}"
-
-    print(f"\n── {result_dir.name}  ({len(objectives)} simulated, "
-          f"{len(keep_keys)} indistinguishable from c*) ──")
-
-    if not objectives:
-        warnings.warn(f"{result_dir} simulated no candidate; nothing to plot.",
-                      stacklevel=2)
-        return
-
-    fig = plot_cost_vs_value(objectives, best_key, keep_keys, floor,
-                             title=f"{title_base} — cost vs. throughput")
-    save_figure(fig, out_dir, "cost_vs_value", fmt)
-
-    if keep_keys:
-        fig = plot_cost_split(objectives, keep_keys,
-                              title=f"{title_base} — cost drivers of the reported optima")
-        save_figure(fig, out_dir, "cost_split", fmt)
-
-
-def visualize_multi(result_dirs: list[Path], out_dir: Path, fmt: str) -> None:
-    """Generate a cross-experiment comparison of the reported optima."""
-    scenarios: dict[str, dict] = {}
-    for rd in result_dirs:
-        manifest = _load_manifest(rd)
-        summary  = _load_summary(rd)
-        best_key = summary["best"]
-        if best_key is None:
-            continue
-        obj = summary["final_objectives"][best_key]
-        scenarios[_scenario_label(rd, manifest)] = obj
-
-    if not scenarios:
-        warnings.warn("None of the result directories reported an optimum.", stacklevel=2)
-        return
-
-    print(f"\n── Cross-experiment comparison ({len(scenarios)} scenarios) ──")
-    fig = plot_comparison_optima(scenarios, title="Cost of $c^\\star$ across scenarios")
-    save_figure(fig, out_dir, "comparison_optima", fmt)
 
 
 def visualize_campaign(

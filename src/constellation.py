@@ -48,8 +48,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .campaign import (composition_columns, require_search_dirs, scenario_columns,
-                       scenario_params_for_id)
+from .campaign import (admissible_optima, composition_columns, require_search_dirs,
+                       scenario_columns, scenario_params_for_id)
 from .config import (
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
@@ -403,3 +403,213 @@ def constellation_summary(
                 if printed:
                     lines.append("")
     return "\n".join(lines) + "\n"
+
+
+# ----------------------------------------------------------------------------
+# Role usage and process diversity
+# ----------------------------------------------------------------------------
+
+#: The release cadences the search range offers, in the order the summary reports them.
+_RELEASE_CADENCES: tuple[int, ...] = (1, 2, 4, 13)
+
+#: The (N, R, F_freeze) triple that the parsimony tie-break treats as one process.
+_PROCESS_KEY: tuple[str, ...] = ("N", "R", "F_freeze")
+
+
+def role_usage(bills: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
+    """Per role: how often it is staffed, and its share of the head count and the bill.
+
+    `bills` is a `role_bill` frame restricted to the searched optima.  Both shares are
+    formed **within** a scenario before being averaged, since the optimal team size spans
+    four orders of magnitude and a ratio of aggregates would describe the largest scenario
+    rather than the typical one.  The two disagree sharply and systematically: the three
+    autonomous roles are billed flat per sprint and bounded by nothing but their own
+    saturation, so the search stacks them freely.
+
+    With `by` given, the statistics are additionally split by that scenario group's tier.
+    """
+    if bills.empty:
+        return pd.DataFrame()
+
+    counts = bills[[f"a_dev_{k}" for k in range(1, AGENT_ROLE_COUNT + 1)]].to_numpy(float)
+    bill = bills[list(BILL_PARAMETERS)].to_numpy(float)
+    count_total = counts.sum(axis=1)
+    bill_total = bill.sum(axis=1)
+    count_share = np.divide(counts, count_total[:, None],
+                            out=np.zeros_like(counts), where=count_total[:, None] > 0)
+    bill_share = np.divide(bill, bill_total[:, None],
+                           out=np.zeros_like(bill), where=bill_total[:, None] > 0)
+
+    groups = (bills[f"tier_{by}"].to_numpy() if by is not None
+              else np.full(len(bills), "all", dtype=object))
+    rows = []
+    for tier in (ALL_SCENARIO_TIERS if by is not None else ("all",)):
+        mask = groups == tier
+        if not mask.any():
+            continue
+        for k in range(AGENT_ROLE_COUNT):
+            rows.append({
+                "group": by or "all",
+                "tier": tier,
+                "role": k + 1,
+                "staffed_share": float((counts[mask, k] > 0).mean()),
+                "head_count_share": float(count_share[mask, k].mean()),
+                "bill_share": float(bill_share[mask, k].mean()),
+                "mean_count": float(counts[mask, k].mean()),
+                "median_count": float(np.median(counts[mask, k])),
+                "n": int(mask.sum()),
+            })
+    return pd.DataFrame(rows)
+
+
+def process_usage(optima: pd.DataFrame) -> pd.DataFrame:
+    """How the searched optima set the release process: the `R` spread and the freeze.
+
+    One row per release cadence plus one for "no feature freeze", each a share of the
+    reported optima.  These are the two panels of the driver figure in which the tier rows
+    barely move, so the marginal distribution is what says whether the process is being
+    chosen at all or merely tolerated.
+    """
+    if optima.empty:
+        return pd.DataFrame()
+    n = len(optima)
+    rows = [
+        {"quantity": "R", "value": cadence,
+         "share": float((optima["R"] == cadence).mean()), "n": n}
+        for cadence in _RELEASE_CADENCES
+        if (optima["R"] == cadence).any()
+    ]
+    rows.append({"quantity": "F_freeze", "value": 0,
+                 "share": float((optima["F_freeze"] == 0).mean()), "n": n})
+    return pd.DataFrame(rows)
+
+
+def istar_process_diversity(istar: pd.DataFrame) -> pd.DataFrame:
+    """Per search, how many distinct `(N, R, F_freeze)` triples its `I*` spans.
+
+    A reported optimum is one member of a statistical tie, so the spread of the *process*
+    within that tie is what says whether the search identified a process at all.  `R` or
+    `N` being unique across the whole set means the tie agrees on it; the triple count
+    says how much of the 99-point process grid the tie covers.
+    """
+    if istar.empty:
+        return pd.DataFrame()
+    searched = istar[istar["mode"] != HUMAN_ONLY_MODE]
+    if searched.empty:
+        return pd.DataFrame()
+    rows = []
+    for scenario_id, members in searched.groupby("scenario_id"):
+        rows.append({
+            "scenario_id": scenario_id,
+            "n_members": len(members),
+            "n_triples": int(members[list(_PROCESS_KEY)].drop_duplicates().shape[0]),
+            "R_unique": bool(members["R"].nunique() == 1),
+            "N_unique": bool(members["N"].nunique() == 1),
+        })
+    return pd.DataFrame(rows)
+
+
+def build_process_summary(
+    bills: pd.DataFrame,
+    istar: pd.DataFrame,
+    by: str = "agent",
+) -> pd.DataFrame:
+    """The long table behind `process_summary`: role usage, the process, and `I*` spread.
+
+    `bills` is a `role_bill` frame; only its **admissible searched** rows are described.
+    A zero-agent team has no composition and no agent bill, and an inadmissible search
+    reports a team that does not deliver the work, so neither belongs in a description of
+    what an optimal team is made of.
+    """
+    searched = admissible_optima(search_optima(bills))
+    if searched.empty:
+        return pd.DataFrame()
+
+    parts = [frame.assign(section="role")
+             for frame in (role_usage(searched), role_usage(searched, by=by))
+             if not frame.empty]
+
+    process = process_usage(searched)
+    if not process.empty:
+        parts.append(process.assign(section="process", group="all", tier="all"))
+
+    diversity = istar_process_diversity(istar)
+    if not diversity.empty:
+        parts.append(pd.DataFrame([
+            {"section": "istar", "group": "all", "tier": "all",
+             "quantity": "n_triples_median",
+             "value": float(diversity["n_triples"].median()), "n": len(diversity)},
+            {"section": "istar", "group": "all", "tier": "all",
+             "quantity": "R_unique", "share": float(diversity["R_unique"].mean()),
+             "n": len(diversity)},
+            {"section": "istar", "group": "all", "tier": "all",
+             "quantity": "N_unique", "share": float(diversity["N_unique"].mean()),
+             "n": len(diversity)},
+        ]))
+
+    columns = ["section", "group", "tier", "role", "quantity", "value", "share",
+               "staffed_share", "head_count_share", "bill_share",
+               "mean_count", "median_count", "n"]
+    combined = pd.concat(parts, ignore_index=True)
+    return combined.reindex(columns=columns)
+
+
+def process_summary(table: pd.DataFrame, by: str = "agent") -> str:
+    """Render `process_summary.csv` as a text block."""
+    if table.empty:
+        return "Role usage: no searched optimum to describe.\n"
+    from .config import AGENT_ROLE_ABBREV
+
+    roles = table[(table["section"] == "role") & (table["tier"] == "all")]
+    lines = [
+        "What the optimal teams staff, and what it costs them",
+        "=" * 78,
+        f"  over {int(roles['n'].iloc[0])} admissible searched optima; every share "
+        "formed within a scenario first",
+        "",
+        f"  {'role':<22}{'staffed':>9}{'head count':>12}{'bill':>9}{'median':>9}",
+        "-" * 78,
+    ]
+    for _, row in roles.iterrows():
+        label = AGENT_ROLE_ABBREV[int(row["role"]) - 1]
+        lines.append(
+            f"  {label:<22}{row['staffed_share']:>8.1%}{row['head_count_share']:>12.1%}"
+            f"{row['bill_share']:>9.1%}{row['median_count']:>9.0f}")
+
+    by_tier = table[(table["section"] == "role") & (table["tier"] != "all")]
+    if not by_tier.empty:
+        tiers = [t for t in ALL_SCENARIO_TIERS if (by_tier["tier"] == t).any()]
+        lines.append("")
+        lines.append(f"  Share of the agent bill, by {by} tier")
+        lines.append(f"  {'role':<22}" + "".join(f"{t:>13}" for t in tiers))
+        lines.append("-" * 78)
+        for k in range(1, AGENT_ROLE_COUNT + 1):
+            sub = by_tier[by_tier["role"] == k].set_index("tier")
+            cells = "".join(
+                f"{sub.loc[t, 'bill_share']:>13.1%}" if t in sub.index else f"{'—':>13}"
+                for t in tiers)
+            lines.append(f"  {AGENT_ROLE_ABBREV[k - 1]:<22}{cells}")
+
+    process = table[table["section"] == "process"]
+    if not process.empty:
+        lines.append("")
+        lines.append("  The release process")
+        for _, row in process.iterrows():
+            if row["quantity"] == "R":
+                lines.append(f"    R = {int(row['value']):<24}{row['share']:>7.1%}")
+            else:
+                lines.append(f"    {'no feature freeze':<28}{row['share']:>7.1%}")
+
+    istar = table[table["section"] == "istar"]
+    if not istar.empty:
+        stats = istar.set_index("quantity")
+        lines.append("")
+        lines.append(f"  Process spread within I* ({int(istar['n'].iloc[0])} searches)")
+        lines.append(f"    {'distinct (N, R, F) triples':<28}"
+                     f"{stats.loc['n_triples_median', 'value']:>7.0f} (median of 99)")
+        lines.append(f"    {'R unique across the set':<28}"
+                     f"{stats.loc['R_unique', 'share']:>7.1%}")
+        lines.append(f"    {'N unique across the set':<28}"
+                     f"{stats.loc['N_unique', 'share']:>7.1%}")
+    lines.append("")
+    return "\n".join(lines)

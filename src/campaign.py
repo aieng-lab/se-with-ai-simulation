@@ -25,6 +25,10 @@ A campaign is a tree of finished runs, one per (scenario, result mode):
     Long format — one row per (scenario, mode, generation) — carrying the per-generation
     turnover and whether the incumbent changed.  Long rather than one column per
     generation, since a search that exhausts its budget early runs fewer of them.
+
+`cost_multipliers` fits the additive log-cost model on top of ``optima.csv`` and yields
+``multipliers.csv``: what each scenario tier multiplies the cost of the optimum by, and
+how much of the variance its group explains on its own.
 """
 
 from __future__ import annotations
@@ -33,10 +37,12 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
+    ALL_SCENARIO_TIERS,
     HUMAN_ONLY_MODE,
     RESULT_MODES,
     SCENARIO_GROUPS,
@@ -441,5 +447,143 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
     lines.append("Relative CI half-width rho after the re-simulation")
     lines.append(f"  mean over the final I*          {_median_iqr_max(convergence['rho_mean'])}")
     lines.append(f"  at c*                           {_median_iqr_max(convergence['rho_best'])}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------------
+# The multiplicative effect of each scenario group on the cost
+# ----------------------------------------------------------------------------
+
+def admissible_optima(optima: "pd.DataFrame", mode: str = "search") -> "pd.DataFrame":
+    """The rows of `optima` that `mode` reported an admissible `c*` for.
+
+    An inadmissible search has an empty `I*` (Section 3.10), so `n_indistinguishable`
+    is the marker; `feasible_throughput` says the same thing and is checked with it.
+    """
+    if optima.empty:
+        return optima
+    return optima[(optima["mode"] == mode)
+                  & (optima["n_indistinguishable"] > 0)
+                  & optima["feasible_throughput"].astype(bool)]
+
+
+def _tier_design(frame: "pd.DataFrame", groups: "tuple[str, ...]",
+                 references: dict) -> "tuple[np.ndarray, list[tuple[str, str]]]":
+    """Intercept plus one 0/1 dummy per non-reference tier of each group in `groups`."""
+    columns: list[tuple[str, str]] = []
+    for group in groups:
+        for tier in sorted(frame[f"tier_{group}"].unique()):
+            if tier != references[group]:
+                columns.append((group, tier))
+    design = np.column_stack(
+        [np.ones(len(frame))]
+        + [(frame[f"tier_{g}"] == t).to_numpy(dtype=float) for g, t in columns]
+    )
+    return design, columns
+
+
+def _r_squared(design: "np.ndarray", y: "np.ndarray") -> "tuple[np.ndarray, float]":
+    """Least-squares fit of `y` on `design`; returns the coefficients and R^2."""
+    coef, *_ = np.linalg.lstsq(design, y, rcond=None)
+    residual = y - design @ coef
+    ss_res = float(residual @ residual)
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    return coef, (1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0)
+
+
+def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
+    """How much each scenario tier multiplies the cost per feature of the optimum.
+
+    An additive model on ``log10(cost_mean)`` with one dummy per tier and no
+    interactions, fitted over the admissible search optima.  A coefficient is a
+    multiplier on the cost once exponentiated, so the five groups are reported as
+    independent multipliers relative to the *cheapest* tier of their own group — which
+    is what makes the trends readable one group at a time.
+
+    Returns the per-(group, tier) table and a dict of fit statistics: `r_squared`,
+    `residual_sd` (in decades) and one `eta_squared_<group>` per group, the R^2 of the
+    single-group model, i.e. the share of the variance of the log cost that the group
+    explains on its own.
+    """
+    frame = admissible_optima(optima)
+    if frame.empty:
+        return pd.DataFrame(), {}
+
+    y = np.log10(frame["cost_mean"].to_numpy(dtype=float))
+    groups = tuple(g for g in SCENARIO_GROUPS if frame[f"tier_{g}"].nunique() > 1)
+
+    # The reference is the tier with the lowest mean log cost, so every multiplier is
+    # >= 1 and the table reads as "how much dearer than the cheapest tier".
+    references = {
+        g: frame.groupby(f"tier_{g}")["cost_mean"].apply(lambda c: np.log10(c).mean()).idxmin()
+        for g in groups
+    }
+
+    design, columns = _tier_design(frame, groups, references)
+    coef, r_squared = _r_squared(design, y)
+    residual = y - design @ coef
+    dof = max(1, len(frame) - design.shape[1])
+    stats = {
+        "n": len(frame),
+        "r_squared": r_squared,
+        "residual_sd": float(np.sqrt((residual @ residual) / dof)),
+    }
+
+    multiplier = {(g, t): float(10.0 ** c) for (g, t), c in zip(columns, coef[1:])}
+    rows = []
+    for group in groups:
+        _, eta = _r_squared(*_single_group_fit(frame, group, references, y))
+        stats[f"eta_squared_{group}"] = eta
+        for tier in sorted(frame[f"tier_{group}"].unique()):
+            rows.append({
+                "group": group,
+                "tier": tier,
+                "is_reference": tier == references[group],
+                "multiplier": 1.0 if tier == references[group]
+                              else multiplier[(group, tier)],
+                "eta_squared": eta,
+                "n": int((frame[f"tier_{group}"] == tier).sum()),
+            })
+    return pd.DataFrame(rows), stats
+
+
+def _single_group_fit(frame: "pd.DataFrame", group: str, references: dict,
+                      y: "np.ndarray") -> "tuple[np.ndarray, np.ndarray]":
+    """The design matrix of the one-group model for `group`, and the response."""
+    design, _ = _tier_design(frame, (group,), references)
+    return design, y
+
+
+def multipliers_summary(table: "pd.DataFrame", stats: dict) -> str:
+    """Render `multipliers.csv` as a text block, groups ordered by the variance they explain."""
+    if table.empty:
+        return "Cost multipliers: no admissible search optimum to fit.\n"
+
+    tiers = [t for t in ALL_SCENARIO_TIERS if (table["tier"] == t).any()]
+    width = max(12, *(len(g) for g in table["group"]))
+    header = f"  {'group':<{width}}" + "".join(f"{t:>13}" for t in tiers) + f"{'eta^2':>9}"
+    lines = [
+        "Multiplicative effect of each scenario group on the cost per feature",
+        "=" * len(header),
+        f"  additive model on log10(cost) over {stats['n']} admissible optima:  "
+        f"R^2 = {stats['r_squared']:.3f}, residual sd = {stats['residual_sd']:.2f} decades",
+        "",
+        header,
+        "-" * len(header),
+    ]
+    order = table.groupby("group")["eta_squared"].first().sort_values(ascending=False)
+    for group in order.index:
+        sub = table[table["group"] == group].set_index("tier")
+        cells = ""
+        for tier in tiers:
+            if tier not in sub.index:
+                cells += f"{'—':>13}"
+            else:
+                value = f"{sub.loc[tier, 'multiplier']:.1f}"
+                cells += f"{value + (' *' if sub.loc[tier, 'is_reference'] else ''):>13}"
+        lines.append(f"  {group:<{width}}{cells}{order[group]:>9.2f}")
+    lines.append("")
+    lines.append("  * the reference tier of its group, i.e. the cheapest one.")
     lines.append("")
     return "\n".join(lines)
