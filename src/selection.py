@@ -88,11 +88,14 @@ def aggregate_config_result(
     actions = (tuple(np.array([r.actions for r in reps], dtype=float).mean(axis=0))
                if reps and reps[0].actions else ())
 
+    value_lo, value_hi = np.percentile(value_boot, [2.5, 97.5])
+    cost_lo, cost_hi = np.percentile(cost_boot, [2.5, 97.5])
+
     return AggregatedObjectives(
         value_mean=float(value_arr.mean()),
-        value_ci=(float(np.percentile(value_boot, 2.5)), float(np.percentile(value_boot, 97.5))),
+        value_ci=(float(value_lo), float(value_hi)),
         cost_mean=float(cost_arr.mean()),
-        cost_ci=(float(np.percentile(cost_boot, 2.5)), float(np.percentile(cost_boot, 97.5))),
+        cost_ci=(float(cost_lo), float(cost_hi)),
         cost_quality_mean=mean_of("cost_quality"),
         cost_human_mean=mean_of("cost_human"),
         cost_agent_mean=mean_of("cost_agent"),
@@ -232,10 +235,16 @@ def report_optimum(
     ]
     if keys is None:
         return best, members
+    # Domination requires an identical process triple, so only members sharing one can
+    # ever dominate each other.  Bucketing on it first keeps the scan quadratic in the
+    # bucket rather than in the whole preliminary set, which reaches four digits.
+    buckets: dict = {}
+    for i in members:
+        buckets.setdefault(keys[i].process, []).append(i)
     return best, [
         i for i in members
         if not any(
             parsimony_dominates(keys[j], keys[i], aggs[j].cost_mean, aggs[i].cost_mean)
-            for j in members if j != i
+            for j in buckets[keys[i].process] if j != i
         )
     ]

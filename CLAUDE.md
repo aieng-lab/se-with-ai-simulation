@@ -240,7 +240,7 @@ is R² = 0.983 at a residual sd of 0.14 decades, and it reproduces the paper's t
 ```bash
 python -m src.main constellation                          # → the four tables + three figures
 python -m src.main constellation --rows human --cols agent   # re-cut the grid
-python -m src.main constellation --figures-only           # redraw from constellation_cells.csv
+python -m src.main constellation --figures-only           # redraw from optima.csv
 ```
 It reads `<--out>/optima.csv` for `c*` and re-walks the result tree for `I*`, so run
 `campaign` first; the walk costs about a minute on the 468-directory campaign. The

@@ -29,6 +29,7 @@ from src.config import (
     scenario_id,
     scenario_tier_combinations,
     scenario_tiers,
+    tiers_present,
 )
 from src.constellation import BILL_PARAMETERS, role_bill
 from src.visualization import (
@@ -40,7 +41,6 @@ from src.visualization import (
     _baseline_cell,
     _baseline_style_groups,
     _log_floor,
-    _tiers_present,
     plot_agent_human_ratio_matrix,
     plot_human_agent_matrix,
     plot_elite_turnover,
@@ -97,16 +97,16 @@ def default_fig(full_grid) -> Figure:
 
 class TestTierHelpers:
     def test_tiers_come_back_in_mild_to_extreme_order(self, full_grid):
-        assert _tiers_present(full_grid, "tier_human") == ["low", "medium", "high"]
+        assert tiers_present(full_grid["tier_human"]) == ["low", "medium", "high"]
         # `project` and `agent` are the two groups that reach a fourth tier.
-        assert _tiers_present(full_grid, "tier_project") == \
+        assert tiers_present(full_grid["tier_project"]) == \
             ["low", "medium", "high", "veryhigh"]
-        assert _tiers_present(full_grid, "tier_agent") == \
+        assert tiers_present(full_grid["tier_agent"]) == \
             ["low", "medium", "high", "pessimistic"]
 
     def test_absent_tiers_are_skipped(self, full_grid):
         df = full_grid[full_grid["tier_debt"] != "medium"]
-        assert _tiers_present(df, "tier_debt") == ["low", "high"]
+        assert tiers_present(df["tier_debt"]) == ["low", "high"]
 
     def test_log_floor_is_half_the_smallest_positive(self):
         assert _log_floor(pd.DataFrame({"x": [0.0, 0.004, 0.02]}), "x") \

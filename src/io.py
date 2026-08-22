@@ -132,6 +132,24 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
     return ScenarioParameters(**kwargs, c_token=c_token)
 
 
+#: The optional `search` keys, with the cast each takes.  A key the JSON omits is left
+#: to the dataclass default rather than restated here, so there is one source of truth
+#: for every default.
+_SEARCH_FIELDS: dict = {
+    "F_freeze_values": lambda v: tuple(int(x) for x in v),
+    "sigma": float,
+    "epsilon": float,
+    "budget": int,
+    "n_samples_initial": int,
+    "n_generations": int,
+    "n_offspring": int,
+    "n_elite": int,
+    "human_only": bool,
+    "samples": str,
+    "seed": int,
+}
+
+
 def load_search_config(path: str | Path) -> SearchConfiguration:
     """Parse a search configuration JSON file and return SearchConfiguration."""
     with open(path, encoding="utf-8") as fh:
@@ -143,23 +161,14 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
             f"'scenario' must be a JSON object mapping each of the scenario groups "
             f"{list(SCENARIO_GROUPS)} to a file path, not {type(raw_scenario).__name__}"
         )
+    optional = {name: cast(s[name]) for name, cast in _SEARCH_FIELDS.items() if name in s}
     return SearchConfiguration(
         scenario_paths={str(g): str(p) for g, p in raw_scenario.items()},
         horizon_path=data["horizon"],
         N_values=tuple(float(x) for x in s["N_values"]),
         R_values=tuple(int(x) for x in s["R_values"]),
-        F_freeze_values=tuple(int(x) for x in s.get("F_freeze_values", [0, 1])),
-        sigma=float(s.get("sigma", 2.0)),
-        epsilon=float(s.get("epsilon", 0.02)),
-        budget=int(s.get("budget", 500)),
-        n_samples_initial=int(s.get("n_samples_initial", 100)),
-        n_generations=int(s.get("n_generations", 15)),
-        n_offspring=int(s.get("n_offspring", 20)),
-        n_elite=int(s.get("n_elite", 20)),
-        human_only=bool(s.get("human_only", False)),
-        samples=str(s.get("samples", "best")),
-        seed=int(s.get("seed", 0)),
         scenario_id=str(data.get("scenario_id", "")),
+        **optional,
     )
 
 

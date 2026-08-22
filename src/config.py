@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 AGENT_ROLE_COUNT = 8
 
@@ -44,6 +45,25 @@ TIER_INITIALS: dict[str, str] = {
 UNUSED_TIER: str = "unused"
 UNUSED_TIER_INITIAL: str = "X"
 
+# The tiers beyond the three base ones -- `project`'s veryhigh and `agent`'s
+# pessimistic.  Derived, so it cannot drift from SCENARIO_GROUP_TIERS: the plotting
+# channels give the two a single shared style slot, which is sound only because no one
+# group holds both (pinned by tests/test_config.py).
+EXTREME_TIERS: tuple[str, ...] = tuple(
+    t for t in ALL_SCENARIO_TIERS if t not in SCENARIO_TIERS
+)
+
+# The scenario-id tier codec, forward and inverse in one place so the two cannot fall
+# out of step.  UNUSED_TIER is folded in here rather than patched in by each half.
+SCENARIO_ID_INITIALS: dict[str, str] = {**TIER_INITIALS, UNUSED_TIER: UNUSED_TIER_INITIAL}
+SCENARIO_ID_TIERS: dict[str, str] = {v: k for k, v in SCENARIO_ID_INITIALS.items()}
+
+#: The scenario groups a human-only baseline varies; `debt` and `agent` are inert for a
+#: zero-agent team, so one baseline row is the reference for every combination of those.
+#: The generator writes the baseline grid over these and `campaign.baseline_uplift`
+#: joins on them -- the two must name the same groups.
+BASELINE_VARYING_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
+
 
 def scenario_tiers(group: str) -> tuple[str, ...]:
     """The tiers `group` is defined at, in mild -> extreme order."""
@@ -51,6 +71,30 @@ def scenario_tiers(group: str) -> tuple[str, ...]:
         return SCENARIO_GROUP_TIERS[group]
     except KeyError:
         raise ValueError(f"unknown scenario group {group!r}") from None
+
+
+def tiers_present(values) -> list[str]:
+    """The tiers occurring in `values`, in mild -> extreme order.
+
+    Takes any iterable of tier names -- a DataFrame column, a generator over table rows.
+    The count varies per group, and a partial campaign may narrow it further.
+    """
+    seen = set(values)
+    return [tier for tier in ALL_SCENARIO_TIERS if tier in seen]
+
+
+def tier_column(group: str) -> str:
+    """Name of the tier column `group` occupies in the campaign tables."""
+    return f"tier_{group}"
+
+
+def scenario_config_path(group: str, tier: str, config_dir: str = "config") -> Path:
+    """Path of the scenario JSON holding `group` at `tier`.
+
+    The `<config_dir>/<group>_<tier>.json` convention in one place: the CLI defaults,
+    the campaign's parameter rebuild and the search-config generator share it.
+    """
+    return Path(config_dir) / f"{group}_{tier}.json"
 
 
 def require_distinct_groups(groups: "tuple[str, ...]") -> None:
@@ -85,9 +129,8 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
     """
     if len(tiers) != len(SCENARIO_GROUPS):
         raise ValueError(f"expected {len(SCENARIO_GROUPS)} tiers, got {len(tiers)}")
-    initials = {**TIER_INITIALS, UNUSED_TIER: UNUSED_TIER_INITIAL}
     return "_".join(
-        f"{group[0]}-{initials[tier]}"
+        f"{group[0]}-{SCENARIO_ID_INITIALS[tier]}"
         for group, tier in zip(SCENARIO_GROUPS, tiers)
     )
 

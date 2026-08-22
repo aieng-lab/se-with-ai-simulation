@@ -25,8 +25,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from src.config import (   # noqa: E402
+    BASELINE_VARYING_GROUPS,
     SCENARIO_GROUPS,
     UNUSED_TIER,
+    scenario_config_path,
     scenario_id,
     scenario_tier_combinations,
     scenario_tiers,
@@ -36,12 +38,6 @@ DEFAULT_TEMPLATE = "config/search_default.json"
 DEFAULT_OUT_DIR = "config/search"
 BASELINE_OUT_DIR = "config/search_baseline"
 
-#: Groups the human-only baseline varies.  `debt` and `agent` are inert for a zero-agent
-#: team, so they take the UNUSED_TIER sentinel and point at their `_unused.json`
-#: placeholders, which keeps the grid far smaller than the full campaign's.
-BASELINE_VARYING_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
-
-
 def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
     """Return the template with its scenario paths repointed at `tiers`."""
     sid = scenario_id(tiers)
@@ -50,7 +46,7 @@ def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
     config["description"] = f"Campaign scenario {sid} ({tier_list})"
     config["scenario_id"] = sid
     config["scenario"] = {
-        group: f"config/{group}_{tier}.json"
+        group: str(scenario_config_path(group, tier))
         for group, tier in zip(SCENARIO_GROUPS, tiers)
     }
     # Keep the key order stable: description, scenario_id, scenario, horizon, search.

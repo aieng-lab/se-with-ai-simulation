@@ -96,6 +96,15 @@ _FIX_PRIORITY: tuple[str, ...] = (
 )
 
 
+def _detect(rng: "Generator", n: int, p: float) -> int:
+    """How many of `n` bugs a detection stage catches at probability `p`.
+
+    The `n > 0` guard is not just an optimisation: it keeps a stage with nothing to
+    inspect from consuming a draw, which is what makes a run reproducible by index.
+    """
+    return int(rng.binomial(n, p)) if n > 0 else 0
+
+
 def _drain_bug_queues(state: SystemState, budget: int) -> int:
     """Repair bugs from `state` in priority order until `budget` runs out.
 
@@ -104,8 +113,13 @@ def _drain_bug_queues(state: SystemState, budget: int) -> int:
     """
     repaired = 0
     for queue in _FIX_PRIORITY:
-        n = min(getattr(state, queue), budget)
-        setattr(state, queue, getattr(state, queue) - n)
+        if budget <= 0:
+            break
+        available = getattr(state, queue)
+        if available <= 0:
+            continue
+        n = available if available < budget else budget
+        setattr(state, queue, available - n)
         budget -= n
         repaired += n
     return repaired
@@ -208,11 +222,11 @@ def step_sprint(
 
     # Three mutually exclusive severities: security first, then major/minor of the rest.
     theta_min = 1.0 - params.theta_maj - params.theta_sec
-    bugs_sec = int(rng.binomial(bugs_total, params.theta_sec)) if bugs_total > 0 else 0
+    bugs_sec = _detect(rng, bugs_total, params.theta_sec)
     remaining = bugs_total - bugs_sec
     theta_maj_cond = (params.theta_maj / (theta_min + params.theta_maj)
                       if (theta_min + params.theta_maj) > 0 else 0.0)
-    bugs_maj = int(rng.binomial(remaining, theta_maj_cond)) if remaining > 0 else 0
+    bugs_maj = _detect(rng, remaining, theta_maj_cond)
     bugs_min = remaining - bugs_maj
 
     if human_only:
@@ -222,18 +236,16 @@ def step_sprint(
         cov_qa = min(1.0, params.f_qa * config.N * H_net
                           / (params.h_qa * max(1, impl)))
         p_qa = cov_qa * params.d_qa
-        qa_det_min = int(rng.binomial(bugs_min, p_qa)) if bugs_min > 0 else 0
-        qa_det_maj = int(rng.binomial(bugs_maj, p_qa)) if bugs_maj > 0 else 0
-        qa_det_sec = int(rng.binomial(bugs_sec, p_qa)) if bugs_sec > 0 else 0
-
-        det_min, det_maj, det_sec = qa_det_min, qa_det_maj, qa_det_sec
+        det_min = _detect(rng, bugs_min, p_qa)
+        det_maj = _detect(rng, bugs_maj, p_qa)
+        det_sec = _detect(rng, bugs_sec, p_qa)
     else:
         # Stage 1 — the test suite, acting on all three severities.
         cov_test = min(params.c_test_ceil, state.N_test / max(1, state.F_completed))
         p_test = min(1.0, params.d_test * cov_test)
-        test_det_min = int(rng.binomial(bugs_min, p_test)) if bugs_min > 0 else 0
-        test_det_maj = int(rng.binomial(bugs_maj, p_test)) if bugs_maj > 0 else 0
-        test_det_sec = int(rng.binomial(bugs_sec, p_test)) if bugs_sec > 0 else 0
+        test_det_min = _detect(rng, bugs_min, p_test)
+        test_det_maj = _detect(rng, bugs_maj, p_test)
+        test_det_sec = _detect(rng, bugs_sec, p_test)
 
         surv_min_t = bugs_min - test_det_min
         surv_maj_t = bugs_maj - test_det_maj
@@ -243,16 +255,16 @@ def step_sprint(
         # happens at all; more agents share the change volume and each degrade less.
         a_CR = A_active[4]   # Code Review Agent (k=5, index 4)
         d_CR_eff = params.d_CR * delta_D * _volume_factor(impl, a_CR, params.alpha_size)
-        CR_det_min = int(rng.binomial(surv_min_t, d_CR_eff)) if surv_min_t > 0 else 0
-        CR_det_maj = int(rng.binomial(surv_maj_t, d_CR_eff)) if surv_maj_t > 0 else 0
-        CR_det_sec = int(rng.binomial(surv_sec_t, d_CR_eff)) if surv_sec_t > 0 else 0
+        CR_det_min = _detect(rng, surv_min_t, d_CR_eff)
+        CR_det_maj = _detect(rng, surv_maj_t, d_CR_eff)
+        CR_det_sec = _detect(rng, surv_sec_t, d_CR_eff)
 
         surv_sec_cr = surv_sec_t - CR_det_sec
 
         # Stage 3 — security audit, on the security bugs that survived stages 1 and 2.
         a_SA = A_active[5]   # Security Audit Agent (k=6, index 5)
         d_SA_eff = params.d_SA * delta_D * _volume_factor(impl, a_SA, params.alpha_size)
-        SA_det_sec = int(rng.binomial(surv_sec_cr, d_SA_eff)) if surv_sec_cr > 0 else 0
+        SA_det_sec = _detect(rng, surv_sec_cr, d_SA_eff)
 
         det_min = test_det_min + CR_det_min
         det_maj = test_det_maj + CR_det_maj

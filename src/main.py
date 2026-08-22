@@ -424,9 +424,11 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
         sample_keys: list[str] = []
     elif search_cfg.samples == "all":
         sample_keys = [key for key, _, _ in outcome.aggs]
-    else:
+    elif search_cfg.samples == "best":
         sample_keys = report.keep_keys or (
             [report.best_key] if report.best_key is not None else [])
+    else:  # unreachable: SearchConfiguration validates against SAMPLE_POLICIES
+        raise ValueError(f"unknown sample policy {search_cfg.samples!r}")
     # The re-simulated results replace the search's for the keys they cover, so a
     # reported candidate's sample file carries the K_final replications behind its row.
     outcome.results.update(report.final_results)
@@ -588,7 +590,6 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     re-consolidation.
     """
     out_dir = Path(args.out)
-    cells_path = out_dir / "constellation_cells.csv"
     # `--rows`/`--cols` name the figure axes; the tables are keyed column group first.
     groups = (args.cols, args.rows)
 
@@ -602,6 +603,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
         return
 
     optima = _read_table(optima_path, "reported optima", optima_hint)
+    cells_path = out_dir / "constellation_cells.csv"
     results_dir = Path(args.results_dir)
     print(f"Reading the indistinguishable sets under {results_dir} ...")
     try:
@@ -757,8 +759,8 @@ def main(argv: list[str] | None = None) -> None:
                          help=f"Scenario group across the profile figure's columns "
                               f"(default: {CELL_GROUPS[0]})")
     p_const.add_argument("--figures-only", action="store_true",
-                         help="Redraw from an existing OUT/constellation_cells.csv "
-                              "instead of re-reading the campaign")
+                         help="Redraw from an existing OUT/optima.csv instead of "
+                              "re-walking the result tree for I*")
     p_const.set_defaults(func=_cmd_constellation)
 
     if argv is None:

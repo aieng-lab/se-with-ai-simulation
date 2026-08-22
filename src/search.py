@@ -273,6 +273,7 @@ def _mutate(
     straight back to its parent.
     """
     n_mutation_types = 3 if config.F_freeze == 0 else 4
+    n_vals = sorted(search_cfg.N_values)   # the ladder is the same on every attempt
     for _ in range(_MUTATION_ATTEMPTS):
         mutation_type = int(rng.integers(n_mutation_types))  # 0=N, 1=F_freeze, 2=A_dev, 3=A_qa
 
@@ -283,7 +284,6 @@ def _mutate(
 
         if mutation_type == 0:
             # Mutate N: pick an adjacent value in the sorted N_values list
-            n_vals = sorted(search_cfg.N_values)
             idx = n_vals.index(N) if N in n_vals else 0
             candidates = []
             if idx > 0:

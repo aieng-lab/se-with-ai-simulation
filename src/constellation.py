@@ -49,14 +49,16 @@ import numpy as np
 import pandas as pd
 
 from .campaign import (admissible_optima, composition_columns, require_search_dirs,
-                       scenario_columns, scenario_params_for_id)
+                       scenario_columns, scenario_params_for_id, search_rows)
 from .config import (
+    AGENT_ROLE_ABBREV,
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
-    HUMAN_ONLY_MODE,
     SCENARIO_GROUPS,
     require_group_pair,
     SUPERVISED_ROLE_INDICES,
+    tier_column,
+    tiers_present,
 )
 
 #: The two scenario groups whose tier grid the cells are cut along, by default.  Every
@@ -77,7 +79,7 @@ TOTAL_PARAMETERS: tuple[str, ...] = (
 CONSTELLATION_PARAMETERS: tuple[str, ...] = (
     PROCESS_PARAMETERS + DEV_PARAMETERS + QA_PARAMETERS + TOTAL_PARAMETERS)
 
-#: Human-readable block boundaries, for the text rendering and the heatmap separators.
+#: Human-readable block boundaries, for the text rendering.
 PARAMETER_BLOCKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("process", PROCESS_PARAMETERS),
     ("A_dev", DEV_PARAMETERS),
@@ -145,6 +147,11 @@ def build_indistinguishable(results_dir: str | Path) -> pd.DataFrame:
 # What each role costs
 # ----------------------------------------------------------------------------
 
+#: The per-role work counts `campaign.optimum_row` writes: the work role `k` completed
+#: over the horizon, in its own throughput unit.
+ACTION_PARAMETERS: tuple[str, ...] = tuple(
+    f"actions_{k}" for k in range(1, AGENT_ROLE_COUNT + 1))
+
 #: The per-role agent bill over the horizon in dollars, `actions_k * c_token_k`, one
 #: column per role.
 BILL_PARAMETERS: tuple[str, ...] = tuple(
@@ -174,8 +181,7 @@ def role_bill(optima: pd.DataFrame, config_dir: str = "config") -> pd.DataFrame:
     prices = {scenario_id: scenario_params_for_id(scenario_id, config_dir).c_token
               for scenario_id in frame["scenario_id"].unique()}
     price = np.array([prices[s] for s in frame["scenario_id"]], dtype=float)
-    actions = frame[[f"actions_{k}" for k in range(1, AGENT_ROLE_COUNT + 1)]].to_numpy(
-        dtype=float)
+    actions = frame[list(ACTION_PARAMETERS)].to_numpy(dtype=float)
     bill = actions * price
     for k, column in enumerate(BILL_PARAMETERS):
         frame[column] = bill[:, k]
@@ -221,7 +227,7 @@ def scenario_means(istar: pd.DataFrame) -> pd.DataFrame:
     """
     if istar.empty:
         return istar
-    tier_columns = [f"tier_{group}" for group in SCENARIO_GROUPS]
+    tier_columns = [tier_column(group) for group in SCENARIO_GROUPS]
     parameters = list(CONSTELLATION_PARAMETERS)
     grouped = istar.groupby(["scenario_id", "mode"], sort=True)
     means = grouped[parameters].mean()
@@ -243,7 +249,7 @@ def cell_statistics(
     spread rather than Monte Carlo error; a cell with one scenario reports NaN.
     """
     groups = require_group_pair(groups)
-    cell_columns = [f"tier_{group}" for group in groups]
+    cell_columns = [tier_column(group) for group in groups]
     if df.empty:
         return pd.DataFrame(columns=["population", *cell_columns, "parameter",
                                      "mean", "sd", "n_scenarios", "n_members"])
@@ -274,7 +280,7 @@ def _sorted_cells(long: pd.DataFrame, groups: tuple[str, ...]) -> pd.DataFrame:
     """Order the long table by tier (mild→extreme) and by parameter block."""
     tier_order = {name: i for i, name in enumerate(ALL_SCENARIO_TIERS)}
     parameter_order = {name: i for i, name in enumerate(CONSTELLATION_PARAMETERS)}
-    tier_columns = [f"tier_{g}" for g in groups]
+    tier_columns = [tier_column(g) for g in groups]
     out = long.sort_values(
         tier_columns + ["parameter"],
         key=lambda column: column.map(
@@ -291,9 +297,7 @@ def search_optima(optima: pd.DataFrame) -> pd.DataFrame:
     constellation.  Filtered on the mode rather than on `is_human_only`, so a search that
     happened to report a zero-agent optimum would still be counted.
     """
-    if optima.empty or "mode" not in optima.columns:
-        return optima
-    return optima[optima["mode"] != HUMAN_ONLY_MODE]
+    return search_rows(optima)
 
 
 def build_constellation(
@@ -344,9 +348,9 @@ def constellation_summary(
         return f"Team constellation by {groups[0]} × {groups[1]}: no optimum reported.\n"
 
     row_group, col_group = groups
-    row_column, col_column = f"tier_{row_group}", f"tier_{col_group}"
-    col_tiers = [t for t in ALL_SCENARIO_TIERS if (cells[col_column] == t).any()]
-    row_tiers = [t for t in ALL_SCENARIO_TIERS if (cells[row_column] == t).any()]
+    row_column, col_column = tier_column(row_group), tier_column(col_group)
+    col_tiers = tiers_present(cells[col_column])
+    row_tiers = tiers_present(cells[row_column])
     populations = [p for p in POPULATIONS if (cells["population"] == p).any()]
 
     lines = [f"Team constellation of the reported optima, by {row_group} × {col_group}",
@@ -409,13 +413,6 @@ def constellation_summary(
 # Role usage and process diversity
 # ----------------------------------------------------------------------------
 
-#: The release cadences the search range offers, in the order the summary reports them.
-_RELEASE_CADENCES: tuple[int, ...] = (1, 2, 4, 13)
-
-#: The (N, R, F_freeze) triple that the parsimony tie-break treats as one process.
-_PROCESS_KEY: tuple[str, ...] = ("N", "R", "F_freeze")
-
-
 def role_usage(bills: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
     """Per role: how often it is staffed, and its share of the head count and the bill.
 
@@ -431,7 +428,7 @@ def role_usage(bills: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
     if bills.empty:
         return pd.DataFrame()
 
-    counts = bills[[f"a_dev_{k}" for k in range(1, AGENT_ROLE_COUNT + 1)]].to_numpy(float)
+    counts = bills[list(DEV_PARAMETERS)].to_numpy(float)
     bill = bills[list(BILL_PARAMETERS)].to_numpy(float)
     count_total = counts.sum(axis=1)
     bill_total = bill.sum(axis=1)
@@ -440,7 +437,7 @@ def role_usage(bills: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
     bill_share = np.divide(bill, bill_total[:, None],
                            out=np.zeros_like(bill), where=bill_total[:, None] > 0)
 
-    groups = (bills[f"tier_{by}"].to_numpy() if by is not None
+    groups = (bills[tier_column(by)].to_numpy() if by is not None
               else np.full(len(bills), "all", dtype=object))
     rows = []
     for tier in (ALL_SCENARIO_TIERS if by is not None else ("all",)):
@@ -465,8 +462,9 @@ def role_usage(bills: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
 def process_usage(optima: pd.DataFrame) -> pd.DataFrame:
     """How the searched optima set the release process: the `R` spread and the freeze.
 
-    One row per release cadence plus one for "no feature freeze", each a share of the
-    reported optima.  These are the two panels of the driver figure in which the tier rows
+    One row per release cadence the optima actually use, plus one for "no feature
+    freeze", each a share of the reported optima.  The cadences are read off the frame
+    rather than restated from the search range, which they would silently fall behind.  These are the two panels of the driver figure in which the tier rows
     barely move, so the marginal distribution is what says whether the process is being
     chosen at all or merely tolerated.
     """
@@ -476,8 +474,7 @@ def process_usage(optima: pd.DataFrame) -> pd.DataFrame:
     rows = [
         {"quantity": "R", "value": cadence,
          "share": float((optima["R"] == cadence).mean()), "n": n}
-        for cadence in _RELEASE_CADENCES
-        if (optima["R"] == cadence).any()
+        for cadence in sorted(optima["R"].unique())
     ]
     rows.append({"quantity": "F_freeze", "value": 0,
                  "share": float((optima["F_freeze"] == 0).mean()), "n": n})
@@ -494,7 +491,7 @@ def istar_process_diversity(istar: pd.DataFrame) -> pd.DataFrame:
     """
     if istar.empty:
         return pd.DataFrame()
-    searched = istar[istar["mode"] != HUMAN_ONLY_MODE]
+    searched = search_optima(istar)
     if searched.empty:
         return pd.DataFrame()
     rows = []
@@ -502,7 +499,7 @@ def istar_process_diversity(istar: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "scenario_id": scenario_id,
             "n_members": len(members),
-            "n_triples": int(members[list(_PROCESS_KEY)].drop_duplicates().shape[0]),
+            "n_triples": int(members[list(PROCESS_PARAMETERS)].drop_duplicates().shape[0]),
             "R_unique": bool(members["R"].nunique() == 1),
             "N_unique": bool(members["N"].nunique() == 1),
         })
@@ -554,11 +551,14 @@ def build_process_summary(
     return combined.reindex(columns=columns)
 
 
-def process_summary(table: pd.DataFrame, by: str = "agent") -> str:
-    """Render `process_summary.csv` as a text block."""
+def process_summary(table: pd.DataFrame) -> str:
+    """Render `process_summary.csv` as a text block.
+
+    The group the per-tier block is split by is read off the table's own `group` column,
+    so the header cannot disagree with the numbers under it.
+    """
     if table.empty:
         return "Role usage: no searched optimum to describe.\n"
-    from .config import AGENT_ROLE_ABBREV
 
     roles = table[(table["section"] == "role") & (table["tier"] == "all")]
     lines = [
@@ -578,9 +578,9 @@ def process_summary(table: pd.DataFrame, by: str = "agent") -> str:
 
     by_tier = table[(table["section"] == "role") & (table["tier"] != "all")]
     if not by_tier.empty:
-        tiers = [t for t in ALL_SCENARIO_TIERS if (by_tier["tier"] == t).any()]
+        tiers = tiers_present(by_tier["tier"])
         lines.append("")
-        lines.append(f"  Share of the agent bill, by {by} tier")
+        lines.append(f"  Share of the agent bill, by {by_tier['group'].iloc[0]} tier")
         lines.append(f"  {'role':<22}" + "".join(f"{t:>13}" for t in tiers))
         lines.append("-" * 78)
         for k in range(1, AGENT_ROLE_COUNT + 1):
@@ -606,7 +606,7 @@ def process_summary(table: pd.DataFrame, by: str = "agent") -> str:
         lines.append("")
         lines.append(f"  Process spread within I* ({int(istar['n'].iloc[0])} searches)")
         lines.append(f"    {'distinct (N, R, F) triples':<28}"
-                     f"{stats.loc['n_triples_median', 'value']:>7.0f} (median of 99)")
+                     f"{stats.loc['n_triples_median', 'value']:>7.0f} (median)")
         lines.append(f"    {'R unique across the set':<28}"
                      f"{stats.loc['R_unique', 'share']:>7.1%}")
         lines.append(f"    {'N unique across the set':<28}"

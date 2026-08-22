@@ -41,14 +41,17 @@ from matplotlib.ticker import (
 
 from .config import (
     AGENT_ROLE_ABBREV,
-    ALL_SCENARIO_TIERS,
     AUTONOMOUS_ROLE_INDICES,
+    EXTREME_TIERS,
     HUMAN_ONLY_MODE,
     SCENARIO_GROUPS,
     require_distinct_groups,
     SUPERVISED_ROLE_INDICES,
     UNUSED_TIER,
+    tier_column,
+    tiers_present,
 )
+from .campaign import search_rows
 from .constellation import (
     AGENT_COST_PARAMETERS,
     BILL_PARAMETERS,
@@ -58,9 +61,18 @@ from .constellation import (
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
+#: The campaign matrices' titles.  Named once here: `visualize_campaign` appends the
+#: scenario counts to them, and each plot function falls back to one plus its channel
+#: pair, so the two forms of a figure's title cannot word it differently.
+HUMAN_AGENT_TITLE = "Developer vs. agent cost at $c^\\star$"
+QUALITY_DEVELOPMENT_TITLE = ("Escaped-bug vs. development cost, developers + agents, "
+                             "at $c^\\star$")
+AGENT_HUMAN_RATIO_TITLE = "Agent-to-developer cost ratio at $c^\\star$"
+ELITE_TURNOVER_TITLE = "Elite turnover and $c^\\star$ drop per generation"
+
 # Shared palette
 _KEEP_COLOR  = cm.tab10(0)     # blue — elite turnover
-_CHANGE_COLOR = cm.tab10(2)    # green — cumulative change in c*'s cost
+_CHANGE_COLOR = cm.tab10(2)    # green — c*'s relative drop per generation
 _STYLE       = "seaborn-v0_8-whitegrid"
 
 
@@ -256,14 +268,6 @@ def _ratio_tick(value: float, _pos: int | None = None) -> str:
     return f"{value:g}"
 
 
-def _tiers_present(df: "pd.DataFrame", column: str) -> list[str]:
-    """The tiers occurring in `column`, in mild→extreme order.
-
-    The count varies per group, and a partial campaign may narrow it further.
-    """
-    return [tier for tier in ALL_SCENARIO_TIERS if (df[column] == tier).any()]
-
-
 def _log_floor(df: "pd.DataFrame", column: str) -> float | None:
     """Where non-positive values are drawn on a log axis: half the smallest positive.
 
@@ -413,14 +417,11 @@ def _figure_bbox(fig: "Figure", artist) -> "matplotlib.transforms.Bbox":
 
 
 def _check_matrix_groups(df: "pd.DataFrame", channels: dict[str, str]) -> None:
-    """Validate the five channel→group assignments of the campaign matrices."""
-    unknown = {c: g for c, g in channels.items() if g not in SCENARIO_GROUPS}
-    if unknown:
-        raise ValueError(
-            "unknown scenario group(s) "
-            + ", ".join(f"{c}={g!r}" for c, g in sorted(unknown.items()))
-            + f"; expected one of {list(SCENARIO_GROUPS)}"
-        )
+    """Validate the five channel→group assignments of the campaign matrices.
+
+    `require_distinct_groups` owns "known groups, all different"; what is added here is
+    naming the offending *channel* and checking the tier columns are actually present.
+    """
     seen: dict[str, list[str]] = {}
     for channel, group in channels.items():
         seen.setdefault(group, []).append(channel)
@@ -430,7 +431,10 @@ def _check_matrix_groups(df: "pd.DataFrame", channels: dict[str, str]) -> None:
             "each scenario group may drive only one visual channel; "
             + ", ".join(f"{g!r} used by {cs}" for g, cs in sorted(duplicated.items()))
         )
-    missing = [f"tier_{g}" for g in channels.values() if f"tier_{g}" not in df.columns]
+    # Duplicates are reported above, naming the channel; this is left the unknown-group
+    # half, whose message config already owns.
+    require_distinct_groups(tuple(channels.values()))
+    missing = [tier_column(g) for g in channels.values() if tier_column(g) not in df.columns]
     if missing:
         raise KeyError(f"{missing} are not columns of the optima table")
 
@@ -464,7 +468,7 @@ def _baseline_cell(
     """
     cell = baseline
     for group, tier in ((x_group, x_tier), (y_group, y_tier)):
-        column = f"tier_{group}"
+        column = tier_column(group)
         if column not in cell.columns:
             continue
         cell = cell[(cell[column] == tier) | (cell[column] == UNUSED_TIER)]
@@ -483,7 +487,7 @@ def _baseline_style_groups(
     Sorted largest area first, so the small markers are not buried.
     """
     def tiers(group: str) -> "pd.Series":
-        column = f"tier_{group}"
+        column = tier_column(group)
         if column in cell.columns:
             return cell[column]
         return pd.Series(UNUSED_TIER, index=cell.index)
@@ -532,16 +536,16 @@ def _draw_matrix(
     groups alone, so a facet on a group the baseline does not vary repeats the same
     reference points down every column.
     """
-    columns = _tiers_present(df, f"tier_{x_group}")
-    rows = _tiers_present(df, f"tier_{y_group}")
+    columns = tiers_present(df[tier_column(x_group)])
+    rows = tiers_present(df[tier_column(y_group)])
     if not columns or not rows:
         raise ValueError("no rows for any tier of the faceting groups")
 
     # Per channel, only the tiers the data has: the groups differ in tier count, so a
     # fixed list would print dead legend entries.
-    size_tiers = _tiers_present(df, f"tier_{size_group}")
-    marker_tiers = _tiers_present(df, f"tier_{marker_group}")
-    color_tiers = _tiers_present(df, f"tier_{color_group}")
+    size_tiers = tiers_present(df[tier_column(size_group)])
+    marker_tiers = tiers_present(df[tier_column(marker_group)])
+    color_tiers = tiers_present(df[tier_column(color_group)])
 
     with plt.style.context(_STYLE):
         # A panel carrying one range on both axes is square and needs its width back.
@@ -554,12 +558,12 @@ def _draw_matrix(
         )
         fig.suptitle(title, fontsize=_MATRIX_FONT["suptitle"], y=1.0)
 
-        channel_columns = [f"tier_{g}" for g in (size_group, marker_group, color_group)]
+        channel_columns = [tier_column(g) for g in (size_group, marker_group, color_group)]
         for r, y_tier in enumerate(rows):
-            y_sub = df[df[f"tier_{y_group}"] == y_tier]
+            y_sub = df[df[tier_column(y_group)] == y_tier]
             for c, x_tier in enumerate(columns):
                 ax = axes[r][c]
-                cell = y_sub[y_sub[f"tier_{x_group}"] == x_tier]
+                cell = y_sub[y_sub[tier_column(x_group)] == x_tier]
                 scale, alpha = _density_style(len(cell))
                 # Grouped once, then visited in tier order rather than in the groupby's
                 # own: the largest markers must be drawn first, or the small ones end up
@@ -738,8 +742,7 @@ def plot_human_agent_matrix(
         x_col="cost_agent_mean", y_col="cost_human_mean",
         xlabel="↓  agent cost   (\\$ / feature)",
         ylabel="↓  developer cost   (\\$ / feature)",
-        title=title or (f"Developer vs. agent cost at $c^\\star$ — "
-                        f"{x_group} × {y_group}"),
+        title=title or f"{HUMAN_AGENT_TITLE} — {x_group} × {y_group}",
         baseline=baseline,
     )
 
@@ -776,8 +779,7 @@ def plot_quality_development_matrix(
         x_col="cost_development_mean", y_col="cost_quality_mean",
         xlabel="↓  development cost   (\\$ / feature)",
         ylabel="↓  escaped-bug cost   (\\$ / feature)",
-        title=title or (f"Escaped-bug vs. development cost (developers + agents) at "
-                        f"$c^\\star$ — {x_group} × {y_group}"),
+        title=title or f"{QUALITY_DEVELOPMENT_TITLE} — {x_group} × {y_group}",
         baseline=baseline,
     )
 
@@ -822,8 +824,7 @@ def plot_agent_human_ratio_matrix(
         xlabel="percentile rank of the ratio",
         # No "↓": unlike a cost, neither direction of the ratio is the better one.
         ylabel="agent cost / developer cost",
-        title=title or f"Agent-to-developer cost ratio at $c^\\star$ — "
-                       f"{x_group} × {y_group}",
+        title=title or f"{AGENT_HUMAN_RATIO_TITLE} — {x_group} × {y_group}",
         # x is a rank in [0, 1] — a log axis would only stretch the first percentile.
         xscale="linear",
         y_floor=_log_floor(df, "cost_agent_human_ratio"),
@@ -841,8 +842,8 @@ def plot_agent_human_ratio_matrix(
 # The summary of team structure
 # ---------------------------------------------------------------------------
 #
-# `plot_constellation_profile` / `_heatmap` report every control variable; these two
-# summarise, one on the composition of the team and one on what moves it.  Both take
+# The 23 control variables of the cell table collapse onto two facts; these figures
+# state one each, on the composition of the team and on what moves it.  Both take
 # `optima.csv` rather than the aggregated cell table, because their shares and rates have
 # to be formed within a scenario before being averaged: a ratio of means is not the mean
 # of the ratios.
@@ -870,6 +871,7 @@ class _ShareWeight(NamedTuple):
     total_label: str
     total_format: str
     filename: str                   # figure stem, naming what is split
+    title: str                      # panelled-form figure title
 
 
 #: Three views of one composition, selected by `plot_team_shape`'s `weight`:
@@ -890,7 +892,7 @@ _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
         xlabel="share of the agent bill of the optimal team",
         total_column="cost_agent_mean", total_label="agent \\$ per\nfeature",
         total_format="${:,.2f}",
-        filename="composition_agent_bill"),
+        filename="composition_agent_bill", title="Share of agent costs"),
     "team": _ShareWeight(
         columns=("cost_human_mean",) + AGENT_COST_PARAMETERS,
         labels=("Developers",) + AGENT_ROLE_ABBREV,
@@ -898,12 +900,12 @@ _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
         xlabel="share of the team bill (developers + agents) of the optimal team",
         total_column="cost_team_mean", total_label="team \\$ per\nfeature",
         total_format="${:,.0f}",
-        filename="composition_team_bill"),
+        filename="composition_team_bill", title="Share of development costs"),
     "count": _ShareWeight(
         columns=DEV_PARAMETERS, labels=AGENT_ROLE_ABBREV, colors=_ROLE_COLORS,
         xlabel="share of the agents in the optimal team (development phase)",
         total_column=None, total_label="team size", total_format="{:,.0f}",
-        filename="composition_head_count"),
+        filename="composition_head_count", title="Share of the agent head count"),
 }
 
 
@@ -965,7 +967,7 @@ def _composition_shares(
         annotations.append("extra_total")
     positive = weight_total > 0
     shares = frame.loc[positive, columns].div(weight_total[positive], axis=0)
-    keys = [f"tier_{g}" for g in groups]
+    keys = [tier_column(g) for g in groups]
     shares = shares.join(frame[keys + annotations])
     out = shares.groupby(keys, sort=False)[columns + annotations].mean()
     out["n_scenarios"] = frame.groupby(keys, sort=False).size()
@@ -1018,13 +1020,13 @@ def plot_team_shape(
     extra_column = _BUG_COST_COLUMN if _BUG_COST_COLUMN in optima.columns else None
     cells = _composition_shares(optima, grouping, columns, total_column, extra_column)
     colors = spec.colors
-    blocks = _tiers_present(cells, f"tier_{block_group}")
-    bars = _tiers_present(cells, f"tier_{bar_group}")
-    panels = _tiers_present(cells, f"tier_{panel_group}") if panel_group else [None]
+    blocks = tiers_present(cells[tier_column(block_group)])
+    bars = tiers_present(cells[tier_column(bar_group)])
+    panels = tiers_present(cells[tier_column(panel_group)]) if panel_group else [None]
     if not blocks or not bars or not panels:
         raise ValueError("no optima for any tier of the grouping variables")
 
-    indexed = cells.set_index([f"tier_{g}" for g in grouping])
+    indexed = cells.set_index([tier_column(g) for g in grouping])
     # Every panel carries the same rows, so the layout is built once and each panel only
     # looks its own cells up.
     positions, ticks, tick_labels, block_spans = [], [], [], []
@@ -1191,10 +1193,10 @@ def _tier_rows(frame: "pd.DataFrame", groups: tuple[str, ...]) -> list:
     """(group, tier, y position, subframe) for every tier present, with gaps between groups."""
     rows, y = [], 0.0
     for group in groups:
-        column = f"tier_{group}"
+        column = tier_column(group)
         if column not in frame.columns:
             raise KeyError(f"{column!r} is not a column of the optima table")
-        for tier in _tiers_present(frame, column):
+        for tier in tiers_present(frame[column]):
             rows.append((group, tier, y, frame[frame[column] == tier]))
             y += 1.0
         y += 0.8
@@ -1270,9 +1272,8 @@ def plot_team_drivers(
         # `veryhigh` and `pessimistic` share the fourth colour slot, and this is the one
         # figure that puts all five groups on one axis, so they get a single merged
         # legend entry rather than the same dot printed twice.
-        present = [t for t in ALL_SCENARIO_TIERS
-                   if any(tier == t for _, tier, _, _ in rows)]
-        fourth = [t for t in present if t in ("veryhigh", "pessimistic")]
+        present = tiers_present(tier for _, tier, _, _ in rows)
+        fourth = [t for t in present if t in EXTREME_TIERS]
         legend = [Line2D([], [], linestyle="none", marker="o", markersize=6,
                          color=_TIER_STYLES[t].color, label=t)
                   for t in present if t not in fourth]
@@ -1317,21 +1318,17 @@ def visualize_team_summary(
             f"{panel_group!r} is already a composition axis; the composition figures "
             f"pool it instead of panelling on it.", stacklevel=2)
         panel_group = None
-    searched = optima[optima["mode"] != HUMAN_ONLY_MODE]
+    searched = search_rows(optima)
     if searched.empty:
         warnings.warn("no searched optimum to summarise; nothing to plot.", stacklevel=2)
         return
 
-    titles = {
-        "agent": "Share of agent costs",
-        "team": "Share of development costs",
-        "count": "Share of the agent head count",
-    }
     print(f"\n── Team structure summary ({len(searched)} scenarios) ──")
     for weight in weights:
         fig = plot_team_shape(
             searched, block_group=block_group, bar_group=bar_group,
-            panel_group=panel_group, weight=weight, title=titles.get(weight, ""),
+            panel_group=panel_group, weight=weight,
+            title=_SHARE_WEIGHTS[weight].title,
         )
         save_figure(fig, out_dir, _SHARE_WEIGHTS[weight].filename, fmt)
 
@@ -1391,27 +1388,26 @@ def visualize_campaign(
 
     fig = plot_human_agent_matrix(
         searches, baseline=baseline,
-        title=f"Developer vs. agent cost at $c^\\star${suffix}", **channels,
+        title=f"{HUMAN_AGENT_TITLE}{suffix}", **channels,
     )
     save_figure(fig, out_dir, "human_agent_matrix", fmt)
 
     fig = plot_quality_development_matrix(
         searches, baseline=baseline, **channels,
-        title=f"Escaped-bug vs. development cost, developers + agents, "
-              f"at $c^\\star${suffix}",
+        title=f"{QUALITY_DEVELOPMENT_TITLE}{suffix}",
     )
     save_figure(fig, out_dir, "quality_development_matrix", fmt)
 
     # No baseline: a team with no agents has no agent/developer ratio.
     fig = plot_agent_human_ratio_matrix(
-        searches, title=f"Agent-to-developer cost ratio at $c^\\star${suffix}", **channels,
+        searches, title=f"{AGENT_HUMAN_RATIO_TITLE}{suffix}", **channels,
     )
     save_figure(fig, out_dir, "agent_human_ratio_matrix", fmt)
 
     # An enumeration has no generations, so it contributes no rows here.
     if turnover is not None and not turnover.empty:
-        curves = turnover[turnover["mode"] != HUMAN_ONLY_MODE]
+        curves = search_rows(turnover)
         if not curves.empty:
             fig = plot_elite_turnover(
-                curves, title="Elite turnover and $c^\\star$ drop per generation")
+                curves, title=ELITE_TURNOVER_TITLE)
             save_figure(fig, out_dir, "elite_turnover", fmt)

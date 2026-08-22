@@ -42,24 +42,21 @@ import pandas as pd
 
 from .config import (
     AGENT_ROLE_COUNT,
-    ALL_SCENARIO_TIERS,
+    BASELINE_VARYING_GROUPS,
     HUMAN_ONLY_MODE,
     RESULT_MODES,
     SCENARIO_GROUPS,
-    TIER_INITIALS,
-    UNUSED_TIER,
-    UNUSED_TIER_INITIAL,
+    SCENARIO_ID_TIERS,
+    SEARCH_MODE,
     TeamConfiguration,
+    scenario_config_path,
     supervised_agent_count,
+    tier_column,
+    tiers_present,
 )
 from .io import load_scenario_params
 from .parameters import ScenarioParameters
 from .simulation import phase_sprint_counts
-
-_INITIAL_TO_TIER = {v: k for k, v in TIER_INITIALS.items()}
-# `X` marks a group the scenario does not use — the human-only baseline's `d-X` / `a-X`.
-_INITIAL_TO_TIER[UNUSED_TIER_INITIAL] = UNUSED_TIER
-
 
 # ----------------------------------------------------------------------------
 # Scenario ids and parameters
@@ -74,9 +71,9 @@ def tiers_from_scenario_id(scenario_id: str) -> dict[str, str]:
     tiers = {}
     for group, token in zip(SCENARIO_GROUPS, tokens):
         initial, sep, tier_initial = token.partition("-")
-        if not sep or initial != group[0] or tier_initial not in _INITIAL_TO_TIER:
+        if not sep or initial != group[0] or tier_initial not in SCENARIO_ID_TIERS:
             raise ValueError(f"unknown token {token!r} in scenario id {scenario_id!r}")
-        tiers[group] = _INITIAL_TO_TIER[tier_initial]
+        tiers[group] = SCENARIO_ID_TIERS[tier_initial]
     return tiers
 
 
@@ -92,7 +89,7 @@ def scenario_params_for_id(
     """
     tiers = tiers_from_scenario_id(scenario_id)
     return load_scenario_params({
-        group: Path(config_dir) / f"{group}_{tier}.json"
+        group: scenario_config_path(group, tier, config_dir)
         for group, tier in tiers.items()
     })
 
@@ -135,7 +132,7 @@ def scenario_columns(scenario_id: str, mode: str) -> dict:
     """The identifying columns every campaign table starts with."""
     tiers = tiers_from_scenario_id(scenario_id)
     row: dict = {"scenario_id": scenario_id}
-    row.update({f"tier_{group}": tiers[group] for group in SCENARIO_GROUPS})
+    row.update({tier_column(group): tiers[group] for group in SCENARIO_GROUPS})
     row["mode"] = mode
     return row
 
@@ -329,9 +326,16 @@ def build_tables(
             pd.DataFrame(c_rows), pd.DataFrame(t_rows))
 
 
-#: The scenario groups a human-only baseline varies; `debt` and `agent` are inert for a
-#: zero-agent team, so one baseline row is the reference for every combination of those.
-BASELINE_JOIN_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
+def search_rows(optima: "pd.DataFrame") -> "pd.DataFrame":
+    """The rows of a campaign table that describe a search, not the human-only baseline.
+
+    The single definition of "is a search": every consumer that excludes the baseline
+    goes through this, so adding a third result mode is one edit rather than a hunt for
+    the sites that spell the predicate out.
+    """
+    if optima.empty or "mode" not in optima.columns:
+        return optima
+    return optima[optima["mode"] != HUMAN_ONLY_MODE]
 
 
 def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
@@ -345,11 +349,11 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
         return pd.DataFrame()
 
     base = optima[optima["mode"] == HUMAN_ONLY_MODE]
-    search = optima[optima["mode"] != HUMAN_ONLY_MODE]
+    search = search_rows(optima)
     if base.empty or search.empty:
         return pd.DataFrame()
 
-    join = [f"tier_{g}" for g in BASELINE_JOIN_GROUPS]
+    join = [tier_column(g) for g in BASELINE_VARYING_GROUPS]
     keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "value_mean"]
 
     merged = search.merge(
@@ -455,7 +459,7 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
 # The multiplicative effect of each scenario group on the cost
 # ----------------------------------------------------------------------------
 
-def admissible_optima(optima: "pd.DataFrame", mode: str = "search") -> "pd.DataFrame":
+def admissible_optima(optima: "pd.DataFrame", mode: str = SEARCH_MODE) -> "pd.DataFrame":
     """The rows of `optima` that `mode` reported an admissible `c*` for.
 
     An inadmissible search has an empty `I*` (Section 3.10), so `n_indistinguishable`
@@ -473,12 +477,12 @@ def _tier_design(frame: "pd.DataFrame", groups: "tuple[str, ...]",
     """Intercept plus one 0/1 dummy per non-reference tier of each group in `groups`."""
     columns: list[tuple[str, str]] = []
     for group in groups:
-        for tier in sorted(frame[f"tier_{group}"].unique()):
+        for tier in sorted(frame[tier_column(group)].unique()):
             if tier != references[group]:
                 columns.append((group, tier))
     design = np.column_stack(
         [np.ones(len(frame))]
-        + [(frame[f"tier_{g}"] == t).to_numpy(dtype=float) for g, t in columns]
+        + [(frame[tier_column(g)] == t).to_numpy(dtype=float) for g, t in columns]
     )
     return design, columns
 
@@ -511,12 +515,12 @@ def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
         return pd.DataFrame(), {}
 
     y = np.log10(frame["cost_mean"].to_numpy(dtype=float))
-    groups = tuple(g for g in SCENARIO_GROUPS if frame[f"tier_{g}"].nunique() > 1)
+    groups = tuple(g for g in SCENARIO_GROUPS if frame[tier_column(g)].nunique() > 1)
 
     # The reference is the tier with the lowest mean log cost, so every multiplier is
     # >= 1 and the table reads as "how much dearer than the cheapest tier".
     references = {
-        g: frame.groupby(f"tier_{g}")["cost_mean"].apply(lambda c: np.log10(c).mean()).idxmin()
+        g: frame.groupby(tier_column(g))["cost_mean"].apply(lambda c: np.log10(c).mean()).idxmin()
         for g in groups
     }
 
@@ -533,9 +537,9 @@ def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
     multiplier = {(g, t): float(10.0 ** c) for (g, t), c in zip(columns, coef[1:])}
     rows = []
     for group in groups:
-        _, eta = _r_squared(*_single_group_fit(frame, group, references, y))
+        _, eta = _r_squared(_tier_design(frame, (group,), references)[0], y)
         stats[f"eta_squared_{group}"] = eta
-        for tier in sorted(frame[f"tier_{group}"].unique()):
+        for tier in sorted(frame[tier_column(group)].unique()):
             rows.append({
                 "group": group,
                 "tier": tier,
@@ -543,16 +547,9 @@ def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
                 "multiplier": 1.0 if tier == references[group]
                               else multiplier[(group, tier)],
                 "eta_squared": eta,
-                "n": int((frame[f"tier_{group}"] == tier).sum()),
+                "n": int((frame[tier_column(group)] == tier).sum()),
             })
     return pd.DataFrame(rows), stats
-
-
-def _single_group_fit(frame: "pd.DataFrame", group: str, references: dict,
-                      y: "np.ndarray") -> "tuple[np.ndarray, np.ndarray]":
-    """The design matrix of the one-group model for `group`, and the response."""
-    design, _ = _tier_design(frame, (group,), references)
-    return design, y
 
 
 def multipliers_summary(table: "pd.DataFrame", stats: dict) -> str:
@@ -560,7 +557,7 @@ def multipliers_summary(table: "pd.DataFrame", stats: dict) -> str:
     if table.empty:
         return "Cost multipliers: no admissible search optimum to fit.\n"
 
-    tiers = [t for t in ALL_SCENARIO_TIERS if (table["tier"] == t).any()]
+    tiers = tiers_present(table["tier"])
     width = max(12, *(len(g) for g in table["group"]))
     header = f"  {'group':<{width}}" + "".join(f"{t:>13}" for t in tiers) + f"{'eta^2':>9}"
     lines = [
