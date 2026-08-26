@@ -867,25 +867,25 @@ class _ShareWeight(NamedTuple):
     labels: tuple[str, ...]         # legend entry per column
     colors: tuple                   # colour per column
     xlabel: str
-    total_column: "str | None"      # annotated at the bar's end; None = sum the columns
+    total_column: str               # the per-feature dollar figure annotated at the bar's end
     total_label: str
     total_format: str
     filename: str                   # figure stem, naming what is split
     title: str                      # panelled-form figure title
 
 
-#: Three views of one composition, selected by `plot_team_shape`'s `weight`:
+#: Two views of one composition, selected by `plot_team_shape`'s `weight`:
 #:
 #: `agent` (the default) — each role's share of the agent bill.
 #: `team`  — the same eight roles plus the developers, the whole bill the composition
 #:   controls.  The agent side is `cost_agent_mean` apportioned by the `agent` shares, so
 #:   the nine slices add to `cost_team_mean` exactly.  The escaped-bug cost is annotated
 #:   beside the bar rather than stacked into it.
-#: `count` — each role's share of the head count.  Not written by default; it disagrees
-#:   with the bill, because the flat-rate autonomous roles are cheap and numerous.
 #:
-#: The two cost weightings annotate the reported per-feature figure rather than a summed
-#: horizon bill, so the number at a bar's end is in the unit the tables report.
+#: Both annotate the reported per-feature figure rather than a summed horizon bill, so
+#: the number at a bar's end is in the unit the tables report.  A head-count weighting
+#: was tried and dropped: the counts disagree sharply with the bill, but that is stated
+#: by `constellation.role_usage` in `process_summary.csv` and needs no figure.
 _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
     "agent": _ShareWeight(
         columns=BILL_PARAMETERS, labels=AGENT_ROLE_ABBREV, colors=_ROLE_COLORS,
@@ -901,11 +901,6 @@ _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
         total_column="cost_team_mean", total_label="team \\$ per\nfeature",
         total_format="${:,.0f}",
         filename="composition_team_bill", title="Share of development costs"),
-    "count": _ShareWeight(
-        columns=DEV_PARAMETERS, labels=AGENT_ROLE_ABBREV, colors=_ROLE_COLORS,
-        xlabel="share of the agents in the optimal team (development phase)",
-        total_column=None, total_label="team size", total_format="{:,.0f}",
-        filename="composition_head_count", title="Share of the agent head count"),
 }
 
 
@@ -938,7 +933,7 @@ def _composition_shares(
     optima: "pd.DataFrame",
     groups: tuple[str, ...],
     columns: tuple[str, ...],
-    total_column: "str | None" = None,
+    total_column: str,
     extra_column: "str | None" = None,
 ) -> "pd.DataFrame":
     """Mean role share per cell, plus the mean total, over whichever `columns` weigh a role.
@@ -947,7 +942,7 @@ def _composition_shares(
     composition of its optima rather than the composition of its mean optimum.  A row
     whose total is zero contributes no share but still counts toward `n_scenarios`.
     """
-    extras = [c for c in (total_column, extra_column) if c]
+    extras = [total_column] + ([extra_column] if extra_column else [])
     missing = [c for c in list(columns) + extras if c not in optima.columns]
     if missing:
         raise KeyError(
@@ -957,8 +952,7 @@ def _composition_shares(
     columns = list(columns)
     frame = optima.copy()
     weight_total = frame[columns].sum(axis=1)
-    frame["group_total"] = (weight_total if total_column is None
-                            else frame[total_column])
+    frame["group_total"] = frame[total_column]
     # A per-scenario dollar figure like the first, averaged the same way; it weighs
     # nothing and enters no share.
     annotations = ["group_total"]
@@ -1297,7 +1291,6 @@ def visualize_team_summary(
     fmt: str = "png",
     block_group: str = "project",
     bar_group: str = "bugimpact",
-    weights: tuple[str, ...] = ("agent", "team"),
     panel_group: "str | None" = "agent",
 ) -> None:
     """The team-structure summary figures, from the searched rows of ``optima.csv``.
@@ -1306,8 +1299,8 @@ def visualize_team_summary(
     it the cost weightings have nothing to draw, so the caller applies it first — the
     prices come from the scenario configs, which this module does not read.
 
-    Two compositions by default: `agent` is what the agent budget is spent on, and
-    `team` puts the developers in beside it.  `_SHARE_WEIGHTS` has the third.
+    Two compositions, both of `_SHARE_WEIGHTS`: `agent` is what the agent budget is
+    spent on, and `team` puts the developers in beside it.
 
     The composition figures also panel on `panel_group`.  A re-cut grid may put that
     group on one of the other two axes, and a group cannot occupy two channels at once,
@@ -1324,7 +1317,7 @@ def visualize_team_summary(
         return
 
     print(f"\n── Team structure summary ({len(searched)} scenarios) ──")
-    for weight in weights:
+    for weight in _SHARE_WEIGHTS:
         fig = plot_team_shape(
             searched, block_group=block_group, bar_group=bar_group,
             panel_group=panel_group, weight=weight,

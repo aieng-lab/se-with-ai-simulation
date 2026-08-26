@@ -14,7 +14,6 @@ from src.io import (
     load_scenario_params,
     load_search_config,
     load_simulation_horizon,
-    load_team_config,
 )
 from src.parameters import ScenarioParameters
 from src.state import SystemState
@@ -103,14 +102,6 @@ class TestLoadSimulationHorizon:
         p.write_text('{"T": 52, "K": 100, "master_seed": 42}')
         with pytest.raises(KeyError):
             load_simulation_horizon(p)
-
-
-class TestLoadTeamConfig:
-    def test_default_team_loads(self):
-        team = load_team_config("config/team_default.json")
-        assert team.N == 2 and team.R == 4 and team.F_freeze == 1
-        assert len(team.A_dev) == 8
-        assert len(team.A_qa) == 8
 
 
 class TestLoadScenarioParams:

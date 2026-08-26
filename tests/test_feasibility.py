@@ -6,11 +6,17 @@ from src.config import AGENT_ROLE_COUNT, TeamConfiguration, net_capacity
 from src.feasibility import check_feasibility
 
 
+#: An all-zero QA composition.  Every team below runs F_freeze = 0 or is a
+#: validation case, so A_qa is never applied; it is spelled out because
+#: `TeamConfiguration` requires both compositions.
+_NO_QA = (0,) * AGENT_ROLE_COUNT
+
+
 def _cfg(comp_dict, N=2, R=4, F_freeze=0):
     A = [0] * AGENT_ROLE_COUNT
     for k, v in comp_dict.items():
         A[k - 1] = v
-    return TeamConfiguration(N=N, A_dev=tuple(A), R=R, F_freeze=F_freeze)
+    return TeamConfiguration(N=N, A_dev=tuple(A), R=R, F_freeze=F_freeze, A_qa=_NO_QA)
 
 
 class TestFeasiblePath:
@@ -118,7 +124,7 @@ class TestQaCompositionIsChecked:
         """A_dev is checked regardless of F_freeze, and is named in the reason."""
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0] = 12
-        cfg = TeamConfiguration(N=2, A_dev=tuple(A_dev), R=4, F_freeze=0)
+        cfg = TeamConfiguration(N=2, A_dev=tuple(A_dev), R=4, F_freeze=0, A_qa=_NO_QA)
         report = check_feasibility(cfg, self._params(base_params))
         assert not report.feasible
         assert "A_dev" in report.reason

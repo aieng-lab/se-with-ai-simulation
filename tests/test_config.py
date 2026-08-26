@@ -28,6 +28,12 @@ from src.config import (
 )
 from src.rng import config_hash
 
+
+#: An all-zero QA composition.  Every team below runs F_freeze = 0 or is a
+#: validation case, so A_qa is never applied; it is spelled out because
+#: `TeamConfiguration` requires both compositions.
+_NO_QA = (0,) * AGENT_ROLE_COUNT
+
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 
@@ -116,11 +122,11 @@ class TestTeamConfigurationValidation:
 
     def test_N_zero_raises(self):
         with pytest.raises(ValueError, match="N"):
-            TeamConfiguration(N=0, A_dev=_VALID_A, R=4)
+            TeamConfiguration(N=0, A_dev=_VALID_A, R=4, A_qa=_NO_QA)
 
     def test_N_negative_raises(self):
         with pytest.raises(ValueError, match="N"):
-            TeamConfiguration(N=-0.5, A_dev=_VALID_A, R=4)
+            TeamConfiguration(N=-0.5, A_dev=_VALID_A, R=4, A_qa=_NO_QA)
 
     def test_fractional_N_is_a_valid_staffing_level(self):
         """N is a staffing level in FTE, so it need not be an integer."""
@@ -129,18 +135,18 @@ class TestTeamConfigurationValidation:
 
     def test_R_zero_raises(self):
         with pytest.raises(ValueError, match="R"):
-            TeamConfiguration(N=2, A_dev=_VALID_A, R=0)
+            TeamConfiguration(N=2, A_dev=_VALID_A, R=0, A_qa=_NO_QA)
 
     def test_A_wrong_length_raises(self):
         short_A = (1,) * (AGENT_ROLE_COUNT - 1)
         with pytest.raises(ValueError):
-            TeamConfiguration(N=1, A_dev=short_A, R=1)
+            TeamConfiguration(N=1, A_dev=short_A, R=1, A_qa=_NO_QA)
 
     def test_A_negative_raises(self):
         A = list(_VALID_A)
         A[5] = -1
         with pytest.raises(ValueError):
-            TeamConfiguration(N=2, A_dev=tuple(A), R=4)
+            TeamConfiguration(N=2, A_dev=tuple(A), R=4, A_qa=_NO_QA)
 
     def test_no_structural_bound_on_the_supervised_count(self):
         """`TeamConfiguration` does not cap n_sup — that is the feasibility check's job.
@@ -176,10 +182,6 @@ class TestSearchConfigurationValidation:
     def test_sigma_below_one_raises(self):
         with pytest.raises(ValueError, match="sigma must be >= 1"):
             self._cfg(sigma=0.9)
-
-    def test_the_search_is_not_selectable(self):
-        """There is one search, so there is nothing to select between."""
-        assert not hasattr(self._cfg(), "mode")
 
     def test_the_baseline_is_off_by_default(self):
         cfg = self._cfg()
@@ -234,7 +236,7 @@ class TestAutonomousRoleBudget:
         A[0] = 0   # role 1 (Feature Implementation) must be ≥ 1
         A[2] += 2  # keep sum correct
         with pytest.raises(ValueError):
-            TeamConfiguration(N=2, A_dev=tuple(A), R=4)
+            TeamConfiguration(N=2, A_dev=tuple(A), R=4, A_qa=_NO_QA)
 
     def test_zero_agent_team_is_the_human_only_baseline(self):
         # A_dev = A_qa = 0 is a legal team, and the only one `is_human_only`

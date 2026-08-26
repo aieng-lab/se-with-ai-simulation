@@ -667,19 +667,12 @@ class TestTeamShape:
         """A cell's largest scenario must not dictate the composition it reports."""
         df = _summary_optima()
         cell = df[(df["tier_project"] == "low") & (df["tier_bugimpact"] == "low")]
-        dev = [f"a_dev_{k}" for k in range(1, 9)]
-        expected = (cell[dev].div(cell[dev].sum(axis=1), axis=0)).mean()["a_dev_5"]
-        fig = plot_team_shape(df, weight="count", panel_group=None)
+        bill = list(BILL_PARAMETERS)
+        expected = (cell[bill].div(cell[bill].sum(axis=1), axis=0)).mean()["bill_5"]
+        fig = plot_team_shape(df, panel_group=None)
         first_bar = [p for p in fig.axes[0].patches
                      if round(p.get_y(), 3) == round(fig.axes[0].patches[0].get_y(), 3)]
         assert first_bar[4].get_width() == pytest.approx(expected)
-        plt.close(fig)
-
-    def test_the_absolute_team_size_is_annotated(self):
-        fig = plot_team_shape(_summary_optima(), weight="count")
-        # One size annotation per bar, plus the two column headers.
-        annotations = [t.get_text() for t in fig.axes[0].texts]
-        assert sum(t.replace(",", "").isdigit() for t in annotations) == 4 * 3
         plt.close(fig)
 
     def test_a_tiny_segment_is_drawn_but_not_labelled(self):
@@ -720,12 +713,12 @@ class TestTeamShapeWeighting:
         assert [t.get_text() for t in fig.texts] == ["Share of agent costs"]
         plt.close(fig)
 
-    def test_the_bill_share_differs_from_the_head_count_share(self):
-        """The whole reason for the default: the three autonomous roles are flat-rate."""
+    def test_the_two_weightings_disagree(self):
+        """The agent bill and the whole team bill are not the same split."""
         df = _summary_optima()
-        by_cost = _share_widths(plot_team_shape(df))
-        by_count = _share_widths(plot_team_shape(df, weight="count"))
-        assert by_cost != pytest.approx(by_count, abs=1e-6)
+        by_agent = _share_widths(plot_team_shape(df))
+        by_team = _share_widths(plot_team_shape(df, weight="team"))
+        assert by_agent != pytest.approx(by_team, abs=1e-6)
 
     def test_an_unknown_weight_is_rejected(self):
         with pytest.raises(ValueError, match="unknown weight"):
@@ -834,7 +827,7 @@ class TestTeamShapePanels:
 
     def test_a_panel_holds_only_its_own_tier(self):
         """Otherwise it is the pooled figure drawn four times."""
-        fig = plot_team_shape(_summary_optima(), weight="count")
+        fig = plot_team_shape(_summary_optima())
         widths = [tuple(round(p.get_width(), 6) for p in ax.patches) for ax in fig.axes]
         assert len({widths[0], widths[1]}) == 2
         plt.close(fig)
@@ -853,9 +846,8 @@ class TestTeamShapePanels:
         """A re-cut grid must not take the whole subcommand down with it."""
         with pytest.warns(UserWarning, match="already a composition axis"):
             visualize_team_summary(_summary_optima(), tmp_path, fmt="png",
-                                   block_group="agent", bar_group="human",
-                                   weights=("count",))
-        assert (tmp_path / "composition_head_count.png").is_file()
+                                   block_group="agent", bar_group="human")
+        assert (tmp_path / "composition_agent_bill.png").is_file()
 
 
 class TestTeamDrivers:

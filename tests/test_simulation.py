@@ -4,11 +4,17 @@ import dataclasses
 
 import pytest
 
-from src.config import SimulationHorizon, TeamConfiguration
+from src.config import AGENT_ROLE_COUNT, SimulationHorizon, TeamConfiguration
 from src.rng import generator_for
 from src.simulation import ConfigResult, run_configuration
 from src.sprint import step_sprint
 from src.state import SystemState
+
+
+#: An all-zero QA composition.  Every team below runs F_freeze = 0 or is a
+#: validation case, so A_qa is never applied; it is spelled out because
+#: `TeamConfiguration` requires both compositions.
+_NO_QA = (0,) * AGENT_ROLE_COUNT
 
 
 class TestRunConfigurationBasic:
@@ -114,12 +120,14 @@ class TestInitialState:
 
 class TestCostAccounting:
     def test_zero_costs_give_zero_cost(self, base_config, base_params):
-        from src.config import AGENT_ROLE_COUNT
-        import dataclasses
+        # All three drivers of Eq. (cost_rep) priced at zero, the escaped bugs included:
+        # this fixture does let bugs through, so leaving the weights alone would price
+        # them and the total would not be zero.
         zero_params = dataclasses.replace(
             base_params,
             c_salary=0.0,
             c_token=tuple(0.0 for _ in range(AGENT_ROLE_COUNT)),
+            omega_min=0.0, omega_maj=0.0, omega_sec=0.0,
         )
         s = SimulationHorizon(T=4, K_search=2, K_final=2, master_seed=0)
         result = run_configuration(base_config, s, zero_params)
@@ -128,11 +136,13 @@ class TestCostAccounting:
 
     def test_agent_cost_is_the_work_performed_times_unit_cost(self, base_config, base_params):
         """The agent bill is the inner product of the work vector and c_token."""
-        from src.config import AGENT_ROLE_COUNT
+        # Only the agent bill is left standing: the salary and the escaped-bug weights
+        # are zeroed so that `cost` is C_agents / F_completed and nothing else.
         params = dataclasses.replace(
             base_params,
             c_salary=0.0,
             c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
+            omega_min=0.0, omega_maj=0.0, omega_sec=0.0,
         )
         s = SimulationHorizon(T=4, K_search=1, K_final=1, master_seed=0)
         rep = run_configuration(base_config, s, params).replications[0]
@@ -146,13 +156,13 @@ class TestCostAccounting:
 
     def test_idle_agents_are_free(self, base_params):
         """With no work arriving, every demand-driven role bills nothing."""
-        from src.config import AGENT_ROLE_COUNT
         params = dataclasses.replace(
             base_params, c_salary=0.0, r_arrival=0.0, f_arch_chg=0.0,
             c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
         )
         config = TeamConfiguration(
             N=2, A_dev=tuple(1 for _ in range(AGENT_ROLE_COUNT)), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         s = SimulationHorizon(T=6, K_search=1, K_final=1, master_seed=0)
         rep = run_configuration(config, s, params).replications[0]
@@ -170,7 +180,6 @@ class TestCostAccounting:
     def test_saturated_demand_reproduces_the_nominal_bill(self, base_params):
         """Regression anchor: when every agent is busy, usage billing meets the
         old nominal formula.  This pins the unit convention of each action count."""
-        from src.config import AGENT_ROLE_COUNT
         # Demand far above capacity and zero debt, so the implementation agent runs
         # at its full rate every sprint.
         params = dataclasses.replace(
@@ -181,6 +190,7 @@ class TestCostAccounting:
         )
         config = TeamConfiguration(
             N=2, A_dev=(2, 0, 0, 0, 1, 1, 1, 1), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         s = SimulationHorizon(T=5, K_search=1, K_final=1, master_seed=3)
         rep = run_configuration(config, s, params).replications[0]
@@ -195,7 +205,6 @@ class TestCostAccounting:
 
     def test_architecture_implementation_bills_five_features(self, base_params):
         """Table tab:work_units: u_1 counts a proposal as ARCH_IMPL_COST_UNITS features."""
-        from src.config import AGENT_ROLE_COUNT
         from src.sprint import ARCH_IMPL_COST_UNITS, step_sprint
         from src.state import SystemState
         import numpy as np
@@ -211,6 +220,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=tuple(5 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
             R=8, F_freeze=0,
+            A_qa=_NO_QA,
         )
         state = SystemState(F_backlog=0, Q_arch_impl=3)
         actions = step_sprint(0, state, config, params, np.random.default_rng(0))
@@ -222,7 +232,6 @@ class TestCostAccounting:
 
     def test_architecture_implementation_capacity_costs_five_features(self, base_params):
         """The proposal cap is floor(r_F * delta_D * a_1 / 5)."""
-        from src.config import AGENT_ROLE_COUNT
         from src.sprint import ARCH_IMPL_COST_UNITS, step_sprint
         from src.state import SystemState
         import numpy as np
@@ -236,6 +245,7 @@ class TestCostAccounting:
         config = TeamConfiguration(
             N=2, A_dev=tuple(4 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
             R=8, F_freeze=0,
+            A_qa=_NO_QA,
         )
         state = SystemState(F_backlog=10, Q_arch_impl=5)
         actions = step_sprint(0, state, config, params, np.random.default_rng(0))
@@ -256,6 +266,7 @@ class TestCostAccounting:
         params = dataclasses.replace(base_params, r_test=500.0, r_doc=500.0)
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         T = 10
         state = SystemState()
@@ -282,6 +293,7 @@ class TestCostAccounting:
         params = dataclasses.replace(base_params, r_test=500.0, r_doc=500.0)
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 1, 1), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         state = SystemState()
         rng = generator_for(4, config, 0)
@@ -310,6 +322,7 @@ class TestCostAccounting:
         leaky = dataclasses.replace(base_params, r_bugs=1.0, d_test=0.0)
         config = TeamConfiguration(
             N=2, A_dev=(2, 0, 0, 0, 0, 0, 0, 0), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         cheap = dataclasses.replace(leaky, omega_min=1.0, omega_maj=1.0, omega_sec=1.0)
         pricey = dataclasses.replace(cheap, omega_min=1e4, omega_maj=1e4, omega_sec=1e4)
@@ -331,6 +344,7 @@ class TestCostAccounting:
         """Table tab:work_units: u_4 = a_4, independent of the debt trajectory."""
         config = TeamConfiguration(
             N=3, A_dev=(1, 0, 0, 2, 0, 0, 0, 0), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         s = SimulationHorizon(T=7, K_search=1, K_final=1, master_seed=5)
         # Two runs whose debt trajectories differ wildly: one where refactoring has
@@ -344,6 +358,7 @@ class TestCostAccounting:
     def test_unstaffed_refactoring_bills_nothing(self, base_params):
         config = TeamConfiguration(
             N=2, A_dev=(1, 0, 0, 0, 0, 0, 0, 0), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         s = SimulationHorizon(T=5, K_search=1, K_final=1, master_seed=6)
         rep = run_configuration(config, s, base_params).replications[0]
@@ -378,6 +393,7 @@ class TestContributionAccounting:
         params = dataclasses.replace(base_params, f_arch_chg=0.5, r_arrival=6.0)
         config = TeamConfiguration(
             N=2, A_dev=(2, 1, 0, 0, 1, 0, 0, 0), R=4, F_freeze=0,
+            A_qa=_NO_QA,
         )
         s = SimulationHorizon(T=16, K_search=3, K_final=3, master_seed=9)
         for rep in run_configuration(config, s, params).replications:
@@ -391,12 +407,10 @@ class TestHumanOnlyBaselineCost:
 
     @staticmethod
     def _cfg(N=2):
-        from src.config import AGENT_ROLE_COUNT
         zero = (0,) * AGENT_ROLE_COUNT
         return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
 
     def test_agent_cost_is_exactly_zero(self, base_params):
-        from src.config import AGENT_ROLE_COUNT
         params = dataclasses.replace(
             base_params, c_token=tuple(1000.0 for _ in range(AGENT_ROLE_COUNT)),
         )

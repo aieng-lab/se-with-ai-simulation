@@ -2,5 +2,3 @@
 
 Entry point: `src.main`.
 """
-
-__version__ = "0.1.0"

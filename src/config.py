@@ -136,10 +136,11 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 
 
 # Retention policy for the per-candidate result.json files a search writes:
-#   "all"  — one file per simulated candidate
 #   "best" — only c* and the indistinguishable set I* it is reported with
 #   "none" — no per-candidate files; the aggregates live in search_summary.json
-SAMPLE_POLICIES: tuple[str, ...] = ("all", "best", "none")
+# There is deliberately no "one file per simulated candidate" policy: at the Section 4.2
+# budget that is ~4.9 M files and ~58 GB per campaign, and nothing in the paper reads them.
+SAMPLE_POLICIES: tuple[str, ...] = ("best", "none")
 
 # How a result directory was produced.  Names the subdirectory under a scenario, the
 # `mode` column of the campaign tables, and the value `search_dirs` looks for.
@@ -184,19 +185,22 @@ def net_capacity(H_capacity: float, c_comm: float, N: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class TeamConfiguration:
-    """The configuration tuple (N, A_dev, R, F_freeze, A_qa), fixed across replications.
+    """The configuration tuple (N, A_dev, A_qa, R, F_freeze), fixed across replications.
 
     N       staffing level in full-time equivalents, so it may be fractional.
     A_dev   (a_1, ..., a_8), the development-phase composition.  Either all zero (a team
             with no agents) or a_1 >= 1.
+    A_qa    (a_1, ..., a_8), the freeze-phase composition.  Requires a_1 = a_2 = 0
+            whenever there is a freeze window, and is normalised to all-zero at
+            F_freeze == 0, where it is never applied — so a configuration is identified
+            only by what affects its behaviour.
     R       release cadence, in sprints.
     F_freeze
             how many sprints at the end of each release cycle use A_qa instead of A_dev.
             Sprints with (t % R) >= (R - F_freeze) are frozen.  Range [0, R-1].
-    A_qa    (a_1, ..., a_8), the freeze-phase composition; an empty tuple means "same as
-            A_dev".  Requires a_1 = a_2 = 0 whenever there is a freeze window, and is
-            normalised to all-zero at F_freeze == 0, where it is never applied — so a
-            configuration is identified only by what affects its behaviour.
+
+    The field order is the paper's configuration tuple (Section 3.3).  Both compositions
+    are required: there is no "same as A_dev" shorthand, which the model has no notion of.
 
     Only the per-configuration constraints are checked here.  The collective bound on the
     supervised roles needs the scenario parameters and lives in `src.feasibility`.
@@ -204,15 +208,11 @@ class TeamConfiguration:
 
     N: float                            # Human staffing level in FTE
     A_dev: tuple[int, ...]              # Dev-phase composition, length == AGENT_ROLE_COUNT
+    A_qa: tuple[int, ...]               # QA-phase composition, same length
     R: int                              # Release cadence (sprints)
     F_freeze: int = 1                   # QA-phase length per release cycle, in [0, R-1]
-    A_qa: tuple[int, ...] = ()          # QA-phase composition; empty → same as A_dev
 
     def __post_init__(self) -> None:
-        # Resolved before validation, so every check below sees the effective vector.
-        if not self.A_qa:
-            object.__setattr__(self, "A_qa", self.A_dev)
-
         if self.N <= 0:
             raise ValueError(f"N must be > 0, got {self.N}")
         if self.R < 1:

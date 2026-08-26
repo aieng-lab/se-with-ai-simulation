@@ -13,7 +13,6 @@ from .config import (
     SCENARIO_GROUPS,
     SearchConfiguration,
     SimulationHorizon,
-    TeamConfiguration,
 )
 from .parameters import ScenarioParameters
 from .state import SystemState
@@ -61,19 +60,6 @@ def load_simulation_horizon(path: str | Path) -> SimulationHorizon:
         K_search=int(data["K_search"]),
         K_final=int(data["K_final"]),
         master_seed=int(data["master_seed"]),
-    )
-
-
-def load_team_config(path: str | Path) -> TeamConfiguration:
-    """Parse a team configuration JSON file and return TeamConfiguration."""
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    return TeamConfiguration(
-        N=float(data["N"]),
-        A_dev=tuple(int(x) for x in data["A_dev"]),
-        R=int(data["R"]),
-        F_freeze=int(data.get("F_freeze", 1)),
-        A_qa=tuple(int(x) for x in data.get("A_qa") or ()),
     )
 
 

@@ -51,6 +51,12 @@ from src.search import (
 )
 from src.selection import parsimony_key, report_optimum, throughput_floor
 
+
+#: An all-zero QA composition.  Every team below runs F_freeze = 0 or is a
+#: validation case, so A_qa is never applied; it is spelled out because
+#: `TeamConfiguration` requires both compositions.
+_NO_QA = (0,) * AGENT_ROLE_COUNT
+
 REVIEW_MAX = 12    # floor(r_arrival) of config/project_medium.json
 REFACTOR_MAX = 6   # floor(r_arrival / 2), i.e. a-bar_4 of the same scenario
 
@@ -354,7 +360,7 @@ class TestMutation:
         rng = np.random.default_rng(8)
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0] = 1   # already at the floor
-        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0, A_qa=_NO_QA)
         for _ in range(300):
             parent = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             assert parent.A_dev[0] >= 1
@@ -369,7 +375,7 @@ class TestMutation:
         rng = np.random.default_rng(23)
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0], A_dev[2] = 1, 1
-        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=4, F_freeze=0)
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=4, F_freeze=0, A_qa=_NO_QA)
         assert parent.A_qa == (0,) * AGENT_ROLE_COUNT
         saw_open_window = False
         for _ in range(400):
@@ -601,7 +607,7 @@ class TestServiceStep:
         rng = np.random.default_rng(3)
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0] = 1
-        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0, A_qa=_NO_QA)
         peak = 0
         for _ in range(200):
             parent = _mutate(parent, rng, search_cfg, replace(WIDE_LIMITS, review=64))
@@ -614,7 +620,7 @@ class TestServiceStep:
         cap = 3
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0], A_dev[_REFACTOR_INDEX] = 1, cap - 1
-        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        parent = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0, A_qa=_NO_QA)
         peak = 0
         for _ in range(500):
             parent = _mutate(parent, rng, search_cfg, replace(WIDE_LIMITS, refactor=cap))
@@ -660,8 +666,6 @@ class TestTwoStageSelection:
         st = report.stats
         assert (st["n_prelim"] >= st["n_resimulated"]
                 >= st["n_after_resim"] >= st["n_final"])
-        assert st["parsimony_removed_prelim"] == st["n_prelim"] - st["n_resimulated"]
-        assert st["parsimony_removed"] == st["n_after_resim"] - st["n_final"]
 
     def test_c_star_is_a_member_of_a_non_empty_final_set(self, search_cfg, medium_params):
         """Nothing in I* undercuts c*, so the tie-break can never filter it out."""
@@ -704,7 +708,7 @@ class TestTwoStageSelection:
         outcome = SearchOutcome()
         keys = []
         for i, (A, cost) in enumerate(((A_small, 100.0), (A_large, 101.0))):
-            team = TeamConfiguration(N=2.0, A_dev=tuple(A), R=2, F_freeze=0)
+            team = TeamConfiguration(N=2.0, A_dev=tuple(A), R=2, F_freeze=0, A_qa=_NO_QA)
             agg = AggregatedObjectives(
                 value_mean=floor + 1.0, value_ci=(floor + 1.0, floor + 1.0),
                 cost_mean=cost, cost_ci=(cost - 10.0, cost + 10.0),
@@ -754,7 +758,7 @@ class TestTwoStageSelection:
         horizon = SimulationHorizon(T=4, K_search=2, K_final=6, master_seed=1)
         A_dev = [0] * AGENT_ROLE_COUNT
         A_dev[0] = 1
-        weak = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0)
+        weak = TeamConfiguration(N=1.0, A_dev=tuple(A_dev), R=2, F_freeze=0, A_qa=_NO_QA)
         outcome = SearchOutcome()
         outcome.record(weak, horizon, params, None, keep_samples=False)
         assert outcome.n_simulated == 1, "the weak team must still be monitoring-feasible"

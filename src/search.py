@@ -331,7 +331,7 @@ def _random_draws(
     n_samples: int,
     limits: RoleLimits,
 ) -> list[TeamConfiguration]:
-    """Draw `n_samples` random (N, A_dev, R, F_freeze, A_qa) candidates.
+    """Draw `n_samples` random (N, A_dev, A_qa, R, F_freeze) candidates.
 
     Every draw satisfies `TeamConfiguration`'s structural constraints by construction, so
     nothing is discarded here; the only rejection path is the human-capacity check

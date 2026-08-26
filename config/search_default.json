@@ -1,5 +1,5 @@
 {
-  "description": "Template search configuration: the full search range and evaluation budget, with all five scenario parameter groups at their medium tier. Set \"human_only\": true (or pass --human-only) to enumerate the zero-agent baseline grid instead of searching",
+  "description": "Template search configuration: the full search range and evaluation budget, with all five scenario parameter groups at their medium tier. Set \"human_only\": true to enumerate the zero-agent baseline grid instead of searching.",
   "scenario_id": "h-m_p-m_d-m_a-m_b-m",
   "scenario": {
     "human": "config/human_medium.json",

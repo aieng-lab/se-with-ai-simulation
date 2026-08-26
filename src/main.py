@@ -2,15 +2,6 @@
 
 Usage
 -----
-Run a simulation (smoke-test defaults):
-    python -m src.main run
-
-Run with custom settings and save results:
-    python -m src.main run --out results/
-
-Load and analyse persisted results:
-    python -m src.main analyze results/result.json
-
 Search for the cheapest team that keeps up with the project:
     python -m src.main optimize config/search_default.json --out results/search_default
     python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
@@ -44,8 +35,6 @@ import numpy as np
 import pandas as pd
 
 from .config import (
-    AGENT_ROLE_NAMES,
-    AUTONOMOUS_ROLE_INDICES,
     HUMAN_ONLY_MODE,
     SAMPLE_POLICIES,
     SCENARIO_GROUPS,
@@ -53,17 +42,14 @@ from .config import (
     SearchConfiguration,
     SimulationHorizon,
     TeamConfiguration,
-    supervised_agent_count,
 )
 from .io import (
     load_initial_state,
     load_scenario_params,
     load_search_config,
     load_simulation_horizon,
-    load_team_config,
 )
 from .parameters import ScenarioParameters
-from .results import load_result, save_result
 from .search import (
     SearchOutcome,
     SelectionReport,
@@ -75,7 +61,6 @@ from .search import (
 )
 from .selection import (
     AggregatedObjectives,
-    aggregate_config_result,
     satisfies_throughput,
     throughput_floor,
 )
@@ -84,104 +69,7 @@ from .campaign import (baseline_uplift, build_tables, convergence_summary,
 from .constellation import (CELL_GROUPS, build_constellation,
                             build_indistinguishable, build_process_summary,
                             constellation_summary, process_summary, role_bill)
-from .simulation import run_configuration
 from .visualization import visualize_campaign, visualize_team_summary
-
-
-#: Default file per scenario group; every group defaults to its medium tier.
-DEFAULT_SCENARIO_PATHS: dict[str, str] = {
-    group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
-}
-
-
-def _add_scenario_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add one --<group> path option per scenario group."""
-    for group, default in DEFAULT_SCENARIO_PATHS.items():
-        parser.add_argument(
-            f"--{group}", default=default, metavar="PATH",
-            help=f"{group} scenario parameters JSON file (default: {default})",
-        )
-
-
-def _scenario_paths_from_args(args: argparse.Namespace) -> dict[str, str]:
-    """Collect the five --<group> options into a group -> path mapping."""
-    return {group: getattr(args, group) for group in SCENARIO_GROUPS}
-
-
-def _print_objectives(agg: AggregatedObjectives) -> None:
-    """The objective, the constraint and the three cost drivers of one configuration."""
-    print("Objective and constraint (mean [95 % CI]):")
-    print(f"  cost   $/feature         {agg.cost_mean:.1f}   "
-          f"[{agg.cost_ci[0]:.1f}, {agg.cost_ci[1]:.1f}]")
-    print(f"  value  features/sprint   {agg.value_mean:.3f}   "
-          f"[{agg.value_ci[0]:.3f}, {agg.value_ci[1]:.3f}]")
-    print("Cost drivers ($/feature):")
-    print(f"  escaped bugs {agg.cost_quality_mean:.1f}   "
-          f"developers {agg.cost_human_mean:.1f}   agents {agg.cost_agent_mean:.1f}")
-
-
-def _print_config(config: TeamConfiguration) -> None:
-    print(f"Team configuration:  N={config.N:g} FTE, R={config.R}, "
-          f"F_freeze={config.F_freeze}")
-    for phase, A in (("Dev phase ", config.A_dev), ("QA phase  ", config.A_qa)):
-        n_sup = supervised_agent_count(A)
-        print(f"  {phase} ({n_sup} supervised, {sum(A) - n_sup} autonomous)")
-        for k, name in enumerate(AGENT_ROLE_NAMES, start=1):
-            if A[k - 1]:
-                tier = "aut" if (k - 1) in AUTONOMOUS_ROLE_INDICES else "   "
-                print(f"    role {k:>2} {tier} {name:<48}  x{A[k - 1]}")
-
-
-def _cmd_run(args: argparse.Namespace) -> None:
-    print("agent-ai-cost-sim — Monte Carlo simulation")
-    print("=" * 52)
-
-    horizon = load_simulation_horizon(args.horizon)
-    config = load_team_config(args.team)
-    scenario_paths = _scenario_paths_from_args(args)
-    params = load_scenario_params(scenario_paths)
-    _print_config(config)
-    print()
-
-    initial_state = load_initial_state(args.start_state)
-
-    print("Scenario:")
-    for group, path in scenario_paths.items():
-        print(f"  {group:<10} {path}")
-    print(f"Team:       {args.team}")
-    print(f"Start state:{args.start_state}")
-    print(f"Horizon:   K={horizon.K_search} replications * T={horizon.T} sprints  "
-          f"(seed={horizon.master_seed})")
-    print()
-    print("Running …")
-
-    cr = run_configuration(config, horizon, params, initial_state=initial_state)
-
-    agg = aggregate_config_result(cr, master_seed=horizon.master_seed)
-
-    print()
-    _print_objectives(agg)
-
-    if args.out:
-        out = Path(args.out)
-        out.mkdir(parents=True, exist_ok=True)
-        result_path = out / "result.json"
-        save_result(cr, agg, result_path)
-        print(f"\nSaved result  → {result_path}")
-
-
-def _cmd_analyze(args: argparse.Namespace) -> None:
-    result, agg = load_result(args.result)
-    config = result.config
-
-    print("agent-ai-cost-sim — result analysis")
-    print("=" * 52)
-    _print_config(config)
-    print()
-    print(f"Source:      {args.result}")
-    print(f"Replications: K={len(result.replications)}")
-    print()
-    _print_objectives(agg)
 
 
 def _objective_entry(config: TeamConfiguration, agg: AggregatedObjectives,
@@ -422,8 +310,6 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     # floor, so fall back to c*, which is still reported, just marked inadmissible.
     if search_cfg.samples == "none":
         sample_keys: list[str] = []
-    elif search_cfg.samples == "all":
-        sample_keys = [key for key, _, _ in outcome.aggs]
     elif search_cfg.samples == "best":
         sample_keys = report.keep_keys or (
             [report.best_key] if report.best_key is not None else [])
@@ -487,14 +373,18 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         if optima.empty:
             print("\nNo optimum was reported; skipping the figures.")
             return
-        turnover = _read_table(out_dir / "elite_turnover.csv", "turnover point(s)", hint)
+        # An all-baseline campaign writes no turnover CSV, because an enumeration has
+        # no generations; the convergence figure is simply skipped, as it is on the
+        # path that rebuilds the tables.
+        turnover_path = out_dir / "elite_turnover.csv"
+        turnover = (_read_table(turnover_path, "turnover point(s)", hint)
+                    if turnover_path.is_file() else pd.DataFrame())
         _campaign_figures(optima, out_dir, args, turnover)
         print("\nDone.")
         return
 
     try:
-        optima, scenarios, convergence, turnover = build_tables(
-            Path(args.results_dir), args.config_dir)
+        optima, scenarios, convergence, turnover = build_tables(Path(args.results_dir))
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -565,7 +455,7 @@ def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
                       turnover: pd.DataFrame) -> None:
     """Map the subcommand's `--<channel>` flags onto `visualize_campaign`'s arguments."""
     visualize_campaign(
-        optima, out_dir, args.format, turnover=turnover,
+        optima, out_dir, turnover=turnover,
         x_group=args.x, y_group=args.y, color_group=args.color,
         marker_group=args.marker, size_group=args.size,
     )
@@ -578,7 +468,7 @@ def _constellation_figures(bills: pd.DataFrame, out_dir: Path,
     `bills` is a `role_bill` frame of the per-scenario optima rather than the aggregated
     cell table: its shares are formed within a scenario, which an aggregate cannot undo.
     """
-    visualize_team_summary(bills, out_dir, args.format,
+    visualize_team_summary(bills, out_dir,
                            block_group=args.cols, bar_group=args.rows)
 
 
@@ -598,7 +488,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
 
     if args.figures_only:
         optima = _read_table(optima_path, "reported optima", optima_hint)
-        _constellation_figures(role_bill(optima, args.config_dir), out_dir, args)
+        _constellation_figures(role_bill(optima), out_dir, args)
         print("\nDone.")
         return
 
@@ -633,7 +523,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
 
     # What the optima staff and how they set the process — the composition statistics
     # that are quoted as shares rather than read off the cell grid.
-    bills = role_bill(optima, args.config_dir)
+    bills = role_bill(optima)
     usage = build_process_summary(bills, istar)
     if not usage.empty:
         usage_path = out_dir / "process_summary.csv"
@@ -656,32 +546,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     sub = parser.add_subparsers(metavar="COMMAND")
 
-    # -- run --
-    p_run = sub.add_parser("run", help="Run a simulation.")
-    _add_scenario_arguments(p_run)
-    p_run.add_argument(
-        "--team", default="config/team_default.json", metavar="PATH",
-        help="Team configuration JSON file (default: config/team_default.json)",
-    )
-    p_run.add_argument(
-        "--horizon", default="config/horizon_default.json", metavar="PATH",
-        help="Simulation horizon JSON file (default: config/horizon_default.json)",
-    )
-    p_run.add_argument("--out", metavar="DIR",
-                       help="Directory to write result.json")
-    p_run.add_argument(
-        "--start-state", default="config/startstate_default.json", metavar="PATH",
-        help="JSON file with initial SystemState values "
-             "(default: config/startstate_default.json, which is all-zero)",
-    )
-    p_run.set_defaults(func=_cmd_run)
-
-    # -- analyze --
-    p_ana = sub.add_parser("analyze", help="Analyse persisted results.")
-    p_ana.add_argument("result", metavar="result.json",
-                       help="Path to result.json written by 'run --out'")
-    p_ana.set_defaults(func=_cmd_analyze)
-
     # -- optimize --
     p_optimize = sub.add_parser("optimize", help="Search for optimal team compositions.")
     p_optimize.add_argument("search_config", metavar="SEARCH_CONFIG",
@@ -690,8 +554,8 @@ def main(argv: list[str] | None = None) -> None:
                          help="Output directory for optimization results")
     p_optimize.add_argument(
         "--samples", choices=list(SAMPLE_POLICIES), default=None,
-        help="Which candidates get a samples/<key>.json file: 'all', 'best' "
-             "(c* and the set indistinguishable from it), or 'none' "
+        help="Which candidates get a samples/<key>.json file: 'best' "
+             "(c* and the set indistinguishable from it) or 'none' "
              "(overrides the search config)",
     )
     p_optimize.add_argument(
@@ -717,11 +581,6 @@ def main(argv: list[str] | None = None) -> None:
     p_camp.add_argument("--out", default="results/analysis", metavar="DIR",
                         help="Where to write the CSVs and figures "
                              "(default: results/analysis)")
-    p_camp.add_argument("--config-dir", default="config", metavar="DIR",
-                        help="Where the scenario JSONs live, for r_arrival "
-                             "(default: config)")
-    p_camp.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
-                        help="Output image format (default: png)")
     p_camp.add_argument("--figures-only", action="store_true",
                         help="Redraw the figures from an existing OUT/optima.csv instead "
                              "of re-reading the campaign and rewriting the CSVs")
@@ -747,11 +606,6 @@ def main(argv: list[str] | None = None) -> None:
     p_const.add_argument("--out", default="results/analysis", metavar="DIR",
                          help="Where OUT/optima.csv is read and the tables and figures "
                               "are written (default: results/analysis)")
-    p_const.add_argument("--config-dir", default="config", metavar="DIR",
-                         help="Where the scenario JSONs live, for the per-role token "
-                              "prices (default: config)")
-    p_const.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
-                         help="Output image format (default: png)")
     p_const.add_argument("--rows", default=CELL_GROUPS[1], choices=list(SCENARIO_GROUPS),
                          help=f"Scenario group down the profile figure's rows "
                               f"(default: {CELL_GROUPS[1]})")
@@ -765,8 +619,12 @@ def main(argv: list[str] | None = None) -> None:
 
     if argv is None:
         argv = sys.argv[1:]
-    # No subcommand runs the smoke test, i.e. `run` with every default.
-    args = parser.parse_args(argv or ["run"])
+    args = parser.parse_args(argv)
+    # `add_subparsers` is not required, so that a bare invocation prints the usage
+    # rather than a bare traceback.
+    if not hasattr(args, "func"):
+        parser.print_help(sys.stderr)
+        sys.exit(2)
     args.func(args)
 
 

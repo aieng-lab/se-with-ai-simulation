@@ -94,6 +94,22 @@ class ScenarioParameters:
             raise ValueError(f"h_qa must be > 0, got {self.h_qa}")
         if not (0.0 <= self.d_qa <= 1.0):
             raise ValueError(f"d_qa must be in [0, 1], got {self.d_qa}")
+        # Domains from the parameter tables of paper Section 3.5.
+        if not (0.0 < self.c_test_ceil <= 1.0):
+            raise ValueError(f"c_test_ceil must be in (0, 1], got {self.c_test_ceil}")
+        if not (0.0 <= self.Gamma_doc <= 1.0):
+            raise ValueError(f"Gamma_doc must be in [0, 1], got {self.Gamma_doc}")
+        for name in ("d_CR", "d_SA", "d_test"):
+            value = getattr(self, name)
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(f"{name} must be in [0, 1], got {value}")
+        # The paper's domain is the open (0, 1); the upper end is admitted here because
+        # delta_min = 1 is the degenerate "debt has no effect" case (delta_D == 1), which
+        # the transition handles and which tests use to isolate the other mechanisms.
+        if not (0.0 < self.delta_min <= 1.0):
+            raise ValueError(f"delta_min must be in (0, 1], got {self.delta_min}")
+        if self.delta_exp <= 0.0:
+            raise ValueError(f"delta_exp must be > 0, got {self.delta_exp}")
         if self.theta_maj + self.theta_sec >= 1.0:
             raise ValueError(
                 f"theta_maj + theta_sec must be < 1 (leaves room for minor), "

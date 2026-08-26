@@ -47,12 +47,11 @@ src/                    Python simulation package
                         two_stage_selection (the K'/K selection of §3.10)
     visualization.py    matplotlib plot functions + visualize_campaign /
                         visualize_team_summary helpers
-    main.py             CLI: `python -m src.main run|analyze|optimize|campaign|constellation`
+    main.py             CLI: `python -m src.main optimize|campaign|constellation`
 
 config/
     horizon_default.json      Monte Carlo protocol of §4.2: T=104, K_search=100 (the
                               paper's K'), K_final=1000 (K), master_seed=42
-    team_default.json         default team configuration (N, R, F_freeze, A_dev, A_qa)
     human_{low,medium,high}.json      scenario group: human developers (§4.2.1);
                                       carries f_qa / h_qa / d_qa, read only by a
                                       zero-agent team
@@ -115,23 +114,12 @@ those figures appears in it.
 
 ## Running the Simulation
 
-**Quick smoke test:**
-```bash
-python -m src.main
-```
-
-**Run and save a simulation** (each `--<group>` defaults to that group's `_medium` file):
-```bash
-python -m src.main run --out results/my_run
-python -m src.main run --project config/project_high.json --out results/high_load
-python -m src.main run --human config/human_low.json --agent config/agent_high.json \
-    --bugimpact config/bugimpact_high.json --out results/junior_team_critical_system
-```
-
-**Analyse persisted results:**
-```bash
-python -m src.main analyze results/my_run/result.json
-```
+The CLI has exactly three subcommands — `optimize`, `campaign`, `constellation` — one per
+stage of the paper's pipeline.  There is deliberately **no `run` and no `analyze`**: they
+ran and printed a single hand-written configuration, which §5 reports nothing from, and
+they were the only readers of `config/team_default.json` and `io.load_team_config` (all
+three deleted).  A bare `python -m src.main` prints the usage and exits 2.  To inspect one
+persisted configuration, read a search's `samples/<key>.json` with `results.load_result`.
 
 **Run a configuration search** (the §4.2 budget of E = 10,000 evaluations at
 `K_search = 100` replications, followed by the re-simulation of the preliminary `I*` at
@@ -141,9 +129,9 @@ python -m src.main optimize config/search_default.json --out results/search_defa
 ```
 
 There is exactly one search and it is not selectable.  Useful `optimize` flags:
-`--samples {all,best,none}` controls which candidates get a
-`samples/<key>.json` (default `best` — `c*` and the indistinguishable set `I*`; `all` is
-~12 KB × 10,000 per search), and `--progress-every N` throttles the progress lines
+`--samples {best,none}` controls which candidates get a
+`samples/<key>.json` (default `best` — `c*` and the indistinguishable set `I*`), and
+`--progress-every N` throttles the progress lines
 (`0` silences them; it also throttles the re-simulation heartbeat).
 Each search writes four files: `manifest.json`, `search_summary.json` (the `K_search`
 estimates of every candidate in `objectives`, the `K_final` ones of the re-simulated set in
@@ -192,7 +180,11 @@ python -m src.main campaign --no-figures       # write the CSVs only
 `--figures-only` skips `build_tables` entirely and reads `<--out>/optima.csv` and
 `elite_turnover.csv` instead, so it redraws every figure without re-walking the 432 result
 directories or rewriting any CSV — the path to use on the finished campaign whenever only
-the plotting code changed.  `--no-figures` is its opposite: rewrite every CSV and the
+the plotting code changed.  It reads `elite_turnover.csv` **only if it exists**: an
+all-baseline tree writes none, because an enumeration has no generations, and requiring
+it made `--figures-only` fail on a tree the non-`--figures-only` path handles.  There is
+no `--format` and no `--config-dir` on either subcommand: §5 is PNG throughout and the
+scenario JSONs are always read from `config/`.  `--no-figures` is its opposite: rewrite every CSV and the
 convergence summary, draw nothing.
 `baseline_uplift.csv` appears whenever the tree holds §4.1 baselines: one row per
 campaign scenario that has a baseline at the same `human`/`project`/
@@ -304,8 +296,8 @@ team size spans four decades and a ratio of aggregates would report the largest 
 composition rather than the typical one; a test pins that a 1000x scenario does not move the
 means. The head-count and bill shares disagree sharply and that disagreement *is* the result
 (Code Review 69 % of the team, 20 % of the bill; Security 22 % → 46 %; Feature
-Implementation 2 % → 21 %), which is also why `_SHARE_WEIGHTS["count"]` is kept in
-`visualization` even though nothing writes it. The table reproduces every §5.3 percentage
+Implementation 2 % → 21 %), and is the only place that disagreement is reported — the
+head-count composition figure that used to draw it has been deleted. The table reproduces every §5.3 percentage
 exactly, including the architecture agent's 52/61/22/21 % staffing split by agent tier.
 
 The cell table has **no figures of its own.** `plot_constellation_profile` and
@@ -375,11 +367,11 @@ than taking the subcommand down over a channel collision.
   neighbour's background. The margins are reserved in **inches**, not in figure fractions
   — the figure grows with the grid, and a fraction would grow the margins with it.
 
-  **`weight` decides what a slice measures, and the default is a bill, not head count.**
-  Each weighting is a `_ShareWeight` carrying its own columns, labels, palette, annotation
+  **`weight` decides what a slice measures, and both weightings are a bill, not a head
+  count.** Each is a `_ShareWeight` carrying its own columns, labels, palette, annotation
   and **file stem** — the stem names what is split, not the key, so `weight="agent"` writes
-  `composition_agent_bill.png`. `visualize_team_summary` writes `agent` and `team` by
-  default; `count` exists but is not written.
+  `composition_agent_bill.png`. `visualize_team_summary` writes every entry of
+  `_SHARE_WEIGHTS`, which is exactly `agent` and `team`.
   A share of the head count systematically overstates the three *autonomous* roles: they
   are flat-rate (`r_k = 1`, so `u_k = a_k`), they consume no monitoring capacity, and
   nothing but their own saturation bounds them, so the search stacks them freely. The two
@@ -387,13 +379,15 @@ than taking the subcommand down over a channel collision.
   bill**, Security Audit **22 % → 46 %** (its `c_token` is 10× Review's), and Feature
   Implementation **2 % → 21 %**, invisible by head count and a fifth of the budget. The
   bill is what Eq. (cost_rep) actually charges for, so it is the honest unit for "what is
-  this team mostly doing"; `weight="count"` keeps the head-count view because the counts
-  are the control variables the search moves, and the disagreement is itself a result.
-  The companion dumbbell panel that used to carry the campaign-wide head-count → bill move
-  per role is **gone**, together with `_weight_divergence` / `_draw_divergence` and the
-  `comparable` field of `_ShareWeight`: it was a single campaign-wide statement and there
-  is no honest place for one beside a 2 × 2 grid of panels. The disagreement it drew is
-  still readable by rendering `weight="count"` next to `weight="agent"`.
+  this team mostly doing", and it is the only one drawn.
+  Two head-count renderings are **gone**, and neither should come back. The companion
+  dumbbell panel that carried the campaign-wide head-count → bill move per role went with
+  `_weight_divergence` / `_draw_divergence` and the `comparable` field of `_ShareWeight`:
+  it was a single campaign-wide statement with no honest place beside a 2 × 2 grid of
+  panels. The `count` weighting itself (`composition_head_count.png`) followed it: no
+  subcommand could reach it, it appears in no §5 figure, and the disagreement it drew is
+  already **stated numerically** by `constellation.role_usage` in `process_summary.csv`,
+  whose `head count` and `bill` columns are where §5.3's 69/20, 22/46 and 2/21 come from.
 
   What the cost view then states: **Security Audit takes the bill and `bugimpact` is what
   sets how much of it** — 48 → 69 → 75 % across the `bugimpact` ladder at `a-l`, and
@@ -406,7 +400,7 @@ than taking the subcommand down over a channel collision.
   right-hand annotation is `cost_agent_mean` — the reported dollars per feature — not the
   summed bill, so it is in the unit §5 quotes.
 
-  **`weight="team"` is the third view and the one that says whether the agents matter at
+  **`weight="team"` is the second view and the one that says whether the agents matter at
   all**: the same eight roles plus the developers as a ninth slice, off the agent palette
   in grey so they cannot read as a ninth agent. The agent side is `cost_agent_mean`
   apportioned by the `agent` shares (`AGENT_COST_PARAMETERS`), so the nine slices add to
@@ -622,11 +616,18 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 - **The baseline is drawn as an overlay, never as its own figure set.** `visualize_campaign` splits the `human_only` rows out *before* the per-mode loop and passes them to `_draw_matrix` as a `baseline` frame. It carries the **shape and size channels** — `project` and `bugimpact` on the default layout are two of the three groups the baseline varies, so its points are read against the search optima on exactly those scales (`_baseline_style_groups` maps the tiers, `_baseline_marker_kwargs` draws them). **Colour stays fixed at black on every layout**: with shape and size shared it is the only channel left that says "no agents", and on the default layout `debt` sits there and the baseline has no debt tier to encode. A channel whose group the baseline holds at `UNUSED_TIER` has no tier and falls back to the fixed `*` at `_BASELINE_SIZE`. The baseline therefore appears as a fourth entry in the *colour* legend, not as a legend block of its own. Do **not** promote it to a fifth tier shape — it reuses the four, and the note that a fifth shape would not survive the smallest size tier still holds. `_baseline_cell` matches a baseline row on the *facet* groups only and treats `UNUSED_TIER` as matching every tier, which is what repeats the same reference points down all four `agent` columns; say so in the caption, it is a reference level rather than an `a-X` observation. The ratio figure takes no baseline at all — a team with no agents has no agent/developer ratio. Axis floors and shared ranges are computed over `_with_baseline(df, baseline)`, or the baseline's exactly-zero agent cost would drop silently off a log axis.
 - **Reproducibility**: every random draw is derived from a master seed via `SeedSequence(s0, spawn_key=(FNV1a_hash(config), k))`. Because the spawn key holds the replication index and nothing about the count, a replication is addressable by index, which is what lets `run_configuration`'s `k_offset` hand the re-simulation of §3.10 a **disjoint** block `[K_search, K_search + K_final)` deterministically.
 - **The convergence record of §5.1 is collected in the generation loop, not reconstructed afterwards.** `SearchOutcome` carries `elite_turnover`, `incumbent_changed` and `best_cost`, one entry per generation actually run. The loop keeps the ranking across its body — `rank` is called once before the first generation, for `E_0` over the initial pool, and again at the end of each generation — so the same sort supplies both the parents of the next generation (`P_{g-1}`, as §3.11.4 requires) and `E_g` for `τ_g = |E_g \ E_{g-1}| / n_elite`. The denominator is `n_elite` as Eq. (elite_turnover) writes it, not `|E_g|`. `_run_human_only` leaves all three lists empty; an enumeration has no generations, and `incumbent_turnover` is None there rather than 0.
-- **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, so `--samples` defaults to `best` — the `ConfigResult`s are buffered in memory and only `c*` and `I*` are written, *after* `two_stage_selection` has run. The files written for those keys are the **re-simulated** results (`K_final` replications), because `_cmd_optimize` merges `SelectionReport.final_results` into `outcome.results` and passes `final_aggs` as `write_samples`' `aggs_override` — a sample file must agree with the row `optima.csv` reports. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`, at `K_search`.
+- **Campaign sample retention**: at the §4.2 budget, one `result.json` per candidate would be ~4.9 M files / ~58 GB, which is why `SAMPLE_POLICIES` is only `("best", "none")` — the retain-everything policy was removed rather than left as a foot-gun — and why `--samples` defaults to `best` — the `ConfigResult`s are buffered in memory and only `c*` and `I*` are written, *after* `two_stage_selection` has run. The files written for those keys are the **re-simulated** results (`K_final` replications), because `_cmd_optimize` merges `SelectionReport.final_results` into `outcome.results` and passes `final_aggs` as `write_samples`' `aggs_override` — a sample file must agree with the row `optima.csv` reports. Aggregate means and CIs for every simulated candidate always land in `search_summary.json`, at `K_search`.
 - **The selection rule of §3.10 replaces the CI-aware Pareto frontier, and it is a *total preorder*.** `selection.preference_key` is Deb's feasibility rule as the lexicographic key `(violation, cost_mean)`: two violators are separated by whose shortfall is smaller, an admissible configuration precedes every violator, and two admissible ones are separated by cost alone. So `rank` is a plain stable sort, `best_index` is a `min`, and **none of the non-transitivity machinery the old CI-aware multi-objective rule needed applies** — there is no O(n²) unpruned dominance loop and no ordering hazard. Do not reintroduce a dominance relation: with one objective there is nothing for it to do.
 - **Selection is two-stage, and `two_stage_selection` owns both stages (§3.10).** The search scores every candidate with `K_search = K'` replications; stage 1 is `report_optimum(aggs, floor, keys=…)` **with** parsimony keys, which gives the *preliminary* `c*` and `I*` already reduced by the tie-break (it is called a second time without keys purely to record `n_prelim`, the size before the reduction). Stage 2 re-simulates every member of that reduced set with `K_final = K > K'` replications and repeats the rule on the narrower intervals: a member that no longer satisfies the throughput constraint drops out (`report_optimum` filters on `satisfies_throughput`, so this needs no extra code), `c*` is re-determined and may move, and the parsimony tie-break runs a second time on the better estimates. The re-simulation is **outside** the `E` budget (§4.2) and runs a **disjoint** block of replication indices (`run_configuration(..., K=K_final, k_offset=K_search)`), *not* an extension of the block the search used. That is deliberate and must not be "simplified" away: a candidate is in the preliminary set because its `K'` estimate came out at or near the minimum of thousands of noisy estimates, so that estimate is biased low by the selection itself — reusing those replications would carry a `K'/K` share of the winner's curse into the reported cost, and a fresh block removes it at identical simulation cost. **Applying parsimony at stage 1 is deliberate and is what the cost condition bought**: a member it removes there is both structurally larger and dearer in expectation at `K'`, so it can be dropped before it is re-simulated — every removal is one fewer `K`-replication run. The price, accepted knowingly: the final `c*` can differ from what a stage-2-only tie-break would report if a removed member's noisy `K'` estimate would have come out lowest at `K`. It is statistically tied with its remover and structurally larger, so nothing measurable is lost. Inadmissible searches are the one case with nothing to narrow: the preliminary `I*` is empty, so the single least-violating candidate is re-simulated alone, which is what keeps `optima.csv`'s `value_ratio` a `K` number for every row.
 - **`report_optimum`, not `best_index`, is what a reported `(c*, I*)` pair must come from.** `I*` (Eq. topset) is the admissible candidates whose cost CI overlaps `c*`'s, reduced by the parsimony tie-break. **`c*` cannot be removed by that tie-break** and needs no exemption: domination requires a strictly lower mean cost and `c*` is the minimiser, so `c*` stays the raw cost minimiser and is a member of every non-empty `I*`. The other reason to go through `report_optimum` is the inadmissible case: when *no* candidate reaches the throughput floor there is no `c*` in the sense of §3.10, so **`I*` is empty** while the least-violating candidate is still returned and reported (`manifest["best_admissible"] = false`, and `optima.csv`'s `n_indistinguishable = 0`). `two_stage_selection` calls it twice (see the bullet above), and `main._cmd_optimize` falls back to `c*` for the `--samples best` file list so an inadmissible search still writes one sample; the *search loop* deliberately does not use it — parsimony must not steer the search, only the report.
 - **The parsimony tie-break (§3.10) applies only inside `I*`, and it is cost-aware**: among configurations that share `(N, R, F_freeze)`, one removes another when it uses no more agents of every role in both phases, strictly fewer of at least one, **and** its `cost_mean` is strictly lower. `selection.parsimony_dominates` therefore takes the two `ParsimonyKey`s *and* the two mean costs; only the CI-overlap half of the rule stays the caller's precondition. The cost condition is what makes `c*` untouchable and what makes the tie-break safe to apply at `K'` — do not weaken it to `≤`, which would let an exactly-tied smaller team remove `c*` and bring the exemption back. A strict partial order, so `I*` is never emptied and the dominance filter is order-independent. It cannot substitute for the `A_qa` canonicalisation below: componentwise `≤` is a partial order and only collapses chains, so two teams like `(…,3,2,…)` and `(…,2,3,…)` both survive.
+- **Both composition vectors are required, and the field order is the paper's.**
+  `TeamConfiguration` is `(N, A_dev, A_qa, R, F_freeze)`, matching §3.3's tuple, with
+  `F_freeze` the only field carrying a default.  `A_qa` used to default to the empty tuple
+  meaning "same as `A_dev`" — a shorthand the model has no notion of, reachable only
+  through the deleted `io.load_team_config`.  Passing it explicitly is now mandatory; the
+  tests spell out an all-zero `_NO_QA` where they run `F_freeze = 0`, which the
+  canonicalisation below makes exact anyway.
 - **`A_qa` is canonically zero where `F_freeze == 0`**: with no freeze window `T_qa` is zero and `A_qa` is never applied, so `TeamConfiguration.__post_init__` normalises it to the zero vector (after the shape checks, so a malformed vector still raises). This is what keeps a redundant coordinate from multiplying the search space: `rng.config_hash` folds `A_qa` in, so without it two configurations that are the *same model* draw different RNG streams and land at different objective values while being indistinguishable as teams. The sampler and the mutation operator cooperate — `_random_draws` draws `F_freeze` before the compositions and skips the QA draw, and `_mutate` drops the `A_qa` option from its four-way choice at `F_freeze == 0` (every QA move would canonicalise straight back to the parent). Measured on a smoke search before the fix: 23.9 % of evaluated candidates were behavioural duplicates.
 - **Agents are billed for the work they performed, not for being deployed — except for three roles that have no countable output**: `step_sprint` returns a `SprintActions` with the work each role completed that sprint, measured in that role's own throughput unit (features for k=1, where an implemented architecture proposal counts as `ARCH_IMPL_COST_UNITS = 5` features; change requests for k=2, bugs for k=3, tests for k=7, documents for k=8). **k=4, 5, 6 are flat-rate** (`r_k = 1`, `u_k = a_k`): the two review services have no discrete unit of output, and the Refactoring Agent produces a reduction of the normalised `D_tech` rather than an artefact. `run_configuration` accumulates the vector over the horizon and `simulation.cost_components(config, params, T, actions)` returns `C_agents = Σ_k actions_k · c_token,k`. A demand-driven agent that no work reaches costs nothing; a flat-rate one bills whether or not it has anything to do. Consequence to keep in mind: **cost does not discipline over-provisioning of roles 1–3** — the saturation bound `ā_k` and the human-capacity gate are what bound them.
 - **The Refactoring Agent is unsupervised and effectively unbounded.** Three things about role 4 together: (a) it is in `K_aut`, so it consumes no monitoring capacity and cannot make a candidate infeasible; (b) Eq. (sat_bound) no longer covers it, so its only cap is the search-side `refactoring_bound = ⌊r_arrival/2⌋`; (c) Eq. (debt_update) removes `r_refactor·a_·,4` from `D_tech` with **nothing throttling it but the clip at 0** — no queue, no `δ_D` slowdown, and it removes debt even in a sprint that created none. `r_refactor` is denominated in `D_tech` units and calibrated against `δ_impl`/`δ_fix` (§4.2.4: one agent removes the debt one feature or one bug fix adds), so it takes the same **0.02 / 0.06 / 0.13** by *agent* tier — note the tier axis is the agent group's while `δ_impl`/`δ_fix` follow the *debt* group's, and the two are orthogonal. The role is billed flat at `c_token,4` = one feature implementation (2.28/3.80/7.60/76.00 by tier).

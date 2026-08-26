@@ -10,6 +10,12 @@ from src.sprint import _volume_factor, step_sprint
 from src.state import SystemState
 
 
+#: An all-zero QA composition.  Every team below runs F_freeze = 0 or is a
+#: validation case, so A_qa is never applied; it is spelled out because
+#: `TeamConfiguration` requires both compositions.
+_NO_QA = (0,) * AGENT_ROLE_COUNT
+
+
 def _run_sprints(n, config, params, rng, initial_backlog=20):
     state = SystemState(F_backlog=initial_backlog)
     for t in range(n):
@@ -231,8 +237,8 @@ class TestFractionalStaffingLevel:
         # No agents beyond the mandatory implementer, so the difference between the two
         # runs is human capacity: it scales with N everywhere except H_net itself.
         params = dataclasses.replace(base_params, c_comm=0.0)
-        part = TeamConfiguration(N=0.25, A_dev=_A(k1=1), R=4, F_freeze=0)
-        full = TeamConfiguration(N=1.0, A_dev=_A(k1=1), R=4, F_freeze=0)
+        part = TeamConfiguration(N=0.25, A_dev=_A(k1=1), R=4, F_freeze=0, A_qa=_NO_QA)
+        full = TeamConfiguration(N=1.0, A_dev=_A(k1=1), R=4, F_freeze=0, A_qa=_NO_QA)
         a = _run_sprints(6, part, params, np.random.default_rng(31), initial_backlog=200)
         b = _run_sprints(6, full, params, np.random.default_rng(31), initial_backlog=200)
         assert 0 < a.F_completed < b.F_completed
@@ -248,8 +254,8 @@ class TestFractionalStaffingLevel:
         params = dataclasses.replace(base_params, c_comm=30.0, H_capacity=40.0)
         assert net_capacity(40.0, 30.0, 1.0) * 1.0 == 40.0
         assert net_capacity(40.0, 30.0, 1.25) * 1.25 == 12.5
-        solo = TeamConfiguration(N=1.0, A_dev=_A(k1=1), R=4, F_freeze=0)
-        pair = TeamConfiguration(N=1.25, A_dev=_A(k1=1), R=4, F_freeze=0)
+        solo = TeamConfiguration(N=1.0, A_dev=_A(k1=1), R=4, F_freeze=0, A_qa=_NO_QA)
+        pair = TeamConfiguration(N=1.25, A_dev=_A(k1=1), R=4, F_freeze=0, A_qa=_NO_QA)
         a = _run_sprints(6, solo, params, np.random.default_rng(32), initial_backlog=200)
         b = _run_sprints(6, pair, params, np.random.default_rng(32), initial_backlog=200)
         assert b.F_completed < a.F_completed
@@ -268,7 +274,7 @@ class TestHumanBudgetResidualRounding:
 
     N = 0.75
     #: a_1 = a_3 = 1, i.e. n_sup = 2 — the count the arithmetic above depends on.
-    CFG = TeamConfiguration(N=0.75, A_dev=_A(k1=1, k3=1), R=4, F_freeze=0)
+    CFG = TeamConfiguration(N=0.75, A_dev=_A(k1=1, k3=1), R=4, F_freeze=0, A_qa=_NO_QA)
     #: Q_rev = 4 caps rev_done below the capacity floor; Q_esc = 5 does not cap esc_done.
     STATE = dict(F_backlog=20, Q_rev=4, Q_esc=5)
 
@@ -509,7 +515,7 @@ class TestImplementationIsCappedByDemand:
                     Gamma_doc=0.0)
         A = [0] * AGENT_ROLE_COUNT
         A[0] = 3
-        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=2, F_freeze=0)
+        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=2, F_freeze=0, A_qa=_NO_QA)
         rng = np.random.default_rng(14)
         state = SystemState(F_backlog=2)
         for t in range(20):
@@ -526,7 +532,7 @@ class TestEscalationsScaleWithAgentWork:
         A = [0] * AGENT_ROLE_COUNT
         A[0] = max(1, n_impl)
         A[2] = n_fix
-        return TeamConfiguration(N=3, A_dev=tuple(A), R=8, F_freeze=0)
+        return TeamConfiguration(N=3, A_dev=tuple(A), R=8, F_freeze=0, A_qa=_NO_QA)
 
     def test_no_agent_work_means_no_escalations(self, base_params):
         """Idle agents raise nothing: with an empty backlog and no arrivals,
@@ -592,7 +598,7 @@ class TestEscalationsScaleWithAgentWork:
                         Gamma_doc=0.0, h_feature=1e6)   # humans implement nothing
             A = [0] * AGENT_ROLE_COUNT
             A[0] = 1
-            cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=8, F_freeze=0)
+            cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=8, F_freeze=0, A_qa=_NO_QA)
             rng = _RecordingRng(17)
             state = SystemState(F_backlog=0, D_tech=D_tech)
             for t in range(5):
@@ -622,7 +628,7 @@ class TestEscalationsScaleWithAgentWork:
                     Gamma_doc=0.0)
         A = [0] * AGENT_ROLE_COUNT
         A[0] = 1
-        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=100, F_freeze=0)
+        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=100, F_freeze=0, A_qa=_NO_QA)
         rng = np.random.default_rng(18)
         # Seed a large production bug queue that only humans can drain (no fix agents).
         state = SystemState(F_backlog=0, B_rel_min=500)
@@ -656,7 +662,7 @@ class TestContributionAccounting:
         # One feature per sprint, and a human budget far above it.
         p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=0.1, f_fix=0.0,
                                 f_arch_chg=0.0, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0)
+        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0, A_qa=_NO_QA)
         state = SystemState(F_backlog=1)
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(22))
 
@@ -667,7 +673,7 @@ class TestContributionAccounting:
         """With h_feature astronomically large the human budget floors to zero."""
         p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=1e9, f_fix=0.0,
                                 f_arch_chg=0.0, delta_min=1.0, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0)
+        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0, A_qa=_NO_QA)
         state = SystemState(F_backlog=50)
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(23))
 
@@ -679,7 +685,7 @@ class TestContributionAccounting:
         """With no Bug Fixing Agent every repair is human, and none of it is billed."""
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
                                 h_fix=1.0, f_fix=1.0, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), R=100, F_freeze=0)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), R=100, F_freeze=0, A_qa=_NO_QA)
         state = SystemState(F_backlog=0, B_rel_min=500)
         before = state.B_rel_min
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(24))
@@ -694,7 +700,7 @@ class TestContributionAccounting:
         """fixes_agent duplicates u_3 by construction — pin that they cannot drift."""
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
                                 f_fix=0.0, h_feature=1e9, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1, k3=2), R=100, F_freeze=0)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1, k3=2), R=100, F_freeze=0, A_qa=_NO_QA)
         state = SystemState(F_backlog=0, B_rel_maj=200)
         rng = np.random.default_rng(25)
         for t in range(5):
@@ -725,7 +731,7 @@ class TestContributionAccounting:
         from src.sprint import ARCH_IMPL_COST_UNITS
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0,
                                 delta_min=1.0, h_feature=1e9, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=2, A_dev=_A(k1=4), R=8, F_freeze=0)
+        cfg = TeamConfiguration(N=2, A_dev=_A(k1=4), R=8, F_freeze=0, A_qa=_NO_QA)
         # Capacity is floor(r_F * 1.0 * 4) = 12.  A proposal costs five features of it
         #, so both queued proposals are implemented and the remaining
         # 12 - 10 = 2 features' worth goes to the backlog.
@@ -780,7 +786,7 @@ class TestHumanBugInjectionIsFixedRate:
         # impl equal to the demand in both runs, and vary only the debt carried in.
         A = [0] * AGENT_ROLE_COUNT
         A[0] = 5
-        cfg = TeamConfiguration(N=2, A_dev=tuple(A), R=99, F_freeze=0)
+        cfg = TeamConfiguration(N=2, A_dev=tuple(A), R=99, F_freeze=0, A_qa=_NO_QA)
         p = dataclasses.replace(base_params, delta_min=0.10, delta_exp=1.0, r_F=1000.0,
                                 r_bugs=0.5, r_bugs_human=1e-9, f_fix=1.0, r_arrival=1e-9)
 
@@ -950,5 +956,5 @@ class TestHumanOnlyDebtIsInert:
                     c_test_ceil=0.1, alpha_size=0.01, rho_esc=0.001)
         rich = run(r_F=500.0, r_arch_chg=99.0, r_fix=999.0, r_refactor=1.0, r_test=99.0,
                    r_doc=99.0, r_bugs=0.9, d_CR=0.99, d_SA=0.99, d_test=0.99,
-                   c_test_ceil=5.0, alpha_size=0.9, rho_esc=0.9)
+                   c_test_ceil=1.0, alpha_size=0.9, rho_esc=0.9)
         assert dataclasses.asdict(cheap) == dataclasses.asdict(rich)

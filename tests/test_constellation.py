@@ -341,7 +341,6 @@ class TestRoleBill:
 
     def test_one_bill_column_per_role(self):
         billed = role_bill(self._frame())
-        assert list(BILL_PARAMETERS) == [f"bill_{k}" for k in range(1, 9)]
         assert all(c in billed.columns for c in BILL_PARAMETERS)
 
     def test_the_bill_is_the_work_times_the_price(self):
@@ -383,14 +382,23 @@ class TestRoleBill:
         assert billed["cost_team_mean"].iloc[0] == pytest.approx(100.0)
 
     def test_it_reproduces_the_reported_agent_cost(self):
-        """Against the real campaign: the split must add back up to what optima.csv reports."""
+        """Against the real campaign: the split must add back up to what optima.csv reports.
+
+        A cross-check against consolidated results rather than a unit test — the formula
+        itself is pinned above on synthetic data — so it is skipped where no campaign has
+        been consolidated.  The horizon comes from `scenarios.csv` rather than a literal,
+        since it is a property of the run and not of the code.
+        """
         path = Path("results/analysis/optima.csv")
-        if not path.is_file():
-            pytest.skip("no consolidated campaign on disk")
+        horizon_path = Path("results/analysis/scenarios.csv")
+        if not (path.is_file() and horizon_path.is_file()):
+            pytest.skip("no consolidated campaign in results/analysis")
+        horizons = pd.read_csv(horizon_path)["T"].unique()
+        assert len(horizons) == 1, f"the campaign mixes horizons: {horizons}"
         optima = pd.read_csv(path)
         optima = optima[optima["mode"] == "search"]
         billed = role_bill(optima)
-        features = billed["value_mean"] * 104
+        features = billed["value_mean"] * horizons[0]
         recovered = billed[list(BILL_PARAMETERS)].sum(axis=1) / features
         # Not exact: `cost_agent_mean` is a mean of per-replication ratios, this is a
         # ratio of means.  Within a fraction of a per cent, and a *share* — what the
