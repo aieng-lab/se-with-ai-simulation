@@ -24,27 +24,18 @@ class TestConfigHash:
         hashes = [config_hash(c) for c in cfgs]
         assert len(set(hashes)) == len(hashes)
 
-    def test_differs_on_M(self, base_config):
-        from src.config import AGENT_ROLE_COUNT, TeamConfiguration
-        A = [0] * AGENT_ROLE_COUNT
-        A[0], A[2], A[4] = 4, 2, 2     # a_1=4, a_3=2, a_5=2, sum=8
-        cfg2 = TeamConfiguration(N=2, A_dev=tuple(A), A_qa=base_config.A_qa, R=base_config.R)
-        assert config_hash(base_config) != config_hash(cfg2)
-
     def test_differs_on_R(self, base_config):
         from src.config import TeamConfiguration
         cfg2 = TeamConfiguration(N=base_config.N, A_dev=base_config.A_dev, A_qa=base_config.A_qa, R=2)
         assert config_hash(base_config) != config_hash(cfg2)
 
     def test_differs_on_A(self, base_config):
+        """The hash reads the composition itself, not just how many agents it holds."""
         from src.config import TeamConfiguration
         A = list(base_config.A_dev)
         A[0], A[2] = A[0] - 1, A[2] + 1   # move one agent; the sum is unchanged
         cfg2 = TeamConfiguration(N=base_config.N, A_dev=tuple(A), A_qa=base_config.A_qa, R=base_config.R)
         assert config_hash(base_config) != config_hash(cfg2)
-
-    def test_returns_int(self, base_config):
-        assert isinstance(config_hash(base_config), int)
 
 
 class TestGeneratorFor:

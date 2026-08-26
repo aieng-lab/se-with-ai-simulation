@@ -38,15 +38,6 @@ class ConfigResult:
     replications: tuple[ReplicationResult, ...]
 
 
-def phase_sprint_counts(config: TeamConfiguration, T: int) -> tuple[int, int]:
-    """(dev_sprint_count, qa_sprint_count) over a T-sprint horizon."""
-    qa_sprint_count = sum(
-        1 for t in range(T)
-        if (t % config.R) >= (config.R - config.F_freeze)
-    )
-    return T - qa_sprint_count, qa_sprint_count
-
-
 def escaped_bug_cost(params: ScenarioParameters, B_min: int, B_maj: int, B_sec: int) -> float:
     """Dollar cost of the bugs that reached production, by severity."""
     return (params.omega_min * B_min

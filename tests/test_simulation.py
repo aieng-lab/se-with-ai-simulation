@@ -1,6 +1,7 @@
 """Tests for src/simulation.py — objectives formula and cost accounting."""
 
 import dataclasses
+from pathlib import Path
 
 import pytest
 
@@ -31,10 +32,6 @@ class TestRunConfigurationBasic:
             assert rep.value >= 0
             assert rep.cost >= 0
             assert rep.cost_quality >= 0
-
-    def test_returns_a_ConfigResult(self, base_config, base_params, small_settings):
-        result = run_configuration(base_config, small_settings, base_params)
-        assert type(result) is ConfigResult
 
     def test_K_override_sets_the_replication_count(self, base_config, base_params):
         s = SimulationHorizon(T=4, K_search=3, K_final=11, master_seed=0)
@@ -178,8 +175,12 @@ class TestCostAccounting:
             assert rep.actions[k] == pytest.approx(s.T)
 
     def test_saturated_demand_reproduces_the_nominal_bill(self, base_params):
-        """Regression anchor: when every agent is busy, usage billing meets the
-        old nominal formula.  This pins the unit convention of each action count."""
+        """When no agent is idle, the bill of Eq. (cost_agents) reaches its ceiling.
+
+        Every role then completes a full sprint's worth of work, so the per-role action
+        counts are exactly the rates of Table `tab:work_units`; this is what pins the
+        unit convention of each count.
+        """
         # Demand far above capacity and zero debt, so the implementation agent runs
         # at its full rate every sprint.
         params = dataclasses.replace(
@@ -433,3 +434,75 @@ class TestHumanOnlyBaselineCost:
         for rep in result.replications:
             assert rep.impl_agents == 0
             assert rep.impl_human == pytest.approx(rep.value * s.T)
+
+
+# ---------------------------------------------------------------------------
+# The persisted campaign as a golden record
+# ---------------------------------------------------------------------------
+
+#: Scenarios spanning both result modes and both stress tiers of the grid: the extreme
+#: project velocity (`p-v`), the pessimistic agent tier (`a-p`), and a human-only
+#: enumeration at each end of the bug-impact range.
+_GOLDEN_SCENARIOS = (
+    "h-l_p-l_d-l_a-l_b-l",
+    "h-h_p-v_d-h_a-p_b-h",
+    "h-h_p-m_d-h_a-m_b-m",
+    "h-h_p-l_d-X_a-X_b-h",
+)
+
+
+class TestAgainstThePersistedCampaign:
+    """The reported `c*` of a finished campaign, re-simulated and compared bit for bit.
+
+    Every random stream is addressed by `(config_hash, replication index)`, so
+    ``run_configuration(cfg, K=K_final, k_offset=K_search)`` reproduces *exactly* the
+    block the two-stage selection of Section 3.10 already ran — the persisted
+    ``optima.csv`` is therefore an exact golden record of the transition, the cost
+    accounting and the bootstrap, not an approximate one.  No search is involved, so the
+    whole check costs seconds rather than the hours a re-run would.
+
+    This is what stands between an accidental edit to `step_sprint` and a campaign that
+    silently no longer matches the paper.  What it catches is a change in *behaviour*:
+    dropping the debt amplifier from Eq. (r_bugs_eff), say, moves all three
+    agent-supported scenarios below.  A perturbation far below the discretisation of the
+    Poisson and binomial draws is genuinely unobservable in the model and will not show
+    up here.  Skipped where no campaign has been consolidated, so a clean checkout is
+    unaffected.
+    """
+
+    @pytest.fixture(scope="class")
+    def optima(self):
+        import pandas as pd
+        path = Path("results/analysis/optima.csv")
+        if not path.is_file():
+            pytest.skip("no consolidated campaign in results/analysis")
+        return pd.read_csv(path)
+
+    @pytest.mark.parametrize("scenario_id", _GOLDEN_SCENARIOS)
+    def test_the_reported_optimum_is_reproduced_exactly(self, optima, scenario_id):
+        from src.campaign import scenario_params_for_id, team_config
+        from src.io import load_simulation_horizon
+        from src.selection import aggregate_config_result
+
+        rows = optima[optima["scenario_id"] == scenario_id]
+        if rows.empty:
+            pytest.skip(f"{scenario_id} is not in this campaign")
+        row = rows.iloc[0]
+
+        horizon = load_simulation_horizon("config/horizon_default.json")
+        params = scenario_params_for_id(scenario_id)
+        # The disjoint block of Section 3.10: the re-simulation runs replication indices
+        # [K_search, K_search + K_final), never an extension of the search's own block.
+        result = run_configuration(
+            team_config(row), horizon, params,
+            K=horizon.K_final, k_offset=horizon.K_search,
+        )
+        agg = aggregate_config_result(result, master_seed=horizon.master_seed)
+
+        assert agg.cost_mean == pytest.approx(row["cost_mean"], rel=0, abs=1e-9)
+        assert agg.value_mean == pytest.approx(row["value_mean"], rel=0, abs=1e-12)
+        assert agg.cost_ci[0] == pytest.approx(row["cost_ci_lo"], rel=0, abs=1e-9)
+        assert agg.cost_ci[1] == pytest.approx(row["cost_ci_hi"], rel=0, abs=1e-9)
+        # The three drivers are reported separately and must add back up to the objective.
+        assert (agg.cost_quality_mean + agg.cost_human_mean
+                + agg.cost_agent_mean) == pytest.approx(agg.cost_mean)

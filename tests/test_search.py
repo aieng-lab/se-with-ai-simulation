@@ -49,7 +49,8 @@ from src.search import (
     saturation_bounds,
     two_stage_selection,
 )
-from src.selection import parsimony_key, report_optimum, throughput_floor
+from src.selection import (parsimony_key, preference_key, report_optimum,
+                           throughput_floor)
 
 
 #: An all-zero QA composition.  Every team below runs F_freeze = 0 or is a
@@ -442,6 +443,35 @@ def wasteful_cfg():
     )
 
 
+#: Same shape as `_WASTEFUL_TIERS`, but at the low project tier: features arrive at 3 per
+#: sprint, which any team in the range below delivers, so the search never has to work its
+#: way in from the violating region.
+_EASY_TIERS = {group: "medium" for group in SCENARIO_GROUPS} | {"project": "low"}
+
+
+@pytest.fixture
+def easy_cfg():
+    return SearchConfiguration(
+        scenario_paths={group: f"config/{group}_{tier}.json"
+                        for group, tier in _EASY_TIERS.items()},
+        horizon_path="config/horizon_default.json",
+        N_values=(0.25, 1.0),
+        R_values=(2, 4),
+        F_freeze_values=(0, 1),
+        budget=60,
+        n_samples_initial=25,
+        n_generations=4,
+        n_offspring=10,
+        n_elite=5,
+        seed=11,
+    )
+
+
+@pytest.fixture
+def easy_params(easy_cfg):
+    return load_scenario_params(easy_cfg.scenario_paths)
+
+
 @pytest.fixture
 def tiny_horizon():
     return SimulationHorizon(T=4, K_search=3, K_final=3, master_seed=1)
@@ -798,18 +828,33 @@ class TestConvergenceRecording:
         assert len(outcome.best_cost) == n
         assert all(0.0 <= tau <= 1.0 for tau in outcome.elite_turnover)
 
-    def test_the_incumbent_never_gets_worse(self, wasteful_cfg, tiny_horizon,
-                                            wasteful_params):
-        """The population is an archive and the elite is its best, so cost is monotone."""
+    @pytest.mark.parametrize("seed", [1, 4, 7])
+    def test_the_incumbent_never_gets_worse(self, easy_cfg, tiny_horizon,
+                                            easy_params, seed):
+        """The population is an archive and the elite is its best, so cost is monotone.
+
+        Section 5.1 rests on this: it is why `tau_g` can only fall and why the residual
+        turnover is read as churn among ties rather than as continued improvement.
+
+        `best_cost` is comparable across generations only while the incumbent is
+        admissible, because the preference relation ranks on `(violation, cost)` and puts
+        every violator behind every admissible candidate — so *leaving* the violating
+        region can raise the cost legitimately.  The low project tier is what rules that
+        out here: features arrive at 3 per sprint, which the initial pool already meets,
+        so the incumbent is admissible from the first generation on.
+        """
         outcome = run_search(
-            wasteful_cfg, tiny_horizon, wasteful_params, np.random.default_rng(4),
+            easy_cfg, tiny_horizon, easy_params, np.random.default_rng(seed),
             progress_every=0,
         )
-        # Only comparable while the incumbent is admissible throughout; the preference
-        # preference relation puts a violator behind every admissible candidate, so a
-        # switch out of the violating region can raise the cost legitimately.
+        floor = throughput_floor(easy_params, easy_cfg.epsilon)
+        best = min((a for _, _, a in outcome.aggs),
+                   key=lambda a: preference_key(a, floor))
+        assert best.value_mean >= floor, "precondition: the incumbent is admissible"
+
         costs = outcome.best_cost
-        assert costs == sorted(costs, reverse=True) or len(set(costs)) <= len(costs)
+        assert len(costs) > 1
+        assert costs == sorted(costs, reverse=True), costs
 
     def test_incumbent_turnover_is_the_share_of_generations_with_a_change(self):
         from src.search import SearchOutcome

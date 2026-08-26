@@ -1,18 +1,22 @@
 """The sprint transition: one step of the discrete-time system.
 
-`step_sprint` runs these in order, and the order matters — each step reads state the
-previous ones wrote:
+The ten steps are the paper's, in the paper's numbering (Section 3.6), and the order
+matters — each reads state the ones before it wrote:
 
-  1  debt amplifier delta_D from the current queues and D_tech
-  2  human capacity allocation (monitoring, reviews, escalations, QA, coding, fixing)
+  1  human capacity allocation (monitoring, reviews, escalations, QA, coding, fixing)
+  2  debt penalties: the amplifier delta_D from the t-1 queues and D_tech
   3  feature arrival and implementation
   4  test suite update
   5  bug injection and detection
   6  architecture queue update
   7  bug fixing
   8  escalation queue update, fed by the agent work completed above
-  9  technical debt and documentation update
+  9  general maintenance: technical debt and documentation
   10 release event
+
+Steps 1 and 2 are evaluated in the opposite order below.  That is safe and deliberate:
+the capacity cascade never reads `delta_D`, and computing the amplifier first lets the
+whole of step 1 be written as one straight-line block.
 
 A team with no agents (`config.is_human_only`) diverges in exactly two places, both
 guarded by that predicate: it reserves f_qa of its capacity in step 2, and its step 5 is
@@ -142,7 +146,7 @@ def step_sprint(
     A_active = config.active_A(is_frozen)
     n_supervised = supervised_agent_count(A_active)
 
-    # --- Debt amplifier -----------------------------------------------------
+    # --- Step 2: debt penalties ---------------------------------------------
     # The two queue debts are normalised by what the team could clear in one sprint:
     # H_capacity * N / H_x_time items.
     cap_review = params.H_capacity * config.N / params.H_review_time
@@ -153,7 +157,7 @@ def step_sprint(
     D_eff  = min(1.0, state.D_tech + D_arch + D_esc)
     delta_D = 1.0 - (1.0 - params.delta_min) * (D_eff ** params.delta_exp)
 
-    # --- Human capacity allocation ------------------------------------------
+    # --- Step 1: human capacity allocation -----------------------------------
     # Every budget here is per FTE; the terms that consume it scale by config.N.
     H_net = net_capacity(params.H_capacity, params.c_comm, config.N)
     doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
@@ -187,7 +191,7 @@ def step_sprint(
         (1.0 - params.f_fix) * H_after_qa * config.N / params.h_feature
     )
 
-    # --- Feature arrival and implementation ---------------------------------
+    # --- Step 3: feature arrival and implementation -------------------------
     arrivals = int(rng.poisson(params.r_arrival))
     a_1 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
     total_impl_cap = int(params.r_F * delta_D * a_1)
@@ -206,14 +210,14 @@ def step_sprint(
     state.F_backlog = max(0, state.F_backlog + arrivals - impl)
     state.F_completed += impl
 
-    # --- Test suite update, before detection so new tests count this sprint --
+    # --- Step 4: test suite update, before detection so new tests count now ---
     # Past the coverage ceiling a further test buys nothing, so the agent (k=7) writes
     # nothing and is billed nothing.  max(0, .) guards an initial state above the cap.
     test_cap = params.c_test_ceil * state.F_completed
     tests_written = max(0.0, min(params.r_test * A_active[6], test_cap - state.N_test))
     state.N_test += tests_written
 
-    # --- Bug injection and detection ----------------------------------------
+    # --- Step 5: bug injection and detection --------------------------------
     # Only the agent stream is debt-amplified.
     r_bugs_eff = params.r_bugs * (2.0 - delta_D)
     bugs_raw = int(rng.poisson(impl_agents * r_bugs_eff))
@@ -279,7 +283,7 @@ def step_sprint(
     state.B_hid_maj += bugs_maj - det_maj
     state.B_hid_sec += bugs_sec - det_sec
 
-    # --- Architecture queues ------------------------------------------------
+    # --- Step 6: architecture queues ----------------------------------------
     # Q_arch (change requests) -> Q_rev (proposals awaiting review) -> Q_arch_impl
     # (approved, awaiting implementation).
     arch_chg_new = int(rng.poisson(params.f_arch_chg * impl))
@@ -289,21 +293,21 @@ def step_sprint(
     state.Q_rev = max(0, state.Q_rev + arch_chg_done - rev_done)
     state.Q_arch_impl = max(0, state.Q_arch_impl + rev_done - arch_impl_done)
 
-    # --- Bug fixing ---------------------------------------------------------
+    # --- Step 7: bug fixing -------------------------------------------------
     # Humans spend their budget first, then the agents spend theirs on what is left.
     fixes_human = _drain_bug_queues(state, fix_human_budget)
     a_3 = A_active[2]   # Bug Fixing Agent (k=3, index 2)
     fixes_agent = _drain_bug_queues(state, int(a_3 * delta_D * params.r_fix))
     total_fixes = fixes_human + fixes_agent
 
-    # --- Escalation queue ---------------------------------------------------
+    # --- Step 8: escalation queue -------------------------------------------
     # The escalation rate applies per completed agent task, so W_agent sums the three
     # roles whose output is counted in tasks.
     W_agent = impl_agents + arch_chg_done + fixes_agent
     esc_new = int(rng.poisson(params.rho_esc * (2.0 - delta_D) * W_agent))
     state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
 
-    # --- Technical debt and documentation -----------------------------------
+    # --- Step 9: general maintenance — technical debt and documentation ------
     D_raw = (state.D_tech
              + params.delta_impl * impl
              + params.delta_fix * total_fixes)
@@ -319,7 +323,7 @@ def step_sprint(
     docs_written = max(0.0, min(params.r_doc * A_active[7], doc_cap - state.N_doc))
     state.N_doc += docs_written
 
-    # --- Release event ------------------------------------------------------
+    # --- Step 10: release event ---------------------------------------------
     if (t + 1) % config.R == 0:
         # Everything unrepaired ships, whether or not it was ever detected.
         escaped_min = state.B_hid_min + state.B_kno_min

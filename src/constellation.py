@@ -1,11 +1,10 @@
-"""What the optimal teams are made of, faceted by two scenario groups.
+"""What the optimal teams are made of, faceted by `project` x `bugimpact`.
 
 `src.campaign` answers what an optimum costs; this module answers what it is made of.  It
 reduces the campaign to a mean and a standard deviation of every control variable — the
 staffing level `N`, the release process `(R, F_freeze)` and the two 8-element composition
-vectors — within each cell of a two-group tier grid.  The default grid is
-`project` x `bugimpact`: 4 x 3 = 12 cells, each holding the 36 scenarios whose `human`,
-`debt` and `agent` tiers are free.
+vectors — within each cell of the `CELL_GROUPS` tier grid: 4 x 3 = 12 cells, each holding
+the 36 scenarios whose `human`, `debt` and `agent` tiers are free.
 
 Two populations are tabulated separately, since a campaign reports one optimum per
 scenario without claiming it is the only one:
@@ -55,14 +54,15 @@ from .config import (
     AGENT_ROLE_COUNT,
     ALL_SCENARIO_TIERS,
     SCENARIO_GROUPS,
-    require_group_pair,
     SUPERVISED_ROLE_INDICES,
     tier_column,
     tiers_present,
 )
 
-#: The two scenario groups whose tier grid the cells are cut along, by default.  Every
-#: other group is free within a cell and contributes to its spread.
+#: The two scenario groups whose tier grid the cells are cut along.  Every other group is
+#: free within a cell and contributes to its spread.  Fixed, not configurable: these two
+#: are the ones expected to shape the optimal team most strongly, and Section 5.3 reports
+#: the cell table on this cut alone.
 CELL_GROUPS: tuple[str, str] = ("project", "bugimpact")
 
 #: The control variables in four blocks: the process triple, the two composition vectors
@@ -239,7 +239,6 @@ def scenario_means(istar: pd.DataFrame) -> pd.DataFrame:
 def cell_statistics(
     df: pd.DataFrame,
     population: str,
-    groups: tuple[str, ...] = CELL_GROUPS,
 ) -> pd.DataFrame:
     """Mean and standard deviation of every parameter within each cell of the tier grid.
 
@@ -248,8 +247,7 @@ def cell_statistics(
     the sample standard deviation (ddof = 1) over the scenarios in the cell, i.e. their
     spread rather than Monte Carlo error; a cell with one scenario reports NaN.
     """
-    groups = require_group_pair(groups)
-    cell_columns = [tier_column(group) for group in groups]
+    cell_columns = [tier_column(group) for group in CELL_GROUPS]
     if df.empty:
         return pd.DataFrame(columns=["population", *cell_columns, "parameter",
                                      "mean", "sd", "n_scenarios", "n_members"])
@@ -273,14 +271,14 @@ def cell_statistics(
     long = long.merge(counts.reset_index(), on=cell_columns, how="left")
     long = long.merge(members.reset_index(), on=cell_columns, how="left")
     long.insert(0, "population", population)
-    return _sorted_cells(long, groups)
+    return _sorted_cells(long)
 
 
-def _sorted_cells(long: pd.DataFrame, groups: tuple[str, ...]) -> pd.DataFrame:
+def _sorted_cells(long: pd.DataFrame) -> pd.DataFrame:
     """Order the long table by tier (mild→extreme) and by parameter block."""
     tier_order = {name: i for i, name in enumerate(ALL_SCENARIO_TIERS)}
     parameter_order = {name: i for i, name in enumerate(CONSTELLATION_PARAMETERS)}
-    tier_columns = [tier_column(g) for g in groups]
+    tier_columns = [tier_column(g) for g in CELL_GROUPS]
     out = long.sort_values(
         tier_columns + ["parameter"],
         key=lambda column: column.map(
@@ -303,10 +301,8 @@ def search_optima(optima: pd.DataFrame) -> pd.DataFrame:
 def build_constellation(
     optima: pd.DataFrame,
     istar: pd.DataFrame,
-    groups: tuple[str, ...] = CELL_GROUPS,
 ) -> pd.DataFrame:
     """The two populations' cell statistics, stacked into one long table."""
-    groups = require_group_pair(groups)
     frames = []
     for frame, population, balance in ((optima, C_STAR, False), (istar, I_STAR, True)):
         rows = search_optima(frame)
@@ -314,10 +310,10 @@ def build_constellation(
             continue
         rows = derive_totals(rows)
         frames.append(cell_statistics(
-            scenario_means(rows) if balance else rows, population, groups))
+            scenario_means(rows) if balance else rows, population))
 
     if not frames:
-        return cell_statistics(pd.DataFrame(), C_STAR, groups)
+        return cell_statistics(pd.DataFrame(), C_STAR)
     return pd.concat(frames, ignore_index=True)
 
 
@@ -333,21 +329,18 @@ def _mean_sd(mean: float, sd: float) -> str:
     return f"{mean:.4g} ± {sd_text}"
 
 
-def constellation_summary(
-    cells: pd.DataFrame,
-    groups: tuple[str, ...] = CELL_GROUPS,
-) -> str:
+def constellation_summary(cells: pd.DataFrame) -> str:
     """The cell statistics as a text block, one section per population and outer tier.
 
     Laid out with the *second* group across the columns and the parameters down the rows,
     so a block stays inside a terminal width whatever the parameter count; the first
     group's tiers become the blocks.
     """
-    groups = require_group_pair(groups)
     if cells.empty:
-        return f"Team constellation by {groups[0]} × {groups[1]}: no optimum reported.\n"
+        return (f"Team constellation by {CELL_GROUPS[0]} × {CELL_GROUPS[1]}: "
+                f"no optimum reported.\n")
 
-    row_group, col_group = groups
+    row_group, col_group = CELL_GROUPS
     row_column, col_column = tier_column(row_group), tier_column(col_group)
     col_tiers = tiers_present(cells[col_column])
     row_tiers = tiers_present(cells[row_column])

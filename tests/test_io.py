@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import SCENARIO_GROUPS
+from src.config import SCENARIO_GROUPS, scenario_tiers
 from src.io import (
     _flatten_scenario,
     _parse_value,
@@ -96,10 +96,17 @@ class TestLoadSimulationHorizon:
         with pytest.raises(KeyError):
             load_simulation_horizon(p)
 
-    def test_a_horizon_with_only_the_old_K_key_raises(self, tmp_path):
-        """Both replication counts are required; there is no silent default."""
+    def test_a_horizon_with_only_one_replication_count_raises(self, tmp_path):
+        """Both counts are required; the two-stage selection of Section 3.10 needs K > K'.
+
+        Defaulting the missing one would silently collapse the re-simulation into the
+        search, which is the one thing the disjoint-block design exists to prevent.
+        """
         p = tmp_path / "h.json"
-        p.write_text('{"T": 52, "K": 100, "master_seed": 42}')
+        p.write_text('{"T": 52, "K_search": 100, "master_seed": 42}')
+        with pytest.raises(KeyError):
+            load_simulation_horizon(p)
+        p.write_text('{"T": 52, "K_final": 1000, "master_seed": 42}')
         with pytest.raises(KeyError):
             load_simulation_horizon(p)
 
@@ -364,3 +371,130 @@ class TestLoadInitialState:
         p.write_text("{}")
         state = load_initial_state(p)
         assert state == SystemState()
+
+
+# ---------------------------------------------------------------------------
+# The scenario grid against the paper
+# ---------------------------------------------------------------------------
+
+#: Every value of Tables 6-10 of Section 4.2, transcribed from `paper/main.tex`, as
+#: {parameter: (low, medium, high[, fourth tier])}.  The paper is authoritative for these
+#: and the config files are only a rendering of it, so this is where the two are held
+#: together.  Two rows have been silently swapped in the config before (`d_test`/`r_bugs`
+#: and `Gamma_doc`, see the tier-direction tests above), which is what the whole table
+#: guards against: a spot check catches the row it happens to name and nothing else.
+_PAPER_TABLES: dict[str, dict[str, tuple]] = {
+    # Table: Human developer parameters (low = junior, high = senior).
+    "human": {
+        "H_capacity": (40.0, 40.0, 40.0),
+        "c_comm": (1.0, 1.0, 1.0),
+        "H_monitoring_overhead": (2.5, 2.5, 2.5),
+        "H_escalation_time": (4.0, 2.0, 1.0),
+        "H_review_time": (8.0, 4.0, 2.0),
+        "h_feature": (4.0, 2.0, 1.0),
+        "h_fix": (1.0, 0.5, 0.25),
+        "r_bugs_human": (0.20, 0.12, 0.08),
+        "f_fix": (0.5, 0.5, 0.5),
+        "h_qa": (0.80, 0.62, 0.53),
+        "f_qa": (0.09, 0.13, 0.21),
+        "d_qa": (0.8, 0.8, 0.8),
+        "c_salary": (100_000.0, 150_000.0, 250_000.0),
+    },
+    # Table: Project dynamics.  The fourth tier is the extreme-velocity stress case.
+    "project": {
+        "r_arrival": (3.0, 12.0, 75.0, 1000.0),
+        "f_arch_chg": (0.13, 0.13, 0.13, 0.13),
+        "theta_maj": (0.44, 0.44, 0.44, 0.44),
+        "theta_sec": (0.07, 0.07, 0.07, 0.07),
+    },
+    # Table: Debt dynamics.  delta_min is the throughput *retained* at maximal debt and
+    # Gamma_doc a *relief* factor, so both fall as the tier rises.
+    "debt": {
+        "delta_impl": (0.02, 0.06, 0.13),
+        "delta_fix": (0.02, 0.06, 0.13),
+        "delta_min": (0.94, 0.77, 0.60),
+        "delta_exp": (1.5, 1.5, 1.5),
+        "Gamma_doc": (0.40, 0.34, 0.0),
+    },
+    # Table: Agent cost, capability and effort.  The fourth tier is `pessimistic`: the low
+    # tier's capability at ten times the high tier's price.
+    "agent": {
+        "r_F": (178.0, 178.0, 178.0, 178.0),
+        "r_bugs": (0.20, 0.05, 0.03, 0.20),
+        "r_arch_chg": (35.0, 35.0, 35.0, 35.0),
+        "r_fix": (747.0, 747.0, 747.0, 747.0),
+        "r_refactor": (0.02, 0.06, 0.13, 0.02),
+        "d_CR": (0.75, 0.82, 0.89, 0.75),
+        "alpha_size": (0.10, 0.10, 0.10, 0.10),
+        "d_SA": (0.78, 0.83, 0.88, 0.78),
+        "r_test": (747.0, 747.0, 747.0, 747.0),
+        "d_test": (0.60, 0.75, 0.77, 0.60),
+        "c_test_ceil": (0.48, 0.54, 0.60, 0.48),
+        "r_doc": (747.0, 747.0, 747.0, 747.0),
+        "rho_esc": (0.03, 0.02, 0.01, 0.03),
+    },
+    # Table: Bug impact.  Absolute dollars per escaped bug, not relative weights.
+    "bugimpact": {
+        "omega_min": (100.0, 150.0, 250.0),
+        "omega_maj": (25_000.0, 300_000.0, 7_000_000.0),
+        "omega_sec": (48_000.0, 1_000_000.0, 120_000_000.0),
+    },
+}
+
+#: `c_token` is a vector, so it does not fit the scalar table above: USD per unit of each
+#: role's own throughput rate, k = 1..8, per agent tier.
+_PAPER_C_TOKEN: dict[str, tuple[float, ...]] = {
+    "low":         (2.28, 11.40, 0.54, 2.28, 0.54, 5.40, 0.54, 0.54),
+    "medium":      (3.80, 19.00, 0.90, 3.80, 0.90, 9.00, 0.90, 0.90),
+    "high":        (7.60, 38.00, 1.80, 7.60, 1.80, 18.00, 1.80, 1.80),
+    "pessimistic": (76.00, 380.00, 18.00, 76.00, 18.00, 180.00, 18.00, 18.00),
+}
+
+
+def _scenario_values(group: str, tier: str) -> dict:
+    """The flat {parameter: value} mapping of one scenario file."""
+    return _flatten_scenario(
+        json.loads(Path(f"config/{group}_{tier}.json").read_text()))
+
+
+class TestScenarioFilesMatchThePaper:
+    """Every number of Section 4.2, held against the config files that render it.
+
+    The paper is authoritative for the scenario grid, so this is the one place where a
+    hand-edited config that drifts from the manuscript is caught — including the tiers a
+    spot check would not reach.
+    """
+
+    @pytest.mark.parametrize("group", list(_PAPER_TABLES))
+    def test_every_tabulated_value_is_in_the_config(self, group):
+        table = _PAPER_TABLES[group]
+        for tier_index, tier in enumerate(scenario_tiers(group)):
+            values = _scenario_values(group, tier)
+            for name, per_tier in table.items():
+                assert name in values, f"{group}/{tier} is missing {name}"
+                assert values[name] == pytest.approx(per_tier[tier_index]), \
+                    f"{group}/{tier}: {name}"
+
+    def test_the_table_covers_every_scalar_parameter_of_its_group(self):
+        """No parameter may sit outside the transcription and drift unnoticed."""
+        for group, table in _PAPER_TABLES.items():
+            defined = set(_scenario_values(group, scenario_tiers(group)[0]))
+            # c_token is a vector and is pinned separately below.
+            assert defined - {"c_token"} == set(table), group
+
+    @pytest.mark.parametrize("tier", ["low", "medium", "high", "pessimistic"])
+    def test_the_token_prices_match_the_paper(self, tier):
+        values = _scenario_values("agent", tier)
+        assert tuple(values["c_token"]) == pytest.approx(_PAPER_C_TOKEN[tier])
+
+    def test_the_derived_relations_the_paper_states_in_prose_hold(self):
+        """Three cost ratios the paper gives as derivations rather than as numbers.
+
+        An architecture proposal costs five feature implementations, a security audit ten
+        code reviews, and refactoring the same as a feature implementation.
+        """
+        for tier in ("low", "medium", "high", "pessimistic"):
+            c = _scenario_values("agent", tier)["c_token"]
+            assert c[1] == pytest.approx(5 * c[0]), f"{tier}: architecture = 5 x feature"
+            assert c[5] == pytest.approx(10 * c[4]), f"{tier}: security = 10 x review"
+            assert c[3] == pytest.approx(c[0]), f"{tier}: refactoring = feature"

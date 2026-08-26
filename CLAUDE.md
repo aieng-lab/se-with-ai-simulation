@@ -23,7 +23,7 @@ src/                    Python simulation package
     parameters.py       ScenarioParameters (39 fields)
     state.py            SystemState
     rng.py              reproducible PCG-64 seeding (FNV-1a config hash)
-    io.py               load_simulation_horizon / load_team_config / load_scenario_params
+    io.py               load_simulation_horizon / load_scenario_params
                         / load_search_config / load_initial_state
     feasibility.py      check_feasibility — human-capacity feasibility condition (§3.6)
     sprint.py           step_sprint — full 10-step sprint transition; returns SprintActions
@@ -78,7 +78,7 @@ scripts/
 run_experiments.sh      campaign driver: 432 searches in parallel, resumable (§4.2);
                         MODE=human_only runs the 36 §4.1 baselines instead
 
-tests/                  pytest suite (558 tests, ~100 s — the campaign figures dominate)
+tests/                  pytest suite (570 tests, ~70 s — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
     experiments/        the campaign re-run of 2026-08-20: 432 `search` +
                         36 `human_only` scenario dirs, current as of that date.
@@ -96,7 +96,7 @@ sizes (from `convergence.csv`) and the cost multipliers (`multipliers.csv`).
 `paper/figures/` holds a copy of each under exactly the name the code emits — keep the two
 in sync, the four matrix figures once carried a stale `_evolutionary` suffix.
 
-Two rounds of analysis code have been deleted; do not resurrect either. **(1)** An earlier
+Three rounds of analysis code have been deleted; do not resurrect any of them. **(1)** An earlier
 §5 outline went with the three-objective Pareto formulation, taking ~2,200 lines
 (`results_analysis.py`, `composition_analysis.py`, `latex_tables.py`,
 `scripts/analyze_results.py`) — every concept they were built on (front position,
@@ -108,7 +108,22 @@ per-sprint trace path (`run --traces`, `analyze traces.csv`, `SprintSnapshot` /
 `ReplicationTrace` / `ConfigTrace`, `results.to_dataframe` / `save_traces` / `load_traces`)
 were removed once §5 was drafted: the paper reports **nothing** per-sprint — every
 objective comes from the terminal state `S(T)` plus an aggregated work record — and none of
-those figures appears in it.
+those figures appears in it. **(3)** Everything that let a figure or a table be *re-cut*:
+the `campaign --x/--y/--color/--marker/--size` and `constellation --rows/--cols` flags,
+`CAMPAIGN_CHANNEL_DEFAULTS`, `_matrix_channels`, `_check_matrix_groups`,
+`config.require_group_pair`, the `groups=` parameters of `cell_statistics` /
+`build_constellation` / `constellation_summary`, the five group parameters of the three
+`plot_*_matrix` functions, `visualize_team_summary`'s `block_group` / `bar_group` /
+`panel_group` and its channel-collision pooling path, and the `fmt=` parameters of
+`save_figure` / `visualize_campaign` / `visualize_team_summary`. §5 reads all seven
+figures off one layout and the cell table off one cut, so every one of these validated an
+input that only ever took a single value. Dropped with them: `AGENT_ROLE_NAMES` (no
+reference anywhere), `SystemState.B_kno` / `B_hid` (tests only — `tests/test_sprint.py`
+has module-level helpers instead), `simulation.phase_sprint_counts` with `optima.csv`'s
+`T_dev` / `T_qa`, `optima.csv`'s `throughput_floor` (it is `r_arrival · (1-ε)`),
+`optimum_row`'s unused `manifest` parameter, and the `agent-sim` console script. **The
+figures are byte-identical across all of this** — that is the check to run (below), not a
+matter of judgement.
 
 ---
 
@@ -173,7 +188,6 @@ line per finished job. Other env knobs: `FILTER` (config glob), `MODE`, `SAMPLES
 **Consolidate a campaign:**
 ```bash
 python -m src.main campaign [results/experiments] [--out results/analysis]
-python -m src.main campaign --x debt --color agent           # re-assign channels
 python -m src.main campaign --figures-only     # redraw from an existing optima.csv
 python -m src.main campaign --no-figures       # write the CSVs only
 ```
@@ -183,14 +197,27 @@ directories or rewriting any CSV — the path to use on the finished campaign wh
 the plotting code changed.  It reads `elite_turnover.csv` **only if it exists**: an
 all-baseline tree writes none, because an enumeration has no generations, and requiring
 it made `--figures-only` fail on a tree the non-`--figures-only` path handles.  There is
-no `--format` and no `--config-dir` on either subcommand: §5 is PNG throughout and the
-scenario JSONs are always read from `config/`.  `--no-figures` is its opposite: rewrite every CSV and the
+no `--format`, no `--config-dir` and **no channel flags** on either subcommand: §5 is
+PNG throughout, the scenario JSONs are always read from `config/`, and every figure is
+drawn on one fixed layout — `visualization.MATRIX_CHANNELS` for the three optima matrices,
+`visualization.COMPOSITION_{BLOCK,BAR,PANEL}_GROUP` for the composition figures and
+`constellation.CELL_GROUPS` for the cell grid.  The `--x/--y/--color/--marker/--size` and
+`--rows/--cols` flags that used to re-cut them are **gone**: §5 reads every figure off the
+one layout, the placements are load-bearing rather than arbitrary (see the matrix bullet
+below), and carrying them meant `_check_matrix_groups`, `_matrix_channels`,
+`require_group_pair` and a channel-collision pooling path in `visualize_team_summary` all
+existed to validate input that only ever took one value.  `--no-figures` is its opposite: rewrite every CSV and the
 convergence summary, draw nothing.
 `baseline_uplift.csv` appears whenever the tree holds §4.1 baselines: one row per
 campaign scenario that has a baseline at the same `human`/`project`/
 `bugimpact` tiers, with `cost_ratio = cost_mean(baseline) / cost_mean(c*)`. The join is on
 three groups, not five, because the baseline is inert in `debt` and `agent` — so one
-baseline row is the reference for all 12 of their combinations.
+baseline row is the reference for all 12 of their combinations. It nevertheless carries
+**all five** `tier_*` columns and an `admissible` / `baseline_admissible` pair, because
+§5.2 reads the comparison *by agent tier* (5.19 / 2.77 / 1.09 / 0.96) and *by debt tier*
+(1.98 → 1.06) over the 227 pairs where both sides are admissible — and those two groups
+are exactly the ones the join keys cannot supply. Without them the file gave 71.3 % /
+1.81 where §5.2 reports 74 % / 1.76 and neither ladder was computable from it at all.
 `optima.csv` is one row per (scenario, mode) describing `c*` — the `mode` column holds
 `search` or `human_only`: the five control variables, both composition vectors, cost with
 CI, the three drivers in dollars *and* as shares of the total
@@ -214,7 +241,15 @@ format — one row per (scenario, mode, generation) — because a search that ex
 early runs fewer than `G` generations, so a wide table would need padding.
 `campaign.convergence_summary` renders the same frame as the text block that
 `campaign` prints and writes to `convergence_summary.txt`: order statistics rather than
-means, since §5.1 expects those distributions to be strongly skewed.
+means, since §5.1 expects those distributions to be strongly skewed. It reports the two
+result modes in **separate blocks** and takes the four `I*` stage sizes over the
+`best_admissible` rows only, which is what makes the text file Table (results:topset)
+rather than an approximation of it: pooled over all 468 runs it printed 990 / 180 / 50 /
+34.5 where §5.1 reports 1,068 / 194 / 53 / 37, and 426/468 (91.0 %) where §5.1 reports
+410/431 (95.1 %). The reduction-step totals below the stage sizes stay over *all* runs of
+the mode — an inadmissible search still spends re-simulation effort — except the `c*`
+move rate, whose denominator is the admissible count, since an inadmissible run
+re-simulates a single candidate whose `c*` cannot move.
 
 `multipliers.csv` + `multipliers_summary.txt` are §5.2's Table (results:multipliers):
 `campaign.cost_multipliers` fits an additive model on `log10(cost_mean)` over the **431
@@ -231,16 +266,14 @@ is R² = 0.983 at a residual sd of 0.14 decades, and it reproduces the paper's t
 *made of*, cut along two scenario groups; `campaign` answers what they cost:
 ```bash
 python -m src.main constellation                          # → the four tables + three figures
-python -m src.main constellation --rows human --cols agent   # re-cut the grid
 python -m src.main constellation --figures-only           # redraw from optima.csv
 ```
 It reads `<--out>/optima.csv` for `c*` and re-walks the result tree for `I*`, so run
-`campaign` first; the walk costs about a minute on the 468-directory campaign. The
-`--rows` / `--cols` flags name the *figure* axes, and the tables are keyed column-group
-first, so the default grid is `project` × `bugimpact`: 4 × 3 = 12 cells, each holding the
-36 scenarios whose `human`, `debt` and `agent` tiers are free. Those two groups are the
-default because they are expected to shape the optimal team most strongly; the flags exist
-to test that.
+`campaign` first; the walk costs about a minute on the 468-directory campaign. The grid is
+`constellation.CELL_GROUPS` = `project` × `bugimpact`: 4 × 3 = 12 cells, each holding the
+36 scenarios whose `human`, `debt` and `agent` tiers are free. Those two groups because
+they shape the optimal team most strongly, and the cut is **fixed** — §5.3 reports the
+cell table on it alone, so there is nothing to choose.
 
 **`I*` is `search_summary.json`'s `indistinguishable` key list, *not* its
 `final_objectives` block.** `final_objectives` is the **preliminary** set re-simulated at
@@ -315,10 +348,13 @@ parameters collapse onto two nearly independent facts; `visualize_team_summary`
 figure per fact. Both take **`optima.csv`, not `constellation_cells.csv`**: their shares and rates
 must be formed *within* a scenario before being averaged, and a ratio of aggregates would
 be the largest scenario's ratio rather than the typical one. Do not "simplify" them onto
-the cell table. `_cmd_constellation` feeds `--cols` / `--rows` into the composition
-figures' block and bar groups, so a re-cut grid can claim the group the panels are on;
-`visualize_team_summary` then warns and pools it back into the single-panel form rather
-than taking the subcommand down over a channel collision.
+the cell table. Their three groups are the module constants
+`COMPOSITION_BLOCK_GROUP` / `COMPOSITION_BAR_GROUP` / `COMPOSITION_PANEL_GROUP`
+(`project` / `bugimpact` / `agent`). The channel-collision path that used to pool the
+panels back into one — needed only because `--cols` / `--rows` could claim the group the
+panels were on — went with those flags. `plot_team_shape` still rejects a collision: it
+is the primitive and takes its three groups as arguments, but `visualize_team_summary`
+can no longer produce one.
 
 - `composition_<what>.png` (`plot_team_shape`): a 100 % stacked horizontal bar per
   (project, bugimpact) cell, eight segments, and **two dollar figures annotated at the
@@ -339,7 +375,9 @@ than taking the subcommand down over a channel collision.
   the panels share the row axis, the tier and block labels are drawn once per *grid row*
   (the left column only), the x label once for the whole grid, and only the column of
   absolute totals repeats, since each panel has its own. `panel_group=None` gives the
-  pooled single-panel form, and is the only form that carries `_ShareWeight.xlabel` — the
+  pooled single-panel form — reachable only by calling `plot_team_shape` directly, since
+  `visualize_team_summary` always panels on `agent` — and is the only form that carries
+  `_ShareWeight.xlabel`; the
   panelled one has percent ticks and a title ("Share of development costs", "Share of
   agent costs") and does not need the sentence, let alone four copies of it.
 
@@ -473,8 +511,10 @@ axis**, where its fourth tier costs only one extra column. The three per-point c
 (`_TIER_STYLES` in `src/visualization.py`) give `veryhigh` and
 `pessimistic` the *same* fourth slot, which is sound only because no group holds both;
 `tests/test_config.py::test_no_group_carries_both_fourth_tiers` pins that. A fifth marker
-shape would not survive the smallest size tier, so do not add one. `_check_matrix_groups`
-enforces one group per channel. `visualize_campaign` draws one figure set, for the search
+shape would not survive the smallest size tier, so do not add one. The assignment lives in
+`visualization.MATRIX_CHANNELS` and is not an argument; that it names five distinct groups
+is pinned once by `tests/test_visualization.py::TestMatrixChannels` rather than re-checked
+at every call. `visualize_campaign` draws one figure set, for the search
 optima; the human-only baseline is an overlay on them rather than a set of its own, so the
 figure names carry no mode suffix.
 
@@ -560,8 +600,40 @@ figure no longer draws it.
 
 **Run tests:**
 ```bash
-.venv/bin/python -m pytest tests/ -v
+.venv/bin/python -m pytest tests/ -q
 ```
+
+Two of them are worth knowing about because they are what the paper is held to:
+
+`tests/test_io.py::TestScenarioFilesMatchThePaper` transcribes **every value of §4.2's
+Tables 6–10** and asserts the `config/*.json` grid against it, including the `c_token`
+vector, the fourth tiers, and the three cost relations the paper states in prose (an
+architecture proposal = 5 feature implementations, a security audit = 10 code reviews,
+refactoring = one feature implementation). The scenario files are only a rendering of the
+manuscript and rows have been silently swapped in them twice before, so a spot check
+catches the row it happens to name and nothing else.
+
+`tests/test_simulation.py::TestAgainstThePersistedCampaign` re-simulates the reported `c*`
+of four scenarios and compares against `results/analysis/optima.csv` **bit for bit**. It
+works because every stream is addressed by `(config_hash, replication index)`:
+`run_configuration(cfg, K=K_final, k_offset=K_search)` reproduces exactly the block §3.10
+already ran, so the persisted campaign is an *exact* golden record of the transition, the
+cost accounting and the bootstrap. Four scenarios spanning both result modes and both
+stress tiers cost 8 s, against the ~30 minutes a search would. It catches a change in
+*behaviour* — dropping the `(2 - δ_D)` amplifier from Eq. (r_bugs_eff) fails all three
+agent-supported scenarios and correctly leaves the human-only one green — but not a
+perturbation below the discretisation of the Poisson and binomial draws, which is
+unobservable in the model anyway. It skips where `results/analysis/` is absent.
+
+**After any change to the analysis or plotting code, check the figures are unchanged.**
+`--figures-only` overwrites `results/analysis/*.png`, so redraw into a scratch copy:
+```bash
+cp -r results/analysis /tmp/figcheck && rm -f /tmp/figcheck/*.png
+.venv/bin/python -m src.main campaign --figures-only --out /tmp/figcheck
+.venv/bin/python -m src.main constellation --figures-only --out /tmp/figcheck
+for f in paper/figures/*.png; do cmp "$f" "/tmp/figcheck/$(basename $f)"; done
+```
+All seven are byte-identical today and must stay that way unless §5 changes.
 
 ---
 

@@ -64,7 +64,11 @@ INDEX="$OUT_ROOT/index.tsv"
 [[ -x "$PYTHON" ]] || command -v "$PYTHON" >/dev/null \
     || { echo "error: python not found at $PYTHON" >&2; exit 1; }
 [[ -d "$CONFIG_DIR" ]] || {
-    echo "error: $CONFIG_DIR not found — run '$PYTHON scripts/generate_search_configs.py' first" >&2
+    # The baseline set is a separate invocation of the generator, not a by-product of the
+    # default one, so name the flag that writes whichever directory is missing.
+    gen="$PYTHON scripts/generate_search_configs.py"
+    [[ "$CONFIG_DIR" == *baseline* ]] && gen="$gen --baseline"
+    echo "error: $CONFIG_DIR not found — run '$gen' first" >&2
     exit 1
 }
 
@@ -119,7 +123,9 @@ run_job() {
     mkdir -p "$out"
     local status=0
     # The enumerator is selected by the search config's `human_only` key; $MODE only
-    # names the output directory (and picks the config set via $CONFIG_DIR).
+    # names the output directory (and picks the config set via $CONFIG_DIR).  `optimize`
+    # refuses to run when the two disagree, so a mismatched MODE/CONFIG_DIR pair fails
+    # loudly instead of filing every result under the wrong mode.
     "$PYTHON" -m src.main optimize "$cfg" \
         --samples "$SAMPLES" \
         --progress-every "$PROGRESS_EVERY" \

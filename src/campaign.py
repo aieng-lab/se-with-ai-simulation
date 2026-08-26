@@ -56,7 +56,6 @@ from .config import (
 )
 from .io import load_scenario_params
 from .parameters import ScenarioParameters
-from .simulation import phase_sprint_counts
 
 # ----------------------------------------------------------------------------
 # Scenario ids and parameters
@@ -149,7 +148,6 @@ def composition_columns(obj: dict) -> dict:
 def optimum_row(
     scenario_id: str,
     mode: str,
-    manifest: dict,
     summary: dict,
     config_dir: str = "config",
 ) -> dict | None:
@@ -168,7 +166,6 @@ def optimum_row(
         return None
     obj = summary["final_objectives"][best]
     params = scenario_params_for_id(scenario_id, config_dir)
-    T = manifest["horizon"]["T"]
 
     row = scenario_columns(scenario_id, mode)
     row.update({
@@ -176,11 +173,8 @@ def optimum_row(
         "N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"],
     })
     row.update(composition_columns(obj))
-    T_dev, T_qa = phase_sprint_counts(team_config(row), T)
     total = obj["cost_mean"]
     row.update({
-        "T_dev": T_dev,
-        "T_qa": T_qa,
         "cost_mean": obj["cost_mean"],
         "cost_ci_lo": obj["cost_ci"][0],
         "cost_ci_hi": obj["cost_ci"][1],
@@ -196,7 +190,6 @@ def optimum_row(
         "r_arrival": params.r_arrival,
         "value_ratio": obj["value_mean"] / params.r_arrival,
         "feasible_throughput": obj["feasible_throughput"],
-        "throughput_floor": summary["throughput_floor"],
         "n_indistinguishable": len(summary["indistinguishable"]),
         "impl_human_mean": obj["impl_human_mean"],
         "impl_agents_mean": obj["impl_agents_mean"],
@@ -315,7 +308,7 @@ def build_tables(
     for scenario_id, mode, d in searches:
         manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         summary = json.loads((d / "search_summary.json").read_text(encoding="utf-8"))
-        row = optimum_row(scenario_id, mode, manifest, summary, config_dir)
+        row = optimum_row(scenario_id, mode, summary, config_dir)
         if row is not None:
             o_rows.append(row)
         s_rows.append(scenario_row(scenario_id, mode, manifest, summary))
@@ -344,6 +337,16 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
     One row per (campaign scenario, search mode) that has a baseline sharing its
     `human` / `project` / `bugimpact` tiers.  `cost_ratio = cost_mean(baseline) /
     cost_mean(c*)`, so above 1 the agent-supported optimum is the cheaper of the two.
+
+    The join is on three groups, not five, because the baseline is inert in `debt` and
+    `agent`: one baseline row is the reference for all 12 of their combinations.  All
+    five tier columns are carried anyway — the comparison is *read* by agent and by debt
+    tier, which is where its strongest interaction lies, and those two are exactly the
+    ones the join cannot supply.
+
+    `admissible` is true only where both sides reported an admissible optimum, which is
+    the population the comparison is meaningful over: a ratio against a baseline that
+    never kept up with the arriving work compares a cost to a shortfall.
     """
     if optima.empty or "mode" not in optima.columns:
         return pd.DataFrame()
@@ -354,16 +357,22 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
         return pd.DataFrame()
 
     join = [tier_column(g) for g in BASELINE_VARYING_GROUPS]
-    keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "value_mean"]
+    tiers = [tier_column(g) for g in SCENARIO_GROUPS]
+    keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "value_mean",
+                   "n_indistinguishable"]
 
     merged = search.merge(
         base[keep].rename(columns=lambda c: c if c in join else f"baseline_{c}"),
         on=join, how="inner", validate="many_to_one",
     )
     merged["cost_ratio"] = merged["baseline_cost_mean"] / merged["cost_mean"]
+    # An inadmissible run has an empty I* (Section 3.10), which is what marks it here.
+    merged["admissible"] = (merged["n_indistinguishable"] > 0)
+    merged["baseline_admissible"] = (merged["baseline_n_indistinguishable"] > 0)
 
-    cols = (["scenario_id", "mode"] + join
-            + ["cost_mean", "baseline_cost_mean", "cost_ratio", "baseline_scenario_id",
+    cols = (["scenario_id", "mode"] + tiers
+            + ["cost_mean", "baseline_cost_mean", "cost_ratio",
+               "admissible", "baseline_admissible", "baseline_scenario_id",
                "baseline_N", "baseline_R", "baseline_F_freeze", "baseline_value_mean"])
     return merged[cols].sort_values(
         ["scenario_id", "mode"]).reset_index(drop=True)
@@ -385,15 +394,74 @@ def _median_iqr_max(values: "pd.Series") -> str:
             f"max = {v.max():.3g}")
 
 
+def _i_star_block(rows: "pd.DataFrame", label: str) -> list[str]:
+    """The four `I*` stage sizes and the three reduction steps, for one result mode.
+
+    The stage sizes describe the searches that ended admissible, which is the population
+    Section 5.1's table reports: an inadmissible search has an empty preliminary `I*`, so
+    including it would put a zero into every stage.  The reduction-step totals below them
+    are over *all* of `rows`, since a search that ends inadmissible still spends
+    re-simulation effort.
+    """
+    n = len(rows)
+    if not n:
+        return [f"  {label}: none in this campaign"]
+
+    admissible = rows[rows["best_admissible"].astype(bool)]
+    lines = [f"  {label} ({n} run(s), {len(admissible)} admissible)"]
+    if admissible.empty:
+        lines.append("    every run ended inadmissible; I* is empty throughout")
+    else:
+        for caption, column in (("preliminary, at K'", "n_prelim"),
+                                ("after the parsimony tie-break", "n_resimulated"),
+                                ("after the re-simulation at K", "n_after_resim"),
+                                ("after the second tie-break", "n_final")):
+            lines.append(f"    {caption:<32}{_median_iqr_max(admissible[column])}")
+
+    removed_prelim = rows["parsimony_removed_prelim"].sum()
+    prelim = rows["n_prelim"].sum()
+    removed = rows["parsimony_removed"].sum()
+    after = rows["n_after_resim"].sum()
+    # Counted over the admissible runs: an inadmissible one re-simulates a single
+    # candidate, so its `c*` cannot move and would only dilute the rate.
+    changed = int(admissible["best_changed_by_resim"].astype(bool).sum())
+    discarded = rows["n_discarded_throughput"]
+    lines.append("")
+    if prelim:
+        lines.append(f"    parsimony removed at K'         {removed_prelim:.0f}/{prelim:.0f} "
+                     f"members ({removed_prelim / prelim:.1%}), leaving "
+                     f"{prelim - removed_prelim:.0f} to re-simulate")
+    else:
+        lines.append("    parsimony removed at K'         n/a (no admissible set)")
+    if len(admissible):
+        lines.append(f"    re-simulation moved c*          {changed}/{len(admissible)} "
+                     f"admissible runs ({changed / len(admissible):.1%})")
+    lines.append(f"    members discarded on throughput {int(discarded.sum())} "
+                 f"configuration(s) in {int((discarded > 0).sum())}/{n} runs")
+    if after:
+        lines.append(f"    parsimony removed at K          {removed:.0f}/{after:.0f} "
+                     f"members ({removed / after:.1%})")
+    else:
+        lines.append("    parsimony removed at K          n/a (no admissible set)")
+    lines.append(f"    rho over the final I*           {_median_iqr_max(rows['rho_mean'])}")
+    lines.append(f"    rho at c*                       {_median_iqr_max(rows['rho_best'])}")
+    return lines
+
+
 def convergence_summary(convergence: "pd.DataFrame") -> str:
-    """Render `convergence.csv` as a text block, one section per group of measures."""
+    """Render `convergence.csv` as a text block, one section per group of measures.
+
+    The two result modes are reported **separately**, as Section 5.1 does: a search and an
+    exhaustive enumeration differ in what they spend and in how far the selection narrows
+    them, so pooling the 36 baselines into the 432 searches misstates both.
+    """
     if convergence.empty:
         return "Search convergence: no search carries a convergence record.\n"
-    lines = [f"Search convergence over {len(convergence)} search(es)", "=" * 64]
+    lines = [f"Search convergence over {len(convergence)} run(s)", "=" * 64]
 
     searched = convergence[convergence["n_generations_run"] > 0]
     lines.append("")
-    lines.append("Elite and incumbent turnover")
+    lines.append("Elite turnover (searches only; an enumeration has no generations)")
     if searched.empty:
         lines.append("  no generational search in this campaign (enumeration only)")
     else:
@@ -401,56 +469,22 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
         lines.append(f"  tau_1  (first generation)        {_median_iqr_max(searched['tau_first'])}")
         lines.append(f"  tau_G  (last generation)         {_median_iqr_max(searched['tau_last'])}")
         lines.append(f"  tau over the last 10 generations {_median_iqr_max(searched['tau_mean_last_10'])}")
-        lines.append(f"  incumbent turnover               {_median_iqr_max(searched['incumbent_turnover'])}")
 
     lines.append("")
-    lines.append("Size of I* at the four stages of the selection")
-    lines.append(f"  preliminary, at K'              {_median_iqr_max(convergence['n_prelim'])}")
-    lines.append(f"  after the parsimony tie-break   {_median_iqr_max(convergence['n_resimulated'])}")
-    lines.append(f"  after the re-simulation at K    {_median_iqr_max(convergence['n_after_resim'])}")
-    lines.append(f"  after the second tie-break      {_median_iqr_max(convergence['n_final'])}")
-
-    n = len(convergence)
-    changed = int(convergence["best_changed_by_resim"].astype(bool).sum())
-    discarded = convergence["n_discarded_throughput"]
-    discarded_total = int(discarded.sum())
-    discarded_searches = int((discarded > 0).sum())
-    removed_prelim = convergence["parsimony_removed_prelim"].sum()
-    prelim = convergence["n_prelim"].sum()
-    removed = convergence["parsimony_removed"].sum()
-    after = convergence["n_after_resim"].sum()
-    lines.append("")
-    lines.append("What the three reduction steps did")
-    # The first tie-break is the one that saves effort: a member removed there is one
-    # fewer configuration to re-simulate at K replications.
-    if prelim:
-        lines.append(f"  parsimony removed at K'         {removed_prelim:.0f}/{prelim:.0f} members "
-                     f"({removed_prelim / prelim:.1%} of the preliminary set)")
-    else:
-        # Every search was inadmissible, so there was no preliminary set to reduce.
-        lines.append("  parsimony removed at K'         n/a (no admissible set)")
-    lines.append(f"  re-simulation moved c*          {changed}/{n} searches "
-                 f"({changed / n:.1%})")
-    lines.append(f"  members discarded on throughput {discarded_total} configuration(s) "
-                 f"in {discarded_searches}/{n} searches")
-    if after:
-        lines.append(f"  parsimony removed at K          {removed:.0f}/{after:.0f} members "
-                     f"({removed / after:.1%} of the set at K)")
-    else:
-        lines.append("  parsimony removed at K          n/a (no admissible set)")
+    lines.append("Size of I* at the four stages of the selection, by result mode")
+    lines.append("  (stage sizes over the admissible runs; the counters below over all)")
+    for mode in RESULT_MODES:
+        rows = convergence[convergence["mode"] == mode]
+        lines.append("")
+        lines.extend(_i_star_block(rows, mode))
 
     inadmissible = convergence[~convergence["best_admissible"].astype(bool)]
     lines.append("")
-    lines.append(f"Inadmissible searches: {len(inadmissible)}/{n}")
+    lines.append(f"Inadmissible runs: {len(inadmissible)}/{len(convergence)}")
     for _, row in inadmissible.sort_values("scenario_id").iterrows():
         ratio = row["value_ratio"]
         ratio_txt = "n/a" if pd.isna(ratio) else f"{ratio:.3f} x r_arrival"
         lines.append(f"  {row['scenario_id']:<24} {row['mode']:<12} value = {ratio_txt}")
-
-    lines.append("")
-    lines.append("Relative CI half-width rho after the re-simulation")
-    lines.append(f"  mean over the final I*          {_median_iqr_max(convergence['rho_mean'])}")
-    lines.append(f"  at c*                           {_median_iqr_max(convergence['rho_best'])}")
     lines.append("")
     return "\n".join(lines)
 

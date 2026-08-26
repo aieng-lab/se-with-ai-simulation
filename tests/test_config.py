@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import dataclasses
+
 import pytest
 
 from src.config import (
@@ -316,7 +318,8 @@ class TestAutonomousRoleBudget:
         assert cfg.A_qa == _VALID_A_QA
 
     def test_frozen(self, base_config):
-        with pytest.raises(Exception):
+        """A configuration is hashed into its RNG stream, so it must not be mutable."""
+        with pytest.raises(dataclasses.FrozenInstanceError):
             base_config.N = 99  # type: ignore[misc]
 
 

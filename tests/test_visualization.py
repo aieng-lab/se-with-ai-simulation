@@ -33,6 +33,10 @@ from src.config import (
 )
 from src.constellation import BILL_PARAMETERS, role_bill
 from src.visualization import (
+    COMPOSITION_BAR_GROUP,
+    COMPOSITION_BLOCK_GROUP,
+    COMPOSITION_PANEL_GROUP,
+    MATRIX_CHANNELS,
     _BUG_COST_LABEL,
     _compact_dollars,
     _BASELINE_COLOR,
@@ -91,8 +95,24 @@ def full_grid() -> pd.DataFrame:
 
 @pytest.fixture(scope="module")
 def default_fig(full_grid) -> Figure:
-    """The default channel assignment over the whole grid; read-only, shared."""
+    """`plot_human_agent_matrix` over the whole grid; read-only, shared.
+
+    Rendering the 432-scenario grid costs two to four seconds, so the tests that only
+    inspect a finished figure share one render instead of each paying for its own.
+    """
     return plot_human_agent_matrix(full_grid)
+
+
+@pytest.fixture(scope="module")
+def quality_fig(full_grid) -> Figure:
+    """`plot_quality_development_matrix` over the whole grid; read-only, shared."""
+    return plot_quality_development_matrix(full_grid)
+
+
+@pytest.fixture(scope="module")
+def ratio_fig(full_grid) -> Figure:
+    """`plot_agent_human_ratio_matrix` over the whole grid; read-only, shared."""
+    return plot_agent_human_ratio_matrix(full_grid)
 
 
 class TestTierHelpers:
@@ -120,19 +140,41 @@ class TestMatrixChannels:
     """The five-channel tier grid `_draw_matrix` owns, exercised through one figure.
 
     Every campaign matrix goes through it and differs only in the pair of columns on
-    the axes, so the channel assignment is pinned once here rather than per figure.
+    the axes, so the assignment is pinned once here rather than per figure.  It is the
+    fixed `MATRIX_CHANNELS` and not an argument, so what is pinned is that constant and
+    the way the grid follows the *data* within it.
     """
+
+    def test_the_assignment_covers_every_group_exactly_once(self):
+        """Five channels, five groups, no group driving two of them.
+
+        This used to be checked at every call, when the channels were arguments.  With
+        one fixed assignment it is a property of the constant, so it is checked once.
+        """
+        assert set(MATRIX_CHANNELS) == {
+            "x_group", "y_group", "color_group", "marker_group", "size_group"}
+        assert sorted(MATRIX_CHANNELS.values()) == sorted(SCENARIO_GROUPS)
+
+    def test_project_is_on_the_shape_channel_and_agent_on_a_facet(self):
+        """Where the two four-tier groups sit is deliberate, not incidental.
+
+        Shape is the only per-point channel whose fourth level reads as a peer rather
+        than as "more", and a facet axis absorbs `agent`'s fourth tier for one extra
+        column — a fifth marker shape would not survive the smallest size tier.
+        """
+        assert MATRIX_CHANNELS["marker_group"] == "project"
+        assert MATRIX_CHANNELS["x_group"] == "agent"
 
     def test_grid_is_the_two_facet_groups(self, default_fig):
         # agent (four tiers) x human (three).
         assert isinstance(default_fig, Figure)
         assert len(default_fig.axes) == 12
 
-    def test_a_three_tier_group_on_the_x_facet_narrows_the_grid(self, full_grid):
-        # Swapping the four-tier `agent` off the column axis for the three-tier `debt`
-        # gives the 3x3 grid; the facet count follows the data, not a fixed layout.
-        fig = plot_human_agent_matrix(full_grid, x_group="debt", color_group="agent")
-        assert len(fig.axes) == 9
+    def test_the_facet_count_follows_the_data(self, full_grid):
+        # A campaign missing the fourth agent tier gets a 3x3 grid: the panels come from
+        # the tiers actually present, not from a fixed layout.
+        narrowed = full_grid[full_grid["tier_agent"] != "pessimistic"]
+        assert len(plot_human_agent_matrix(narrowed).axes) == 9
 
     def test_every_point_is_drawn_exactly_once(self, full_grid, default_fig):
         drawn = sum(len(coll.get_offsets()) for ax in default_fig.axes
@@ -145,28 +187,23 @@ class TestMatrixChannels:
         # The four-tier group gets a fourth entry; the three-tier ones do not.
         assert [len(lg.get_texts()) for lg in default_fig.legends] == [3, 4, 3]
 
-    def test_the_pessimistic_agent_tier_draws_on_a_per_point_channel(self, full_grid):
-        # `agent` is a facet by default, so its fourth tier never reaches the colour /
-        # shape / size dicts there.  Moving it onto one exercises that entry.
-        fig = plot_human_agent_matrix(full_grid, x_group="debt", color_group="agent")
-        colour_legend = fig.legends[0]
-        assert colour_legend.get_title().get_text() == "agent (colour)"
-        assert [t.get_text() for t in colour_legend.get_texts()] == \
-            ["low", "medium", "high", "pessimistic"]
+    def test_the_fourth_project_tier_draws_on_the_shape_channel(self, default_fig):
+        """`veryhigh` is the one fourth tier that reaches a per-point channel.
+
+        `agent` is a facet, so `pessimistic` never enters the colour / shape / size
+        dicts; `project` is on the shape channel, so `_TIER_STYLES`' fourth slot — which
+        the two share — is exercised through it.
+        """
+        shape_legend = default_fig.legends[1]
+        assert shape_legend.get_title().get_text() == "project (shape)"
+        assert [t.get_text() for t in shape_legend.get_texts()] == \
+            ["low", "medium", "high", "veryhigh"]
 
     def test_a_zero_value_is_clipped_onto_the_log_axis(self, full_grid, default_fig):
         assert (full_grid["cost_agent_mean"] == 0.0).any()
         drawn_x = [x for ax in default_fig.axes for coll in ax.collections
                    for x, _ in coll.get_offsets()]
         assert min(drawn_x) > 0.0
-
-    def test_a_group_may_drive_only_one_channel(self):
-        with pytest.raises(ValueError, match="only one visual channel"):
-            plot_human_agent_matrix(_few(), x_group="agent", color_group="agent")
-
-    def test_unknown_group_rejected(self):
-        with pytest.raises(ValueError, match="unknown scenario group"):
-            plot_human_agent_matrix(_few(), color_group="weather")
 
     def test_missing_tier_column_rejected(self):
         with pytest.raises(KeyError, match="tier_debt"):
@@ -176,16 +213,16 @@ class TestMatrixChannels:
 class TestHumanAgentMatrix:
     """`_draw_matrix` is pinned by `TestMatrixChannels`; only what this figure owns."""
 
-    def test_puts_the_two_team_cost_drivers_on_the_axes(self, full_grid):
-        fig = plot_human_agent_matrix(full_grid)
+    def test_puts_the_two_team_cost_drivers_on_the_axes(self, default_fig):
+        fig = default_fig
         # Only the bottom row carries an x label and only the left column a y label.
         assert "agent cost" in fig.axes[-1].get_xlabel()
         assert "developer cost" in fig.axes[0].get_ylabel()
         assert (fig.axes[0].get_xscale(), fig.axes[0].get_yscale()) == ("log", "log")
 
-    def test_both_axes_carry_the_same_range(self, full_grid):
+    def test_both_axes_carry_the_same_range(self, full_grid, default_fig):
         """Same unit on both axes, so a point's side of the 1:1 line is the reading."""
-        fig = plot_human_agent_matrix(full_grid)
+        fig = default_fig
         for ax in fig.axes:
             assert ax.get_xlim() == ax.get_ylim()
         # And the range must hold every point of both columns, not just of one.  A
@@ -197,9 +234,8 @@ class TestHumanAgentMatrix:
             assert lo < min(drawn.min(), floor if floor is not None else drawn.min())
             assert drawn.max() < hi
 
-    def test_equal_aspect_so_a_dollar_is_the_same_distance_on_both_axes(self, full_grid):
-        fig = plot_human_agent_matrix(full_grid)
-        assert all(ax.get_aspect() == 1.0 for ax in fig.axes)
+    def test_equal_aspect_so_a_dollar_is_the_same_distance_on_both_axes(self, default_fig):
+        assert all(ax.get_aspect() == 1.0 for ax in default_fig.axes)
 
     @pytest.mark.parametrize("column", ["cost_agent_mean", "cost_human_mean"])
     def test_missing_cost_column_rejected(self, column):
@@ -217,15 +253,15 @@ def _drawn(fig, axis: int) -> list[float]:
 class TestQualityDevelopmentMatrix:
     """Shares `_draw_matrix` with the other matrices; only its own columns need testing."""
 
-    def test_x_is_the_sum_of_the_two_team_cost_drivers(self, full_grid):
-        fig = plot_quality_development_matrix(full_grid)
+    def test_x_is_the_sum_of_the_two_team_cost_drivers(self, full_grid, quality_fig):
+        fig = quality_fig
         expected = sorted(full_grid["cost_human_mean"] + full_grid["cost_agent_mean"])
         assert _drawn(fig, 0) == pytest.approx(expected)
         assert _drawn(fig, 1) == pytest.approx(sorted(full_grid["cost_quality_mean"]))
 
-    def test_both_axes_carry_the_same_range_at_an_equal_aspect(self, full_grid):
+    def test_both_axes_carry_the_same_range_at_an_equal_aspect(self, quality_fig):
         """Same unit on both axes, so a point's side of the 1:1 line is the reading."""
-        fig = plot_quality_development_matrix(full_grid)
+        fig = quality_fig
         for ax in fig.axes:
             assert ax.get_xlim() == ax.get_ylim()
             assert ax.get_aspect() == 1.0
@@ -244,31 +280,31 @@ class TestQualityDevelopmentMatrix:
 
 
 class TestAgentHumanRatioMatrix:
-    def test_a_rank_on_a_linear_x_against_the_ratio_on_a_log_y(self, full_grid):
-        fig = plot_agent_human_ratio_matrix(full_grid)
+    def test_a_rank_on_a_linear_x_against_the_ratio_on_a_log_y(self, ratio_fig):
+        fig = ratio_fig
         for ax in fig.axes:
             assert ax.get_xscale() == "linear"
             assert ax.get_yscale() == "log"
 
-    def test_the_percentile_is_taken_over_the_whole_frame_not_per_panel(self, full_grid):
+    def test_the_percentile_is_taken_over_the_whole_frame_not_per_panel(self, full_grid,
+                                                                        ratio_fig):
         """A per-panel ECDF would put one point per panel at x = 100 %, not one overall."""
-        fig = plot_agent_human_ratio_matrix(full_grid)
+        fig = ratio_fig
         ratio = full_grid["cost_agent_mean"] / full_grid["cost_human_mean"]
         assert _drawn(fig, 0) == pytest.approx(
             sorted(ratio.rank(method="average", pct=True))
         )
 
-    def test_y_is_the_ratio_with_zeros_on_the_log_floor(self, full_grid):
-        fig = plot_agent_human_ratio_matrix(full_grid)
+    def test_y_is_the_ratio_with_zeros_on_the_log_floor(self, full_grid, ratio_fig):
+        fig = ratio_fig
         ratio = full_grid["cost_agent_mean"] / full_grid["cost_human_mean"]
         floor = _log_floor(full_grid.assign(r=ratio), "r")
         assert _drawn(fig, 1) == pytest.approx(
             sorted(r if r > 0 else floor for r in ratio)
         )
 
-    def test_a_parity_line_is_drawn_at_one(self, full_grid):
-        fig = plot_agent_human_ratio_matrix(full_grid)
-        for ax in fig.axes:
+    def test_a_parity_line_is_drawn_at_one(self, ratio_fig):
+        for ax in ratio_fig.axes:
             assert any(line.get_ydata()[0] == 1.0 for line in ax.get_lines())
 
     @pytest.mark.parametrize("column", ["cost_agent_mean", "cost_human_mean"])
@@ -299,9 +335,12 @@ class TestVisualizeCampaign:
         assert not (tmp_path / "elite_turnover.png").is_file()
         assert (tmp_path / "human_agent_matrix.png").is_file()
 
-    def test_channels_are_passed_through(self, tmp_path):
-        with pytest.raises(ValueError, match="only one visual channel"):
-            visualize_campaign(_few(), tmp_path, color_group="agent")
+    def test_every_matrix_is_drawn_on_the_one_fixed_layout(self, tmp_path):
+        """All three matrices come out of `MATRIX_CHANNELS`; none takes a layout."""
+        visualize_campaign(_few(("search",)), tmp_path)
+        assert {p.name for p in tmp_path.glob("*.png")} == {
+            "human_agent_matrix.png", "quality_development_matrix.png",
+            "agent_human_ratio_matrix.png"}
 
     def test_a_table_without_a_mode_column_is_rejected(self, tmp_path):
         with pytest.raises(KeyError, match="mode"):
@@ -433,11 +472,11 @@ class TestEliteTurnover:
 
 
 class TestSaveFigure:
-    @pytest.mark.parametrize("fmt", ["png", "pdf"])
-    def test_writes_the_requested_format(self, tmp_path, fmt):
+    def test_writes_a_png_and_creates_the_directory(self, tmp_path):
+        """PNG throughout: Section 5 includes every figure as one, so there is no knob."""
         save_figure(plot_human_agent_matrix(_few()), tmp_path / "plots",
-                    "human_agent_matrix", fmt)
-        assert (tmp_path / "plots" / f"human_agent_matrix.{fmt}").is_file()
+                    "human_agent_matrix")
+        assert (tmp_path / "plots" / "human_agent_matrix.png").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +541,17 @@ class TestBaselineCellMatching:
         assert set(cell["tier_human"]) <= {"high"}
 
 
+@pytest.fixture(scope="module")
+def overlay_baseline() -> pd.DataFrame:
+    return _baseline(6)
+
+
+@pytest.fixture(scope="module")
+def overlay_fig(full_grid, overlay_baseline) -> Figure:
+    """The whole grid with the baseline overlaid; read-only, shared."""
+    return plot_human_agent_matrix(full_grid, baseline=overlay_baseline)
+
+
 class TestBaselineOverlay:
     def test_a_matrix_draws_the_baseline_only_when_it_is_given_one(self):
         df, base = _few(), _baseline(3)
@@ -511,14 +561,10 @@ class TestBaselineOverlay:
         assert _baseline_points(with_base) > 0
         plt.close(without), plt.close(with_base)
 
-    def test_baseline_repeats_across_the_agent_facet(self, full_grid):
+    def test_baseline_repeats_across_the_agent_facet(self, overlay_fig, overlay_baseline):
         # `agent` is a facet the baseline does not vary, so every column carries the same
         # reference points: 4 agent tiers x whatever each (human) row selects.
-        base = _baseline(6)
-        fig = plot_human_agent_matrix(full_grid, baseline=base)
-        # 4 agent columns, so each baseline row is drawn once per column.
-        assert _baseline_points(fig) == 4 * len(base)
-        plt.close(fig)
+        assert _baseline_points(overlay_fig) == 4 * len(overlay_baseline)
 
     def test_human_agent_matrix_places_the_zero_agent_cost_on_the_axis(self):
         # cost_agent_mean is exactly 0 there; without a floor derived over both frames it
@@ -536,26 +582,25 @@ class TestBaselineOverlay:
         assert _baseline_points(fig) > 0
         plt.close(fig)
 
-    def test_baseline_takes_the_shape_and_size_of_the_groups_it_varies(self, full_grid):
+    def test_baseline_takes_the_shape_and_size_of_the_groups_it_varies(
+            self, overlay_fig, overlay_baseline):
         # `project` on the shape channel and `bugimpact` on the size channel are both
         # groups the baseline varies, so its points carry the tier styles rather than the
         # one fixed style — one collection per (project, bugimpact) pair present.
-        base = _baseline(6)
-        fig = plot_human_agent_matrix(full_grid, baseline=base)
         styles = {
             (coll.get_paths()[0].vertices.tobytes(), float(coll.get_sizes()[0]))
-            for ax in fig.get_axes()
+            for ax in overlay_fig.get_axes()
             for coll in ax.collections
             if coll.get_label() == _BASELINE_LABEL
         }
-        pairs = {(r.tier_project, r.tier_bugimpact) for r in base.itertuples()}
+        pairs = {(r.tier_project, r.tier_bugimpact)
+                 for r in overlay_baseline.itertuples()}
         assert len(styles) == len(pairs) > 1
-        plt.close(fig)
 
-    def test_the_baseline_is_black_on_every_style(self, full_grid):
+    def test_the_baseline_is_black_on_every_style(self, overlay_fig):
         # Colour is the one channel that stays fixed: with shape and size now shared with
         # the search optima it is what still separates the baseline from them.
-        fig = plot_human_agent_matrix(full_grid, baseline=_baseline(6))
+        fig = overlay_fig
         black = matplotlib.colors.to_rgb(_BASELINE_COLOR)
         for ax in fig.get_axes():
             for coll in ax.collections:
@@ -566,15 +611,12 @@ class TestBaselineOverlay:
                 drawn = [tuple(c) for c in coll.get_edgecolors()] or \
                         [tuple(c) for c in coll.get_facecolors()]
                 assert all(c[:3] == black for c in drawn)
-        plt.close(fig)
 
-    def test_the_baseline_is_drawn_transparent(self, full_grid):
+    def test_the_baseline_is_drawn_transparent(self, overlay_fig):
         # It sits on top of the search optima, so an opaque marker would mask them.
-        fig = plot_human_agent_matrix(full_grid, baseline=_baseline(6))
-        drawn = [coll for ax in fig.get_axes() for coll in ax.collections
+        drawn = [coll for ax in overlay_fig.get_axes() for coll in ax.collections
                  if coll.get_label() == _BASELINE_LABEL]
         assert drawn and all(coll.get_alpha() < 1.0 for coll in drawn)
-        plt.close(fig)
 
     def test_a_group_the_baseline_does_not_vary_falls_back_to_the_fixed_style(self):
         # `debt` on the shape channel: the baseline holds it at UNUSED_TIER, so there is
@@ -594,14 +636,14 @@ class TestBaselineOverlay:
 class TestVisualizeCampaignWithBaseline:
     def test_the_baseline_gets_no_figure_set_of_its_own(self, tmp_path):
         df = pd.concat([_few(("search",)), _baseline(3)], ignore_index=True)
-        visualize_campaign(df, tmp_path, fmt="png")
+        visualize_campaign(df, tmp_path)
         written = {p.name for p in tmp_path.glob("*.png")}
         assert not any("human_only" in name for name in written)
         assert "human_agent_matrix.png" in written
         assert "agent_human_ratio_matrix.png" in written
 
     def test_a_campaign_without_a_baseline_still_works(self, tmp_path):
-        visualize_campaign(_few(("search",)), tmp_path, fmt="png")
+        visualize_campaign(_few(("search",)), tmp_path)
         assert (tmp_path / "human_agent_matrix.png").is_file()
 
 
@@ -842,12 +884,18 @@ class TestTeamShapePanels:
         with pytest.raises(ValueError, match="must differ"):
             plot_team_shape(_summary_optima(), block_group="agent")
 
-    def test_the_summary_pools_rather_than_failing_on_a_re_cut_grid(self, tmp_path):
-        """A re-cut grid must not take the whole subcommand down with it."""
-        with pytest.warns(UserWarning, match="already a composition axis"):
-            visualize_team_summary(_summary_optima(), tmp_path, fmt="png",
-                                   block_group="agent", bar_group="human")
-        assert (tmp_path / "composition_agent_bill.png").is_file()
+    def test_the_three_composition_groups_are_distinct(self):
+        """Blocks, bars and panels are three different groups, fixed once.
+
+        `plot_team_shape` still rejects a collision — it is the primitive — but
+        `visualize_team_summary` can no longer produce one.
+        """
+        groups = (COMPOSITION_PANEL_GROUP, COMPOSITION_BLOCK_GROUP,
+                  COMPOSITION_BAR_GROUP)
+        assert len(set(groups)) == 3
+        with pytest.raises(ValueError, match="must differ"):
+            plot_team_shape(_summary_optima(), block_group="agent",
+                            bar_group="human", panel_group="agent")
 
 
 class TestTeamDrivers:
@@ -930,7 +978,7 @@ class TestTeamDrivers:
 
 class TestVisualizeTeamSummary:
     def test_both_figures_are_written(self, tmp_path):
-        visualize_team_summary(_summary_optima(), tmp_path, fmt="png")
+        visualize_team_summary(_summary_optima(), tmp_path)
         assert sorted(p.name for p in tmp_path.glob("*.png")) == [
             "composition_agent_bill.png", "composition_team_bill.png",
             "team_drivers.png",
@@ -941,11 +989,11 @@ class TestVisualizeTeamSummary:
         df = _summary_optima(("search", "human_only"))
         df.loc[df["mode"] == "human_only",
                [f"a_dev_{k}" for k in range(1, 9)]] = 0
-        visualize_team_summary(df, tmp_path, fmt="png")
+        visualize_team_summary(df, tmp_path)
         assert (tmp_path / "composition_agent_bill.png").is_file()
 
     def test_nothing_to_summarise_warns(self, tmp_path):
         df = _summary_optima(("human_only",))
         with pytest.warns(UserWarning, match="summarise"):
-            visualize_team_summary(df, tmp_path, fmt="png")
+            visualize_team_summary(df, tmp_path)
         assert not list(tmp_path.glob("*.png"))

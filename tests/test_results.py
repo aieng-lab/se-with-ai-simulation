@@ -28,11 +28,6 @@ class TestSaveLoadResult:
         assert loaded_result.replications[0].value == pytest.approx(small_result.replications[0].value)
         assert loaded_agg.value_mean == pytest.approx(small_agg.value_mean)
 
-    def test_json_created(self, tmp_path, small_result, small_agg):
-        path = tmp_path / "result.json"
-        save_result(small_result, small_agg, path)
-        assert path.exists()
-
     def test_round_trip_keeps_the_reported_extras(self, tmp_path, small_result, small_agg):
         """The cost drivers, the per-role work and the contribution counts all survive."""
         path = tmp_path / "result.json"

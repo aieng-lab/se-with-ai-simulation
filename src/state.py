@@ -30,13 +30,3 @@ class SystemState:
     Q_esc: int = 0        # escalations awaiting a human
     N_test: float = 0.0   # cumulative tests written
     N_doc: float = 0.0    # cumulative documentation items written
-
-    @property
-    def B_kno(self) -> int:
-        """Detected, unrepaired bugs over all three severities."""
-        return self.B_kno_min + self.B_kno_maj + self.B_kno_sec
-
-    @property
-    def B_hid(self) -> int:
-        """Undetected bugs over all three severities."""
-        return self.B_hid_min + self.B_hid_maj + self.B_hid_sec

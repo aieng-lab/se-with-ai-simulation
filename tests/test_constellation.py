@@ -112,8 +112,7 @@ class TestIndistinguishableRows:
         from src.campaign import optimum_row
         d = campaign / _SID / "search"
         summary = json.loads((d / "search_summary.json").read_text())
-        manifest = json.loads((d / "manifest.json").read_text())
-        row = optimum_row(_SID, "search", manifest, summary)
+        row = optimum_row(_SID, "search", summary)
         assert len(indistinguishable_rows(_SID, "search", summary)) == \
             row["n_indistinguishable"]
 
@@ -236,20 +235,22 @@ class TestCellStatistics:
         cells = self._cells(_member_frame([{"a_dev_5": 2}]))
         assert list(cells["parameter"]) == list(CONSTELLATION_PARAMETERS)
 
-    def test_the_faceting_groups_must_be_two_distinct_known_groups(self):
-        frame = derive_totals(_member_frame([{"a_dev_5": 2}]))
-        with pytest.raises(ValueError):
-            cell_statistics(frame, C_STAR, ("project", "project"))
-        with pytest.raises(ValueError):
-            cell_statistics(frame, C_STAR, ("project", "nonsense"))
-        with pytest.raises(ValueError):
-            cell_statistics(frame, C_STAR, ("project",))
+    def test_the_grid_is_project_by_bugimpact(self):
+        """One fixed cut, not an argument: Section 5.3 reports the cell table on it.
 
-    def test_the_grid_can_be_re_cut(self):
-        cells = cell_statistics(derive_totals(_member_frame([{"a_dev_5": 2}])),
-                                C_STAR, ("human", "agent"))
-        assert "tier_human" in cells.columns and "tier_agent" in cells.columns
-        assert "tier_project" not in cells.columns
+        These two are expected to shape the optimal team most strongly; the other three
+        stay free within a cell and become its spread.
+        """
+        assert CELL_GROUPS == ("project", "bugimpact")
+        cells = self._cells(_member_frame([{"a_dev_5": 2}]))
+        assert "tier_project" in cells.columns and "tier_bugimpact" in cells.columns
+        assert "tier_human" not in cells.columns
+
+    def test_a_missing_cell_column_is_rejected(self):
+        frame = derive_totals(_member_frame([{"a_dev_5": 2}])).drop(
+            columns=["tier_bugimpact"])
+        with pytest.raises(KeyError, match="tier_bugimpact"):
+            cell_statistics(frame, C_STAR)
 
     def test_an_empty_frame_yields_the_schema(self):
         cells = cell_statistics(pd.DataFrame(), C_STAR)

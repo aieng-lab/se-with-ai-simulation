@@ -16,6 +16,16 @@ from src.state import SystemState
 _NO_QA = (0,) * AGENT_ROLE_COUNT
 
 
+def _B_kno(state):
+    """Detected, unrepaired bugs over all three severities."""
+    return state.B_kno_min + state.B_kno_maj + state.B_kno_sec
+
+
+def _B_hid(state):
+    """Undetected bugs over all three severities."""
+    return state.B_hid_min + state.B_hid_maj + state.B_hid_sec
+
+
 def _run_sprints(n, config, params, rng, initial_backlog=20):
     state = SystemState(F_backlog=initial_backlog)
     for t in range(n):
@@ -279,7 +289,13 @@ class TestHumanBudgetResidualRounding:
     STATE = dict(F_backlog=20, Q_rev=4, Q_esc=5)
 
     def test_negative_residual_does_not_reach_the_poisson_rate(self, base_params):
-        """impl_human = floor(negative) = -1 is an invalid Poisson rate and raises."""
+        """The sprint must complete: a negative rate would make `rng.poisson` raise.
+
+        Re-multiplying the floored served count by its per-item cost can overshoot the
+        budget by an ulp, so the residual is clamped at zero (Eqs. hafter_rev/hafter_esc).
+        Without the clamp `impl_human` reaches floor(negative) = -1 and the draw raises,
+        so the assertion is that this call returns at all.
+        """
         state = SystemState(**self.STATE)
         step_sprint(0, state, self.CFG, base_params, np.random.default_rng(7))
         assert state.F_completed >= 0
@@ -344,8 +360,8 @@ class TestDetectionGating:
         """a_5 = a_6 = a_7 = 0: bugs are injected but nothing is ever detected."""
         state = _run_sprints(3, self._cfg(_A(k1=2)), self._no_fix_params(base_params),
                              np.random.default_rng(20), initial_backlog=100)
-        assert state.B_hid > 0, "no bugs were injected — test is vacuous"
-        assert state.B_kno == 0
+        assert _B_hid(state) > 0, "no bugs were injected — test is vacuous"
+        assert _B_kno(state) == 0
 
     def test_code_review_requires_a_review_agent(self, base_params):
         """With tests and audit disabled, detection happens iff a_5 >= 1."""
@@ -354,8 +370,8 @@ class TestDetectionGating:
                                np.random.default_rng(21), initial_backlog=100)
         with_cr = _run_sprints(3, self._cfg(_A(k1=2, k5=1)), params,
                                np.random.default_rng(21), initial_backlog=100)
-        assert without.B_kno == 0
-        assert with_cr.B_kno > 0
+        assert _B_kno(without) == 0
+        assert _B_kno(with_cr) > 0
 
     def test_security_audit_requires_an_audit_agent(self, base_params):
         """With tests and review disabled, security bugs are found iff a_6 >= 1."""
@@ -374,7 +390,7 @@ class TestDetectionGating:
                            np.random.default_rng(23), initial_backlog=100)
         many = _run_sprints(3, self._cfg(_A(k1=2, k5=16)), params,
                             np.random.default_rng(23), initial_backlog=100)
-        assert many.B_kno > few.B_kno
+        assert _B_kno(many) > _B_kno(few)
 
 
 class TestAutonomousRolesSkipOversight:
@@ -763,9 +779,9 @@ class TestHumanBugInjectionIsFixedRate:
                 + state.B_kno_min + state.B_kno_maj + state.B_kno_sec)
 
     def test_debt_tier_does_not_change_the_human_bug_count(self, base_params):
-        # With no agents, D_tech and the architecture queue still grow, so delta_D moves;
-        # under the old multiplicative rate that would change the injected count.  It must
-        # not now: the two debt extremes give the identical stream.
+        # With no agents, D_tech and the architecture queue still grow, so delta_D moves.
+        # Eq. (Binj-human) carries no (2 - delta_D) amplifier — only the agent stream of
+        # Eq. (Binj-agent) does — so the two debt extremes must give the identical stream.
         mild = self._bugs_after(base_params, delta_min=0.94)
         harsh = self._bugs_after(base_params, delta_min=0.60)
         assert mild == harsh

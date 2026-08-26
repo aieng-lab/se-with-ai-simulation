@@ -9,8 +9,10 @@ caller decides how to save it.
     plot_team_drivers
 
 The first three share `_draw_matrix`, the five-channel tier grid, and differ only in the
-pair of columns they put on the axes.  All but the ratio figure take an optional
-`baseline` frame of zero-agent optima, drawn as an overlay in black.
+pair of columns they put on the axes.  The channel assignment is the fixed
+`MATRIX_CHANNELS` rather than an argument — Section 5 reads all three off one layout.
+All but the ratio figure take an optional `baseline` frame of zero-agent optima, drawn as
+an overlay in black.
 
 Directory-level helpers
 -----------------------
@@ -69,6 +71,22 @@ QUALITY_DEVELOPMENT_TITLE = ("Escaped-bug vs. development cost, developers + age
                              "at $c^\\star$")
 AGENT_HUMAN_RATIO_TITLE = "Agent-to-developer cost ratio at $c^\\star$"
 ELITE_TURNOVER_TITLE = "Elite turnover and $c^\\star$ drop per generation"
+
+#: Which scenario group drives which visual channel of the three optima matrices.
+#: Fixed, not configurable: Section 5 reads all three figures off this one layout, and the
+#: placements are load-bearing rather than arbitrary.  `project` must stay on the marker
+#: channel — shape is the only per-point channel whose fourth level reads as a peer rather
+#: than as "more" — and `agent` must stay on a facet axis, where its fourth tier costs one
+#: extra column instead of a fifth marker shape that the smallest size tier could not
+#: survive.  The three per-point channels give `veryhigh` and `pessimistic` one shared
+#: style slot, which is sound only because no single group holds both.
+MATRIX_CHANNELS: dict[str, str] = {
+    "x_group": "agent",
+    "y_group": "human",
+    "color_group": "debt",
+    "marker_group": "project",
+    "size_group": "bugimpact",
+}
 
 # Shared palette
 _KEEP_COLOR  = cm.tab10(0)     # blue — elite turnover
@@ -416,25 +434,10 @@ def _figure_bbox(fig: "Figure", artist) -> "matplotlib.transforms.Bbox":
     return artist.get_window_extent(renderer).transformed(fig.transFigure.inverted())
 
 
-def _check_matrix_groups(df: "pd.DataFrame", channels: dict[str, str]) -> None:
-    """Validate the five channel→group assignments of the campaign matrices.
-
-    `require_distinct_groups` owns "known groups, all different"; what is added here is
-    naming the offending *channel* and checking the tier columns are actually present.
-    """
-    seen: dict[str, list[str]] = {}
-    for channel, group in channels.items():
-        seen.setdefault(group, []).append(channel)
-    duplicated = {g: sorted(cs) for g, cs in seen.items() if len(cs) > 1}
-    if duplicated:
-        raise ValueError(
-            "each scenario group may drive only one visual channel; "
-            + ", ".join(f"{g!r} used by {cs}" for g, cs in sorted(duplicated.items()))
-        )
-    # Duplicates are reported above, naming the channel; this is left the unknown-group
-    # half, whose message config already owns.
-    require_distinct_groups(tuple(channels.values()))
-    missing = [tier_column(g) for g in channels.values() if tier_column(g) not in df.columns]
+def _require_tier_columns(df: "pd.DataFrame") -> None:
+    """Raise unless the optima table carries a tier column for every matrix channel."""
+    missing = [tier_column(g) for g in MATRIX_CHANNELS.values()
+               if tier_column(g) not in df.columns]
     if missing:
         raise KeyError(f"{missing} are not columns of the optima table")
 
@@ -524,9 +527,9 @@ def _draw_matrix(
     """The five-channel tier grid, for any pair of columns.
 
     The facet layout, the colour/shape/size encoding of the three non-facet groups and
-    the three proxy legends live here; callers validate the channel assignment
-    (:func:`_check_matrix_groups`) and supply the two plot columns.  `x_floor` / `y_floor`
-    clip non-positive values onto a log axis (see :func:`_log_floor`).
+    the three proxy legends live here; callers pass `MATRIX_CHANNELS` and the two plot
+    columns.  `x_floor` / `y_floor` clip non-positive values onto a log axis (see
+    :func:`_log_floor`).
 
     `shared_limits` puts the same range on both axes, which is only meaningful when the
     two columns are in the same unit.  The panels then also get an equal aspect, so a
@@ -672,19 +675,8 @@ def _require_columns(df: "pd.DataFrame", columns: tuple[str, ...]) -> None:
             raise KeyError(f"{column!r} is not a column of the optima table")
 
 
-def _matrix_channels(
-    x_group: str, y_group: str, size_group: str, marker_group: str, color_group: str,
-) -> dict[str, str]:
-    """The five channel->group assignments as `_draw_matrix` takes them."""
-    return {
-        "x_group": x_group, "y_group": y_group, "size_group": size_group,
-        "marker_group": marker_group, "color_group": color_group,
-    }
-
-
 def _draw_cost_plane(
     df: "pd.DataFrame",
-    channels: dict[str, str],
     x_col: str,
     y_col: str,
     xlabel: str,
@@ -705,7 +697,7 @@ def _draw_cost_plane(
     x_floor = _log_floor(scaled, x_col)
     y_floor = _log_floor(scaled, y_col)
     fig = _draw_matrix(
-        df, **channels,
+        df, **MATRIX_CHANNELS,
         x_col=x_col, y_col=y_col, xlabel=xlabel, ylabel=ylabel, title=title,
         x_floor=x_floor, y_floor=y_floor,
         shared_limits=_common_log_limits(scaled, (x_col, y_col), (x_floor, y_floor)),
@@ -720,11 +712,6 @@ def _draw_cost_plane(
 
 def plot_human_agent_matrix(
     df: "pd.DataFrame",
-    x_group: str = "agent",
-    y_group: str = "human",
-    size_group: str = "bugimpact",
-    marker_group: str = "project",
-    color_group: str = "debt",
     title: str = "",
     baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
@@ -734,26 +721,20 @@ def plot_human_agent_matrix(
     the part of the bill the team composition controls.  The escaped-bug term is the
     subject of :func:`plot_quality_development_matrix`.
     """
-    channels = _matrix_channels(x_group, y_group, size_group, marker_group, color_group)
-    _check_matrix_groups(df, channels)
+    _require_tier_columns(df)
     _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
     return _draw_cost_plane(
-        df, channels,
+        df,
         x_col="cost_agent_mean", y_col="cost_human_mean",
         xlabel="↓  agent cost   (\\$ / feature)",
         ylabel="↓  developer cost   (\\$ / feature)",
-        title=title or f"{HUMAN_AGENT_TITLE} — {x_group} × {y_group}",
+        title=title or HUMAN_AGENT_TITLE,
         baseline=baseline,
     )
 
 
 def plot_quality_development_matrix(
     df: "pd.DataFrame",
-    x_group: str = "agent",
-    y_group: str = "human",
-    size_group: str = "bugimpact",
-    marker_group: str = "project",
-    color_group: str = "debt",
     title: str = "",
     baseline: "pd.DataFrame | None" = None,
 ) -> "Figure":
@@ -763,8 +744,7 @@ def plot_quality_development_matrix(
     x and set against the escaped-bug bill on y.  The sum is derived on a copy; no table
     carries it.
     """
-    channels = _matrix_channels(x_group, y_group, size_group, marker_group, color_group)
-    _check_matrix_groups(df, channels)
+    _require_tier_columns(df)
     _require_columns(df, ("cost_quality_mean", "cost_human_mean", "cost_agent_mean"))
 
     def add_development_cost(frame: "pd.DataFrame") -> "pd.DataFrame":
@@ -775,22 +755,17 @@ def plot_quality_development_matrix(
     if baseline is not None and not baseline.empty:
         baseline = add_development_cost(baseline)
     return _draw_cost_plane(
-        df, channels,
+        df,
         x_col="cost_development_mean", y_col="cost_quality_mean",
         xlabel="↓  development cost   (\\$ / feature)",
         ylabel="↓  escaped-bug cost   (\\$ / feature)",
-        title=title or f"{QUALITY_DEVELOPMENT_TITLE} — {x_group} × {y_group}",
+        title=title or QUALITY_DEVELOPMENT_TITLE,
         baseline=baseline,
     )
 
 
 def plot_agent_human_ratio_matrix(
     df: "pd.DataFrame",
-    x_group: str = "agent",
-    y_group: str = "human",
-    size_group: str = "bugimpact",
-    marker_group: str = "project",
-    color_group: str = "debt",
     title: str = "",
 ) -> "Figure":
     """How lopsided the agent/developer split is at each optimum, against its percentile.
@@ -804,8 +779,7 @@ def plot_agent_human_ratio_matrix(
     distribution and each is a fragment of it.  The rank is taken over the frame as handed
     in, so filtering it further before calling re-ranks what is left against itself.
     """
-    channels = _matrix_channels(x_group, y_group, size_group, marker_group, color_group)
-    _check_matrix_groups(df, channels)
+    _require_tier_columns(df)
     _require_columns(df, ("cost_agent_mean", "cost_human_mean"))
 
     ratio = df["cost_agent_mean"] / df["cost_human_mean"]
@@ -816,15 +790,13 @@ def plot_agent_human_ratio_matrix(
         cost_agent_human_ratio_pct=ratio.rank(method="average", pct=True),
     )
     fig = _draw_matrix(
-        df,
-        x_group=x_group, y_group=y_group, size_group=size_group,
-        marker_group=marker_group, color_group=color_group,
+        df, **MATRIX_CHANNELS,
         x_col="cost_agent_human_ratio_pct", y_col="cost_agent_human_ratio",
         # Short enough not to run into the next panel's at `_MATRIX_FONT["axis"]`.
         xlabel="percentile rank of the ratio",
         # No "↓": unlike a cost, neither direction of the ratio is the better one.
         ylabel="agent cost / developer cost",
-        title=title or f"{AGENT_HUMAN_RATIO_TITLE} — {x_group} × {y_group}",
+        title=title or AGENT_HUMAN_RATIO_TITLE,
         # x is a rank in [0, 1] — a log axis would only stretch the first percentile.
         xscale="linear",
         y_floor=_log_floor(df, "cost_agent_human_ratio"),
@@ -1285,13 +1257,19 @@ def plot_team_drivers(
     return fig
 
 
+#: The three scenario groups the composition figures read: `project` blocks the bars,
+#: `bugimpact` is the ladder repeated inside each block, and `agent` gets a panel of its
+#: own.  Fixed for the same reason `MATRIX_CHANNELS` is — Section 5.3 is written off this
+#: layout, and the agent tier earns a panel because pooling it averages teams the model
+#: prices an order of magnitude apart.
+COMPOSITION_BLOCK_GROUP = "project"
+COMPOSITION_BAR_GROUP = "bugimpact"
+COMPOSITION_PANEL_GROUP = "agent"
+
+
 def visualize_team_summary(
     optima: "pd.DataFrame",
     out_dir: Path,
-    fmt: str = "png",
-    block_group: str = "project",
-    bar_group: str = "bugimpact",
-    panel_group: "str | None" = "agent",
 ) -> None:
     """The team-structure summary figures, from the searched rows of ``optima.csv``.
 
@@ -1300,17 +1278,10 @@ def visualize_team_summary(
     prices come from the scenario configs, which this module does not read.
 
     Two compositions, both of `_SHARE_WEIGHTS`: `agent` is what the agent budget is
-    spent on, and `team` puts the developers in beside it.
-
-    The composition figures also panel on `panel_group`.  A re-cut grid may put that
-    group on one of the other two axes, and a group cannot occupy two channels at once,
-    so it falls back to the pooled single-panel form rather than failing.
+    spent on, and `team` puts the developers in beside it.  Both are cut on
+    `COMPOSITION_BLOCK_GROUP` x `COMPOSITION_BAR_GROUP` and panelled on
+    `COMPOSITION_PANEL_GROUP`.
     """
-    if panel_group in (block_group, bar_group):
-        warnings.warn(
-            f"{panel_group!r} is already a composition axis; the composition figures "
-            f"pool it instead of panelling on it.", stacklevel=2)
-        panel_group = None
     searched = search_rows(optima)
     if searched.empty:
         warnings.warn("no searched optimum to summarise; nothing to plot.", stacklevel=2)
@@ -1319,27 +1290,30 @@ def visualize_team_summary(
     print(f"\n── Team structure summary ({len(searched)} scenarios) ──")
     for weight in _SHARE_WEIGHTS:
         fig = plot_team_shape(
-            searched, block_group=block_group, bar_group=bar_group,
-            panel_group=panel_group, weight=weight,
-            title=_SHARE_WEIGHTS[weight].title,
+            searched, block_group=COMPOSITION_BLOCK_GROUP,
+            bar_group=COMPOSITION_BAR_GROUP, panel_group=COMPOSITION_PANEL_GROUP,
+            weight=weight, title=_SHARE_WEIGHTS[weight].title,
         )
-        save_figure(fig, out_dir, _SHARE_WEIGHTS[weight].filename, fmt)
+        save_figure(fig, out_dir, _SHARE_WEIGHTS[weight].filename)
 
     fig = plot_team_drivers(
         searched,
         title="Impact of scenario on team composition",
     )
-    save_figure(fig, out_dir, "team_drivers", fmt)
+    save_figure(fig, out_dir, "team_drivers")
 
 
 # ---------------------------------------------------------------------------
 # Result-directory helpers
 # ---------------------------------------------------------------------------
 
-def save_figure(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
-    """Write `fig` to ``<out_dir>/<name>.<fmt>``, close it, and report the path."""
+def save_figure(fig: "Figure", out_dir: Path, name: str) -> None:
+    """Write `fig` to ``<out_dir>/<name>.png``, close it, and report the path.
+
+    PNG throughout: Section 5 includes every figure as one, so there is no format knob.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / f"{name}.{fmt}"
+    dest = out_dir / f"{name}.png"
     fig.savefig(dest, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {dest}")
@@ -1348,15 +1322,13 @@ def save_figure(fig: "Figure", out_dir: Path, name: str, fmt: str) -> None:
 def visualize_campaign(
     optima: "pd.DataFrame",
     out_dir: Path,
-    fmt: str = "png",
     turnover: "pd.DataFrame | None" = None,
-    **channels: str,
 ) -> None:
     """The campaign matrices, drawn from a consolidated ``optima.csv``.
 
     The human-only rows are split off first and passed to the matrices as a `baseline`
-    overlay rather than getting figures of their own.  `channels` passes `x_group` /
-    `y_group` / `size_group` / `marker_group` / `color_group` through to every matrix.
+    overlay rather than getting figures of their own.  All three matrices are drawn on
+    the one fixed layout of `MATRIX_CHANNELS`.
 
     `turnover` is the long-format ``elite_turnover.csv``; only its search rows drive the
     convergence figure, so an all-baseline campaign gets none.
@@ -1381,21 +1353,21 @@ def visualize_campaign(
 
     fig = plot_human_agent_matrix(
         searches, baseline=baseline,
-        title=f"{HUMAN_AGENT_TITLE}{suffix}", **channels,
+        title=f"{HUMAN_AGENT_TITLE}{suffix}",
     )
-    save_figure(fig, out_dir, "human_agent_matrix", fmt)
+    save_figure(fig, out_dir, "human_agent_matrix")
 
     fig = plot_quality_development_matrix(
-        searches, baseline=baseline, **channels,
+        searches, baseline=baseline,
         title=f"{QUALITY_DEVELOPMENT_TITLE}{suffix}",
     )
-    save_figure(fig, out_dir, "quality_development_matrix", fmt)
+    save_figure(fig, out_dir, "quality_development_matrix")
 
     # No baseline: a team with no agents has no agent/developer ratio.
     fig = plot_agent_human_ratio_matrix(
-        searches, title=f"{AGENT_HUMAN_RATIO_TITLE}{suffix}", **channels,
+        searches, title=f"{AGENT_HUMAN_RATIO_TITLE}{suffix}",
     )
-    save_figure(fig, out_dir, "agent_human_ratio_matrix", fmt)
+    save_figure(fig, out_dir, "agent_human_ratio_matrix")
 
     # An enumeration has no generations, so it contributes no rows here.
     if turnover is not None and not turnover.empty:
@@ -1403,4 +1375,4 @@ def visualize_campaign(
         if not curves.empty:
             fig = plot_elite_turnover(
                 curves, title=ELITE_TURNOVER_TITLE)
-            save_figure(fig, out_dir, "elite_turnover", fmt)
+            save_figure(fig, out_dir, "elite_turnover")

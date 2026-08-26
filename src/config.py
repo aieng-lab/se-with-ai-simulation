@@ -107,15 +107,6 @@ def require_distinct_groups(groups: "tuple[str, ...]") -> None:
         raise ValueError(f"the scenario groups must differ, got {list(groups)}")
 
 
-def require_group_pair(groups: "tuple[str, ...]") -> tuple[str, ...]:
-    """Validate a two-group faceting pair; returns it unchanged."""
-    groups = tuple(groups)
-    if len(groups) != 2:
-        raise ValueError(f"expected exactly two faceting groups, got {list(groups)}")
-    require_distinct_groups(groups)
-    return groups
-
-
 def scenario_tier_combinations() -> list[tuple[str, ...]]:
     """Every tier combination, one tuple per group in SCENARIO_GROUPS order."""
     return list(itertools.product(*(scenario_tiers(g) for g in SCENARIO_GROUPS)))
@@ -148,18 +139,7 @@ SEARCH_MODE: str = "search"
 HUMAN_ONLY_MODE: str = "human_only"
 RESULT_MODES: tuple[str, ...] = (SEARCH_MODE, HUMAN_ONLY_MODE)
 
-AGENT_ROLE_NAMES: tuple[str, ...] = (
-    "Feature Implementation Agent",           # k=1
-    "Architecture & Design Proposal Agent",   # k=2
-    "Bug Fixing Agent",                       # k=3
-    "Refactoring Agent",                      # k=4
-    "Code Review Agent",                      # k=5
-    "Security Audit Agent",                   # k=6
-    "Test Development Agent",                 # k=7
-    "Developer Documentation Agent",          # k=8
-)
-
-# The same roles in the same k=1..8 order, short enough to use as a plot tick label.
+# The eight roles in k=1..8 order, short enough to use as a plot tick label.
 AGENT_ROLE_ABBREV: tuple[str, ...] = (
     "Feature", "Design", "BugFix", "Refactor", "Review", "Security", "Test", "Docs",
 )

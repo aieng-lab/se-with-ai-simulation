@@ -18,8 +18,17 @@ Run the whole campaign:
 
 Consolidate a finished campaign into its tables and the five-channel optima figures:
     python -m src.main campaign [results/experiments] [--out results/analysis]
-    python -m src.main campaign --x debt --color agent
     python -m src.main campaign --figures-only    (redraw from an existing optima.csv)
+    python -m src.main campaign --no-figures      (rewrite the CSVs only)
+
+Describe what those optima are made of — the cell tables, the role/process shares and the
+three team-structure figures:
+    python -m src.main constellation [results/experiments] [--out results/analysis]
+    python -m src.main constellation --figures-only
+
+The figure layouts are fixed, not flags: `visualization.MATRIX_CHANNELS` for the three
+optima matrices and `constellation.CELL_GROUPS` for the cell grid.  Section 5 reads every
+figure off one layout, so there is nothing to choose.
 """
 
 from __future__ import annotations
@@ -36,8 +45,8 @@ import pandas as pd
 
 from .config import (
     HUMAN_ONLY_MODE,
+    RESULT_MODES,
     SAMPLE_POLICIES,
-    SCENARIO_GROUPS,
     SEARCH_MODE,
     SearchConfiguration,
     SimulationHorizon,
@@ -66,7 +75,7 @@ from .selection import (
 )
 from .campaign import (baseline_uplift, build_tables, convergence_summary,
                        cost_multipliers, multipliers_summary)
-from .constellation import (CELL_GROUPS, build_constellation,
+from .constellation import (build_constellation,
                             build_indistinguishable, build_process_summary,
                             constellation_summary, process_summary, role_bill)
 from .visualization import visualize_campaign, visualize_team_summary
@@ -285,6 +294,16 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     _print_search_banner(cfg_path, search_cfg, horizon, params, mode, args.start_state)
 
     out_dir = Path(args.out)
+    # `campaign.search_dirs` reads the result mode back off this directory's name, so a
+    # run whose directory says one thing and whose config does another would be
+    # mislabelled for the whole of the analysis — a search filed as a human-only
+    # baseline, or the reverse.  Nothing downstream can detect that, so refuse here.
+    if out_dir.name in RESULT_MODES and out_dir.name != mode:
+        print(f"Error: {cfg_path} runs in {mode!r} mode, but --out names a "
+              f"{out_dir.name!r} directory ({out_dir}).  The result mode is read back "
+              f"from that name, so this would file the run under the wrong mode.",
+              file=sys.stderr)
+        sys.exit(1)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     t_start = time.perf_counter()
@@ -347,12 +366,6 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Results saved to: {out_dir}")
 
 
-#: Which scenario group drives which visual channel of the optima matrices, by default.
-CAMPAIGN_CHANNEL_DEFAULTS: dict[str, str] = {
-    "x": "agent", "y": "human", "color": "debt", "marker": "project", "size": "bugimpact",
-}
-
-
 def _read_table(path: Path, label: str, hint: str) -> "pd.DataFrame":
     """Load a consolidated CSV, or exit with the command that would produce it."""
     if not path.is_file():
@@ -379,7 +392,7 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         turnover_path = out_dir / "elite_turnover.csv"
         turnover = (_read_table(turnover_path, "turnover point(s)", hint)
                     if turnover_path.is_file() else pd.DataFrame())
-        _campaign_figures(optima, out_dir, args, turnover)
+        visualize_campaign(optima, out_dir, turnover=turnover)
         print("\nDone.")
         return
 
@@ -446,30 +459,8 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print("\nNo optimum was reported; skipping the figures.")
         return
 
-    _campaign_figures(optima, out_dir, args, turnover)
+    visualize_campaign(optima, out_dir, turnover=turnover)
     print("\nDone.")
-
-
-def _campaign_figures(optima: pd.DataFrame, out_dir: Path,
-                      args: argparse.Namespace,
-                      turnover: pd.DataFrame) -> None:
-    """Map the subcommand's `--<channel>` flags onto `visualize_campaign`'s arguments."""
-    visualize_campaign(
-        optima, out_dir, turnover=turnover,
-        x_group=args.x, y_group=args.y, color_group=args.color,
-        marker_group=args.marker, size_group=args.size,
-    )
-
-
-def _constellation_figures(bills: pd.DataFrame, out_dir: Path,
-                           args: argparse.Namespace) -> None:
-    """Map the subcommand's `--rows` / `--cols` flags onto the team-summary figures.
-
-    `bills` is a `role_bill` frame of the per-scenario optima rather than the aggregated
-    cell table: its shares are formed within a scenario, which an aggregate cannot undo.
-    """
-    visualize_team_summary(bills, out_dir,
-                           block_group=args.cols, bar_group=args.rows)
 
 
 def _cmd_constellation(args: argparse.Namespace) -> None:
@@ -480,15 +471,13 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     re-consolidation.
     """
     out_dir = Path(args.out)
-    # `--rows`/`--cols` name the figure axes; the tables are keyed column group first.
-    groups = (args.cols, args.rows)
 
     optima_path = out_dir / "optima.csv"
     optima_hint = "run `python -m src.main campaign` first."
 
     if args.figures_only:
         optima = _read_table(optima_path, "reported optima", optima_hint)
-        _constellation_figures(role_bill(optima), out_dir, args)
+        visualize_team_summary(role_bill(optima), out_dir)
         print("\nDone.")
         return
 
@@ -504,7 +493,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     print(f"  {len(istar)} I* member(s) over "
           f"{istar[['scenario_id', 'mode']].drop_duplicates().shape[0]} search(es)")
 
-    cells = build_constellation(optima, istar, groups)
+    cells = build_constellation(optima, istar)
     if cells.empty:
         print("\nNo searched optimum to describe; nothing written.")
         return
@@ -516,7 +505,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     print(f"  {istar_path}   {len(istar)} I* members")
     print(f"  {cells_path}   {len(cells)} (population, cell, parameter) rows")
 
-    summary = constellation_summary(cells, groups)
+    summary = constellation_summary(cells)
     summary_path = out_dir / "constellation_summary.txt"
     summary_path.write_text(summary, encoding="utf-8")
     print(f"  {summary_path}")
@@ -534,7 +523,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
         print()
         print(usage_text, end="")
 
-    _constellation_figures(bills, out_dir, args)
+    visualize_team_summary(bills, out_dir)
     print("\nDone.")
 
 
@@ -587,11 +576,6 @@ def main(argv: list[str] | None = None) -> None:
     p_camp.add_argument("--no-figures", action="store_true",
                         help="Write the CSVs and the convergence summary but draw no "
                              "figures")
-    for channel, default in CAMPAIGN_CHANNEL_DEFAULTS.items():
-        p_camp.add_argument(
-            f"--{channel}", default=default, choices=list(SCENARIO_GROUPS),
-            help=f"Scenario group on the {channel} channel (default: {default})",
-        )
     p_camp.set_defaults(func=_cmd_campaign)
 
     # -- constellation --
@@ -606,12 +590,6 @@ def main(argv: list[str] | None = None) -> None:
     p_const.add_argument("--out", default="results/analysis", metavar="DIR",
                          help="Where OUT/optima.csv is read and the tables and figures "
                               "are written (default: results/analysis)")
-    p_const.add_argument("--rows", default=CELL_GROUPS[1], choices=list(SCENARIO_GROUPS),
-                         help=f"Scenario group down the profile figure's rows "
-                              f"(default: {CELL_GROUPS[1]})")
-    p_const.add_argument("--cols", default=CELL_GROUPS[0], choices=list(SCENARIO_GROUPS),
-                         help=f"Scenario group across the profile figure's columns "
-                              f"(default: {CELL_GROUPS[0]})")
     p_const.add_argument("--figures-only", action="store_true",
                          help="Redraw from an existing OUT/optima.csv instead of "
                               "re-walking the result tree for I*")

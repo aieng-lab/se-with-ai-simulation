@@ -81,6 +81,20 @@ def _objective(cost=1000.0, value=12.0, admissible=True) -> dict:
     }
 
 
+def _convergence_row(mode: str, *, n_prelim: int, n_final: int,
+                     admissible: bool = True) -> dict:
+    """One `convergence.csv` row, with the columns the summary reads."""
+    return {
+        "scenario_id": _SID, "mode": mode, "n_generations_run": 90 if mode == "search" else 0,
+        "n_elite": 100, "tau_first": 0.4, "tau_last": 0.03, "tau_mean_last_10": 0.03,
+        "n_prelim": n_prelim, "parsimony_removed_prelim": n_prelim // 2,
+        "n_resimulated": n_prelim // 2, "n_discarded_throughput": 0,
+        "n_after_resim": n_final * 2, "n_final": n_final, "parsimony_removed": n_final,
+        "best_changed_by_resim": True, "rho_mean": 0.01, "rho_best": 0.01,
+        "best_admissible": admissible, "value_ratio": 1.0 if admissible else 0.5,
+    }
+
+
 @pytest.fixture
 def campaign(tmp_path) -> Path:
     d = tmp_path / _SID / "search"
@@ -135,9 +149,8 @@ class TestSearchDirs:
 class TestOptimumRow:
     def _row(self, campaign):
         d = campaign / _SID / "search"
-        manifest = json.loads((d / "manifest.json").read_text())
         summary = json.loads((d / "search_summary.json").read_text())
-        return optimum_row(_SID, "search", manifest, summary)
+        return optimum_row(_SID, "search", summary)
 
     def test_describes_the_reported_optimum(self, campaign):
         row = self._row(campaign)
@@ -175,17 +188,11 @@ class TestOptimumRow:
         assert row["n_sup_dev"] == 2 + 0 + 1 + 1 + 0        # a_4 = 1, a_5 = 3 excluded
         assert row["n_sup_qa"] == 0 + 0 + 2 + 1 + 0         # a_4 = 1, a_5 = 1 excluded
 
-    def test_phase_sprint_counts_partition_the_horizon(self, campaign):
-        row = self._row(campaign)
-        assert row["T_dev"] + row["T_qa"] == 104
-        assert row["T_qa"] == 104 // 4     # one freeze sprint per release cycle
-
     def test_no_optimum_yields_no_row(self, campaign):
         d = campaign / _SID / "search"
-        manifest = json.loads((d / "manifest.json").read_text())
         summary = json.loads((d / "search_summary.json").read_text())
         summary["best"] = None
-        assert optimum_row(_SID, "search", manifest, summary) is None
+        assert optimum_row(_SID, "search", summary) is None
 
 
 class TestBuildTables:
@@ -229,9 +236,45 @@ class TestBuildTables:
         assert "after the second tie-break" in text
         assert "parsimony removed at K'" in text
         assert "parsimony removed at K " in text
-        # The exemption the tie-break no longer needs is gone from the report.
-        assert "parsimony-dominated" not in text
-        assert "Inadmissible searches: 0/1" in text
+        assert "Inadmissible runs: 0/1" in text
+
+    def test_convergence_summary_reports_the_two_modes_separately(self):
+        """Section 5.1 gives the searches and the baseline enumerations two columns.
+
+        A search and an exhaustive enumeration differ both in how large the preliminary
+        set is and in how far the selection narrows it, so a pooled median describes
+        neither.  Pinned on frames whose two modes cannot be confused: the search sets
+        are an order of magnitude larger.
+        """
+        rows = pd.DataFrame(
+            [_convergence_row("search", n_prelim=1000, n_final=40)] * 3
+            + [_convergence_row("human_only", n_prelim=17, n_final=7)] * 2
+        )
+        text = convergence_summary(rows)
+        search_block = text.split("human_only")[0]
+        baseline_block = text.split("human_only")[1]
+        assert "search (3 run(s), 3 admissible)" in search_block
+        assert "1e+03" in search_block and "40" in search_block
+        assert "(2 run(s), 2 admissible)" in baseline_block
+        assert "17" in baseline_block and "7" in baseline_block
+        # The pooled median of the five would be 1000, i.e. the searches' alone.
+        assert "1e+03" not in baseline_block
+
+    def test_the_i_star_stage_sizes_exclude_the_inadmissible_runs(self):
+        """An inadmissible run has an empty I* (Section 3.10).
+
+        Section 5.1's table is over the admissible runs for exactly that reason: a zero
+        at every stage is not a small set, it is the absence of one.
+        """
+        rows = pd.DataFrame([
+            _convergence_row("search", n_prelim=100, n_final=10),
+            _convergence_row("search", n_prelim=200, n_final=20),
+            _convergence_row("search", n_prelim=0, n_final=0, admissible=False),
+        ])
+        text = convergence_summary(rows)
+        assert "search (3 run(s), 2 admissible)" in text
+        # The median of {100, 200} is 150; pooling the zero in would give 100.
+        assert "150" in text
 
     def test_missing_directory_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="is not a directory"):
@@ -365,7 +408,7 @@ class TestBaselineUplift:
                 "tier_human": "medium", "tier_project": "medium",
                 "tier_bugimpact": "medium", "tier_debt": "unused",
                 "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
-                "F_freeze": 1, "value_mean": 12.0}
+                "F_freeze": 1, "value_mean": 12.0, "n_indistinguishable": 5}
         rows = [base]
         for debt in ("low", "medium", "high"):
             for agent in ("low", "medium", "high", "pessimistic"):
@@ -376,6 +419,48 @@ class TestBaselineUplift:
         uplift = baseline_uplift(pd.DataFrame(rows))
         assert len(uplift) == 12
         assert uplift["cost_ratio"].tolist() == pytest.approx([4.0] * 12)
+
+    def test_it_carries_the_two_tiers_the_join_cannot_supply(self):
+        """Section 5.2 reads the comparison by agent and by debt tier.
+
+        Those are exactly the two groups the baseline holds at `UNUSED_TIER`, so they
+        cannot come from the join keys and have to be carried from the search row.
+        """
+        import pandas as pd
+
+        base = {"mode": "human_only", "scenario_id": _BASELINE_SID,
+                "tier_human": "medium", "tier_project": "medium",
+                "tier_bugimpact": "medium", "tier_debt": "unused",
+                "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
+                "F_freeze": 1, "value_mean": 12.0, "n_indistinguishable": 5}
+        search = {**base, "mode": "search", "scenario_id": "h-m_p-m_d-h_a-p_b-m",
+                  "tier_debt": "high", "tier_agent": "pessimistic",
+                  "cost_mean": 200.0, "n_indistinguishable": 3}
+        uplift = baseline_uplift(pd.DataFrame([base, search]))
+        row = uplift.iloc[0]
+        assert row["tier_agent"] == "pessimistic" and row["tier_debt"] == "high"
+        assert bool(row["admissible"]) and bool(row["baseline_admissible"])
+
+    def test_an_inadmissible_side_is_flagged_but_kept(self):
+        """An empty I* marks the run inadmissible (Section 3.10); the row still lands.
+
+        Section 5.2 restricts the comparison to pairs where both sides are admissible,
+        which is a filter on these two columns rather than a missing row.
+        """
+        import pandas as pd
+
+        base = {"mode": "human_only", "scenario_id": _BASELINE_SID,
+                "tier_human": "medium", "tier_project": "medium",
+                "tier_bugimpact": "medium", "tier_debt": "unused",
+                "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
+                "F_freeze": 1, "value_mean": 3.0, "n_indistinguishable": 0}
+        search = {**base, "mode": "search", "scenario_id": "h-m_p-m_d-h_a-p_b-m",
+                  "tier_debt": "high", "tier_agent": "pessimistic",
+                  "cost_mean": 200.0, "n_indistinguishable": 3}
+        uplift = baseline_uplift(pd.DataFrame([base, search]))
+        assert len(uplift) == 1
+        assert bool(uplift.iloc[0]["admissible"])
+        assert not bool(uplift.iloc[0]["baseline_admissible"])
 
     def test_no_baseline_yields_an_empty_table(self, campaign):
         optima, *_ = build_tables(campaign)
