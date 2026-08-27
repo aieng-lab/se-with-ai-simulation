@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.campaign import scenario_params_for_id
+from src.campaign import scenario_params_for_id, search_rows
 from src.config import AGENT_ROLE_COUNT, HUMAN_ONLY_MODE, supervised_agent_count
 from src.constellation import (
     AGENT_COST_PARAMETERS,
@@ -32,7 +32,6 @@ from src.constellation import (
     indistinguishable_rows,
     role_bill,
     scenario_means,
-    search_optima,
 )
 
 _SID = "h-m_p-m_d-m_a-m_b-m"
@@ -236,7 +235,7 @@ class TestCellStatistics:
         assert list(cells["parameter"]) == list(CONSTELLATION_PARAMETERS)
 
     def test_the_grid_is_project_by_bugimpact(self):
-        """One fixed cut, not an argument: Section 5.3 reports the cell table on it.
+        """One fixed cut, not an argument.
 
         These two are expected to shape the optimal team most strongly; the other three
         stay free within a cell and become its spread.
@@ -292,7 +291,7 @@ class TestBuildConstellation:
 
     def test_the_human_only_baseline_is_excluded(self):
         frame = _optima_frame(("search", HUMAN_ONLY_MODE))
-        assert len(search_optima(frame)) == 1
+        assert len(search_rows(frame)) == 1
         cells = build_constellation(frame, pd.DataFrame())
         assert set(cells["population"]) == {C_STAR}
         assert cells["n_scenarios"].max() == 1

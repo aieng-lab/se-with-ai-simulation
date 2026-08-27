@@ -97,7 +97,7 @@ class TestLoadSimulationHorizon:
             load_simulation_horizon(p)
 
     def test_a_horizon_with_only_one_replication_count_raises(self, tmp_path):
-        """Both counts are required; the two-stage selection of Section 3.10 needs K > K'.
+        """Both counts are required; the two-stage selection needs K > K'.
 
         Defaulting the missing one would silently collapse the re-simulation into the
         search, which is the one thing the disjoint-block design exists to prevent.

@@ -179,8 +179,8 @@ class TestArchChangeQueue:
             step_sprint(t, state, config, params, rng)
         assert state.Q_arch == 0
 
-    def test_D_arch_slows_impl_via_psi_D(self, base_config, base_params):
-        """High Q_arch raises D_arch, increasing D_eff and thus depressing psi_D,
+    def test_D_arch_slows_impl_via_delta_D(self, base_config, base_params):
+        """High Q_arch raises D_arch, increasing D_eff and thus depressing delta_D,
         which should result in fewer agent-implemented features than with Q_arch=0."""
         params = self._arch_params(base_params, f_arch_chg=0.0, r_arch_chg=0.0)
         rng_low  = np.random.default_rng(12)
@@ -191,7 +191,7 @@ class TestArchChangeQueue:
         state_high = SystemState(F_backlog=50, Q_arch=q_saturate)
         step_sprint(0, state_low,  base_config, params, rng_low)
         step_sprint(0, state_high, base_config, params, rng_high)
-        # With higher D_eff, psi_D is lower, so fewer features implemented
+        # With higher D_eff, delta_D is lower, so fewer features implemented
         assert state_high.F_completed <= state_low.F_completed
 
     def test_Q_arch_impl_filled_by_rev_done(self, base_config, base_params):
@@ -780,8 +780,8 @@ class TestHumanBugInjectionIsFixedRate:
 
     def test_debt_tier_does_not_change_the_human_bug_count(self, base_params):
         # With no agents, D_tech and the architecture queue still grow, so delta_D moves.
-        # Eq. (Binj-human) carries no (2 - delta_D) amplifier — only the agent stream of
-        # Eq. (Binj-agent) does — so the two debt extremes must give the identical stream.
+        # The human injection rate carries no (2 - delta_D) amplifier — only the agent
+        # stream does — so the two debt extremes must give the identical stream.
         mild = self._bugs_after(base_params, delta_min=0.94)
         harsh = self._bugs_after(base_params, delta_min=0.60)
         assert mild == harsh

@@ -25,7 +25,7 @@ class ReplicationResult:
     cost_agent: float = 0.0
     # Work completed per role, k=1..8, each in that role's own throughput unit.
     actions: tuple[float, ...] = ()
-    # The human/agent split of the work; `actions` cannot answer this on its own.
+    # The human/agent split of the work, which `actions` cannot express.
     impl_human: float = 0.0
     impl_agents: float = 0.0
     fixes_human: float = 0.0

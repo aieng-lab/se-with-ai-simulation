@@ -47,10 +47,10 @@ class TestStep1MonitoringCapacity:
         assert check_feasibility(loaded, p).feasible
 
     def test_refactoring_agents_do_not_tip_a_team_over_the_gate(self, base_params):
-        """Role 4 is in K_aut (Section 3.3), so it is outside n_sup of Eq. (nsup).
+        """Role 4 is autonomous, so it is outside the supervised count.
 
         The team below sits just under the bound on its supervised roles; adding
-        Refactoring Agents to it must not move Eq. (feas_monitoring) at all.
+        Refactoring Agents to it must not move the monitoring condition at all.
         """
         from dataclasses import replace
         p = replace(base_params, H_capacity=10.0, H_monitoring_overhead=2.0, Gamma_doc=0.0)

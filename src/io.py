@@ -18,6 +18,11 @@ from .parameters import ScenarioParameters
 from .state import SystemState
 
 
+def read_json(path: str | Path) -> Any:
+    """Parse a UTF-8 JSON file."""
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
 def _parse_value(key: str, value: Any) -> float:
     """Coerce a scenario parameter to a float, rejecting anything that is not a number."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -53,8 +58,7 @@ def _flatten_scenario(scenario_dict: dict) -> dict[str, Any]:
 
 def load_simulation_horizon(path: str | Path) -> SimulationHorizon:
     """Parse a simulation horizon JSON file and return SimulationHorizon."""
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
+    data = read_json(path)
     return SimulationHorizon(
         T=int(data["T"]),
         K_search=int(data["K_search"]),
@@ -81,8 +85,7 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
     flat: dict[str, Any] = {}
     defined_by: dict[str, str] = {}
     for group in SCENARIO_GROUPS:
-        with open(group_paths[group], encoding="utf-8") as fh:
-            data = json.load(fh)
+        data = read_json(group_paths[group])
         for key, val in _flatten_scenario(data).items():
             if key in flat:
                 raise ValueError(
@@ -92,7 +95,7 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
             flat[key] = val
             defined_by[key] = group
 
-    # c_token is always a list — extract before building kwargs
+    # c_token is the one list-valued parameter, so it is built separately.
     if "c_token" not in flat:
         raise ValueError("JSON is missing parameters: ['c_token']")
     raw_c_token = flat.pop("c_token")
@@ -104,7 +107,6 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
         )
     c_token = tuple(float(x) for x in raw_c_token)
 
-    # Validate coverage
     required = {f.name for f in dataclasses.fields(ScenarioParameters) if f.name != "c_token"}
     missing = required - flat.keys()
     extra = flat.keys() - required
@@ -118,9 +120,8 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
     return ScenarioParameters(**kwargs, c_token=c_token)
 
 
-#: The optional `search` keys, with the cast each takes.  A key the JSON omits is left
-#: to the dataclass default rather than restated here, so there is one source of truth
-#: for every default.
+#: The optional `search` keys and the cast each takes.  A key the JSON omits is left to
+#: the `SearchConfiguration` default rather than restated here.
 _SEARCH_FIELDS: dict = {
     "F_freeze_values": lambda v: tuple(int(x) for x in v),
     "sigma": float,
@@ -138,8 +139,7 @@ _SEARCH_FIELDS: dict = {
 
 def load_search_config(path: str | Path) -> SearchConfiguration:
     """Parse a search configuration JSON file and return SearchConfiguration."""
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
+    data = read_json(path)
     s = data["search"]
     raw_scenario = data["scenario"]
     if not isinstance(raw_scenario, dict):
@@ -164,8 +164,7 @@ def load_initial_state(path: str | Path) -> SystemState:
     Only the fields listed in the JSON are set; all others default to 0/0.0.
     Unknown field names raise ValueError.
     """
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
+    data = read_json(path)
     valid = {f.name for f in dataclasses.fields(SystemState)}
     unknown = set(data) - valid
     if unknown:
@@ -173,6 +172,6 @@ def load_initial_state(path: str | Path) -> SystemState:
     kwargs: dict = {}
     for f in dataclasses.fields(SystemState):
         if f.name in data:
-            coerce = type(f.default)  # int for int fields, float for float fields
+            coerce = type(f.default)
             kwargs[f.name] = coerce(data[f.name])
     return SystemState(**kwargs)

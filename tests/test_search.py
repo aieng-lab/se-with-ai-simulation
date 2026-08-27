@@ -694,8 +694,8 @@ class TestTwoStageSelection:
                                                               medium_params):
         _, _, _, report = self._search(search_cfg, medium_params)
         st = report.stats
-        assert (st["n_prelim"] >= st["n_resimulated"]
-                >= st["n_after_resim"] >= st["n_final"])
+        assert (st.n_prelim >= st.n_resimulated
+                >= st.n_after_resim >= st.n_final)
 
     def test_c_star_is_a_member_of_a_non_empty_final_set(self, search_cfg, medium_params):
         """Nothing in I* undercuts c*, so the tie-break can never filter it out."""
@@ -716,8 +716,8 @@ class TestTwoStageSelection:
         _, raw = report_optimum(aggs, floor)
         _, reduced = report_optimum(
             aggs, floor, keys=[parsimony_key(c) for _, c, _ in outcome.aggs])
-        assert report.stats["n_prelim"] == len(raw)
-        assert report.stats["n_resimulated"] == len(reduced) <= len(raw)
+        assert report.stats.n_prelim == len(raw)
+        assert report.stats.n_resimulated == len(reduced) <= len(raw)
         assert set(report.final_aggs) == {outcome.aggs[i][0] for i in reduced}
 
     def test_a_dominated_member_is_never_re_simulated(self, search_cfg, medium_params):
@@ -752,9 +752,9 @@ class TestTwoStageSelection:
 
         report = two_stage_selection(outcome, search_cfg, horizon, medium_params,
                                      progress_every=0)
-        assert report.stats["n_prelim"] == 2
-        assert report.stats["parsimony_removed_prelim"] == 1
-        assert report.stats["n_resimulated"] == 1
+        assert report.stats.n_prelim == 2
+        assert report.stats.parsimony_removed_prelim == 1
+        assert report.stats.n_resimulated == 1
         assert keys[1] not in report.final_aggs
 
     def test_rho_is_the_relative_half_width_of_the_reported_intervals(self, search_cfg,
@@ -762,10 +762,10 @@ class TestTwoStageSelection:
         _, _, _, report = self._search(search_cfg, medium_params)
         agg = report.final_aggs[report.best_key]
         lo, hi = agg.cost_ci
-        assert report.stats["rho_best"] == pytest.approx(
+        assert report.stats.rho_best == pytest.approx(
             (hi - lo) / (2 * agg.cost_mean))
         if report.keep_keys:
-            assert 0.0 <= report.stats["rho_mean"] < 1.0
+            assert 0.0 <= report.stats.rho_mean < 1.0
 
     def test_an_inadmissible_search_re_simulates_exactly_one_candidate(self):
         """No candidate reaches the floor, so I* is empty but c* is still reported at K.
@@ -797,10 +797,10 @@ class TestTwoStageSelection:
         assert not report.best_admissible
         assert report.keep_keys == []          # no c*, so I* is empty
         assert report.best_key is not None     # the least-violating one is still reported
-        assert report.stats["n_prelim"] == 0
-        assert report.stats["parsimony_removed_prelim"] == 0
-        assert report.stats["n_resimulated"] == 1
-        assert report.stats["n_discarded_throughput"] == 0
+        assert report.stats.n_prelim == 0
+        assert report.stats.parsimony_removed_prelim == 0
+        assert report.stats.n_resimulated == 1
+        assert report.stats.n_discarded_throughput == 0
         assert len(report.final_results[report.best_key].replications) == horizon.K_final
 
     def test_an_empty_pool_reports_nothing(self, search_cfg, medium_params):
@@ -809,8 +809,8 @@ class TestTwoStageSelection:
                                      search_cfg, self._horizon(), medium_params,
                                      progress_every=0)
         assert report.best_key is None and report.keep_keys == []
-        assert report.stats["n_resimulated"] == 0
-        assert report.stats["parsimony_removed_prelim"] == 0
+        assert report.stats.n_resimulated == 0
+        assert report.stats.parsimony_removed_prelim == 0
 
 
 class TestConvergenceRecording:
@@ -833,7 +833,7 @@ class TestConvergenceRecording:
                                             easy_params, seed):
         """The population is an archive and the elite is its best, so cost is monotone.
 
-        Section 5.1 rests on this: it is why `tau_g` can only fall and why the residual
+        The convergence reporting rests on this: it is why `tau_g` can only fall, and why
         turnover is read as churn among ties rather than as continued improvement.
 
         `best_cost` is comparable across generations only while the incumbent is

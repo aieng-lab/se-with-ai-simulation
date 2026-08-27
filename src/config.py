@@ -16,8 +16,8 @@ SCENARIO_GROUPS: tuple[str, ...] = ("human", "project", "debt", "agent", "bugimp
 # The three tiers every scenario group is defined at.
 SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high")
 
-# The tiers each group is actually defined at: `project` and `agent` carry a fourth one,
-# so the grid is not a cube.  Read it through `scenario_tiers`.
+# The tiers each group is defined at.  `project` and `agent` carry a fourth one, so the
+# tier grid is not a cube; `scenario_tiers` is the accessor.
 SCENARIO_GROUP_TIERS: dict[str, tuple[str, ...]] = {
     "human": SCENARIO_TIERS,
     "project": SCENARIO_TIERS + ("veryhigh",),
@@ -32,36 +32,38 @@ ALL_SCENARIO_TIERS: tuple[str, ...] = (
 )
 
 # One-letter tier code used by the scenario ids.  Distinct per tier, so an id round-trips
-# to its tiers; a tier initial may coincide with a group initial, since the token format
-# is `<group>-<tier>`.
+# to its tiers.  A tier initial may coincide with a group initial: an id token is always
+# `<group>-<tier>`, so the two never have to be told apart.
 TIER_INITIALS: dict[str, str] = {
     "low": "l", "medium": "m", "high": "h", "veryhigh": "v", "pessimistic": "p",
 }
 
 # Sentinel "tier" for a group a scenario does not use, rendered `X` in a scenario id.
-# Kept out of TIER_INITIALS and ALL_SCENARIO_TIERS, so it enters neither the
-# scenario product nor the figure tier channels; `config/<group>_unused.json` supplies
-# placeholder values so the `<group>_<tier>.json` naming convention still holds.
+# Kept out of TIER_INITIALS and ALL_SCENARIO_TIERS, so it enters neither the scenario
+# product nor the figure tier channels.  `config/<group>_unused.json` supplies placeholder
+# values, so the `<group>_<tier>.json` naming convention still holds.
 UNUSED_TIER: str = "unused"
 UNUSED_TIER_INITIAL: str = "X"
 
-# The tiers beyond the three base ones -- `project`'s veryhigh and `agent`'s
-# pessimistic.  Derived, so it cannot drift from SCENARIO_GROUP_TIERS: the plotting
-# channels give the two a single shared style slot, which is sound only because no one
-# group holds both (pinned by tests/test_config.py).
+# The tiers beyond the three base ones.  Derived rather than listed, so it cannot drift
+# from SCENARIO_GROUP_TIERS.  The plotting channels give these a single shared style slot,
+# which works only while no one group holds two of them.
 EXTREME_TIERS: tuple[str, ...] = tuple(
     t for t in ALL_SCENARIO_TIERS if t not in SCENARIO_TIERS
 )
 
-# The scenario-id tier codec, forward and inverse in one place so the two cannot fall
-# out of step.  UNUSED_TIER is folded in here rather than patched in by each half.
+# The scenario-id tier codec, forward and inverse, defined together so the two cannot
+# fall out of step.  UNUSED_TIER is folded in here rather than special-cased by callers.
 SCENARIO_ID_INITIALS: dict[str, str] = {**TIER_INITIALS, UNUSED_TIER: UNUSED_TIER_INITIAL}
 SCENARIO_ID_TIERS: dict[str, str] = {v: k for k, v in SCENARIO_ID_INITIALS.items()}
 
-#: The scenario groups a human-only baseline varies; `debt` and `agent` are inert for a
+#: Directory the scenario JSON files are read from.
+CONFIG_DIR: str = "config"
+
+#: The scenario groups a human-only baseline varies.  `debt` and `agent` are inert for a
 #: zero-agent team, so one baseline row is the reference for every combination of those.
-#: The generator writes the baseline grid over these and `campaign.baseline_uplift`
-#: joins on them -- the two must name the same groups.
+#: The config generator writes the baseline grid over these groups and
+#: `campaign.baseline_uplift` joins on them, so the two must stay in agreement.
 BASELINE_VARYING_GROUPS: tuple[str, ...] = ("human", "project", "bugimpact")
 
 
@@ -76,8 +78,7 @@ def scenario_tiers(group: str) -> tuple[str, ...]:
 def tiers_present(values) -> list[str]:
     """The tiers occurring in `values`, in mild -> extreme order.
 
-    Takes any iterable of tier names -- a DataFrame column, a generator over table rows.
-    The count varies per group, and a partial campaign may narrow it further.
+    Takes any iterable of tier names: a DataFrame column, a generator over table rows.
     """
     seen = set(values)
     return [tier for tier in ALL_SCENARIO_TIERS if tier in seen]
@@ -88,23 +89,9 @@ def tier_column(group: str) -> str:
     return f"tier_{group}"
 
 
-def scenario_config_path(group: str, tier: str, config_dir: str = "config") -> Path:
-    """Path of the scenario JSON holding `group` at `tier`.
-
-    The `<config_dir>/<group>_<tier>.json` convention in one place: the CLI defaults,
-    the campaign's parameter rebuild and the search-config generator share it.
-    """
-    return Path(config_dir) / f"{group}_{tier}.json"
-
-
-def require_distinct_groups(groups: "tuple[str, ...]") -> None:
-    """Raise unless `groups` are all scenario groups and all different."""
-    unknown = [g for g in groups if g not in SCENARIO_GROUPS]
-    if unknown:
-        raise ValueError(f"unknown scenario group(s) {unknown}; "
-                         f"expected one of {list(SCENARIO_GROUPS)}")
-    if len(set(groups)) != len(groups):
-        raise ValueError(f"the scenario groups must differ, got {list(groups)}")
+def scenario_config_path(group: str, tier: str) -> Path:
+    """Path of the scenario JSON holding `group` at `tier`."""
+    return Path(CONFIG_DIR) / f"{group}_{tier}.json"
 
 
 def scenario_tier_combinations() -> list[tuple[str, ...]]:
@@ -129,8 +116,8 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 # Retention policy for the per-candidate result.json files a search writes:
 #   "best" — only c* and the indistinguishable set I* it is reported with
 #   "none" — no per-candidate files; the aggregates live in search_summary.json
-# There is deliberately no "one file per simulated candidate" policy: at the Section 4.2
-# budget that is ~4.9 M files and ~58 GB per campaign, and nothing in the paper reads them.
+# Retaining one file per simulated candidate is not offered: at the campaign's evaluation
+# budget that would be millions of files and tens of gigabytes per run.
 SAMPLE_POLICIES: tuple[str, ...] = ("best", "none")
 
 # How a result directory was produced.  Names the subdirectory under a scenario, the
@@ -179,18 +166,15 @@ class TeamConfiguration:
             how many sprints at the end of each release cycle use A_qa instead of A_dev.
             Sprints with (t % R) >= (R - F_freeze) are frozen.  Range [0, R-1].
 
-    The field order is the paper's configuration tuple (Section 3.3).  Both compositions
-    are required: there is no "same as A_dev" shorthand, which the model has no notion of.
-
     Only the per-configuration constraints are checked here.  The collective bound on the
     supervised roles needs the scenario parameters and lives in `src.feasibility`.
     """
 
-    N: float                            # Human staffing level in FTE
-    A_dev: tuple[int, ...]              # Dev-phase composition, length == AGENT_ROLE_COUNT
-    A_qa: tuple[int, ...]               # QA-phase composition, same length
-    R: int                              # Release cadence (sprints)
-    F_freeze: int = 1                   # QA-phase length per release cycle, in [0, R-1]
+    N: float
+    A_dev: tuple[int, ...]
+    A_qa: tuple[int, ...]
+    R: int
+    F_freeze: int = 1
 
     def __post_init__(self) -> None:
         if self.N <= 0:
@@ -232,8 +216,8 @@ class TeamConfiguration:
                 )
         else:
             # Never applied without a freeze window, so normalise it: two teams that
-            # differ only here must hash and simulate as one.  After the shape checks,
-            # so a malformed A_qa still raises.
+            # differ only here must hash and simulate as one.  Normalising after the
+            # shape checks keeps a malformed A_qa an error.
             object.__setattr__(self, "A_qa", (0,) * AGENT_ROLE_COUNT)
 
     def active_A(self, is_frozen: bool) -> tuple[int, ...]:
@@ -244,7 +228,7 @@ class TeamConfiguration:
 def is_human_only(config: TeamConfiguration) -> bool:
     """True for a team with no agents at all.
 
-    A_dev alone decides: `__post_init__` forces A_qa to zero whenever A_dev is zero.
+    A_dev alone decides, because `__post_init__` forces A_qa to zero whenever A_dev is.
     """
     return not any(config.A_dev)
 
@@ -261,14 +245,14 @@ class SearchConfiguration:
     sigma: float = 2.0                      # headroom factor on the saturation bounds
     epsilon: float = 0.02                   # throughput-constraint tolerance
     budget: int = 500                       # candidate evaluations the search may spend
-    n_samples_initial: int = 100            # initial population
-    n_generations: int = 15                 # generation count
-    n_offspring: int = 20                   # offspring per generation
-    n_elite: int = 20                       # elite that parents are drawn from
+    n_samples_initial: int = 100
+    n_generations: int = 15
+    n_offspring: int = 20
+    n_elite: int = 20                       # top of the ranking that parents come from
     human_only: bool = False                # enumerate the zero-agent grid, do not search
-    samples: str = "best"                   # per-candidate result.json retention policy
-    seed: int = 0                           # RNG seed for search
-    scenario_id: str = ""                   # label of the tier combination, e.g. "h-l_p-m_d-h_a-l_b-m"
+    samples: str = "best"                   # one of SAMPLE_POLICIES
+    seed: int = 0
+    scenario_id: str = ""                   # tier combination, e.g. "h-l_p-m_d-h_a-l_b-m"
 
     def __post_init__(self) -> None:
         if set(self.scenario_paths) != set(SCENARIO_GROUPS):
@@ -322,7 +306,7 @@ class SimulationHorizon:
     T: int                      # sprints per replication
     K_search: int               # replications per candidate during the search
     K_final: int                # replications for the re-simulation of I*
-    master_seed: int            # root seed
+    master_seed: int
 
     def __post_init__(self) -> None:
         if self.T < 1:

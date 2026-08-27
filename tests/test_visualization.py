@@ -61,7 +61,7 @@ from src.visualization import (
 
 
 def _optima(
-    combinations: "list[tuple[str, ...]] | None" = None,
+    combinations: list[tuple[str, ...]] | None = None,
     modes: tuple[str, ...] = ("search",),
 ) -> pd.DataFrame:
     """A synthetic `optima.csv`: one row per (scenario, mode)."""
@@ -473,7 +473,7 @@ class TestEliteTurnover:
 
 class TestSaveFigure:
     def test_writes_a_png_and_creates_the_directory(self, tmp_path):
-        """PNG throughout: Section 5 includes every figure as one, so there is no knob."""
+        """PNG throughout; there is no format knob."""
         save_figure(plot_human_agent_matrix(_few()), tmp_path / "plots",
                     "human_agent_matrix")
         assert (tmp_path / "plots" / "human_agent_matrix.png").is_file()
@@ -512,7 +512,7 @@ def _baseline(n: int = 6) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _baseline_points(fig: "Figure") -> int:
+def _baseline_points(fig: Figure) -> int:
     """How many points across the figure were drawn as the baseline overlay."""
     return sum(
         len(coll.get_offsets())
@@ -708,10 +708,12 @@ class TestTeamShape:
     def test_the_share_is_the_mean_of_the_ratios_not_the_ratio_of_the_means(self):
         """A cell's largest scenario must not dictate the composition it reports."""
         df = _summary_optima()
-        cell = df[(df["tier_project"] == "low") & (df["tier_bugimpact"] == "low")]
+        # The first bar of the first panel: the (agent, project, bugimpact) = low cell.
+        cell = df[(df["tier_agent"] == "low") & (df["tier_project"] == "low")
+                  & (df["tier_bugimpact"] == "low")]
         bill = list(BILL_PARAMETERS)
         expected = (cell[bill].div(cell[bill].sum(axis=1), axis=0)).mean()["bill_5"]
-        fig = plot_team_shape(df, panel_group=None)
+        fig = plot_team_shape(df)
         first_bar = [p for p in fig.axes[0].patches
                      if round(p.get_y(), 3) == round(fig.axes[0].patches[0].get_y(), 3)]
         assert first_bar[4].get_width() == pytest.approx(expected)
@@ -727,15 +729,6 @@ class TestTeamShape:
         fig = plot_team_shape(_summary_optima())
         assert fig.axes[0].get_xlim() == (0.0, 1.0)
         plt.close(fig)
-
-    @pytest.mark.parametrize("kwargs", [
-        {"block_group": "project", "bar_group": "project"},
-        {"block_group": "nonsense"},
-    ])
-    def test_the_grouping_variables_are_validated(self, kwargs):
-        with pytest.raises(ValueError):
-            plot_team_shape(_summary_optima(), **kwargs)
-
 
 class TestTeamShapeWeighting:
     """The default weighs a role by what it bills, not by how many of it there are."""
@@ -874,28 +867,11 @@ class TestTeamShapePanels:
         assert len({widths[0], widths[1]}) == 2
         plt.close(fig)
 
-    def test_pooling_gives_back_the_single_panel_form(self):
-        fig = plot_team_shape(_summary_optima(), panel_group=None)
-        assert len(fig.axes) == 1
-        assert fig.axes[0].get_title() == ""
-        plt.close(fig)
-
-    def test_a_group_cannot_hold_two_channels(self):
-        with pytest.raises(ValueError, match="must differ"):
-            plot_team_shape(_summary_optima(), block_group="agent")
-
     def test_the_three_composition_groups_are_distinct(self):
-        """Blocks, bars and panels are three different groups, fixed once.
-
-        `plot_team_shape` still rejects a collision — it is the primitive — but
-        `visualize_team_summary` can no longer produce one.
-        """
+        """Blocks, bars and panels must be three different groups."""
         groups = (COMPOSITION_PANEL_GROUP, COMPOSITION_BLOCK_GROUP,
                   COMPOSITION_BAR_GROUP)
         assert len(set(groups)) == 3
-        with pytest.raises(ValueError, match="must differ"):
-            plot_team_shape(_summary_optima(), block_group="agent",
-                            bar_group="human", panel_group="agent")
 
 
 class TestTeamDrivers:

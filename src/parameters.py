@@ -16,8 +16,8 @@ class ScenarioParameters:
 
     # --- Arrival / productivity rates  ---
     r_arrival: float                 # Feature arrival rate (features/sprint)
-    f_arch_chg: float                # Fraction of implemented features generating architecture change requests
-    r_arch_chg: float                # Architecture change request resolution rate (per agent per sprint)
+    f_arch_chg: float                # Share of implemented features raising a change request
+    r_arch_chg: float                # Change requests one agent resolves per sprint
     r_F: float                       # Feature implementation rate (per agent)
     r_fix: float                     # Bug fix rate (per Bug Fixing Agent per sprint at zero debt)
     r_refactor: float                # Debt reduction per Refactoring Agent per sprint
@@ -33,15 +33,14 @@ class ScenarioParameters:
     h_fix: float                     # Human hours per bug fixed
     c_comm: float                    # Per-peer communication overhead
     f_fix: float                     # Share of residual capacity spent on bug fixing
-    # Read only by a team with no agents (`config.is_human_only`).
+    # The three below are read only by a team with no agents (`config.is_human_only`).
     f_qa: float                      # Share of net capacity reserved for QA in dev sprints
     h_qa: float                      # Human hours to review one implemented feature in full
     d_qa: float                      # Probability a fully reviewed bug is detected
 
     # --- Bug injection  ---
     r_bugs: float                    # Bug injection rate per agent-implemented feature
-    # Bugs per human-implemented feature: an absolute rate, not a factor on r_bugs.
-    r_bugs_human: float
+    r_bugs_human: float              # Bugs per human-implemented feature (absolute)
     theta_maj: float                 # Major bug fraction [0, 1)
     theta_sec: float                 # Security bug fraction [0, 1)
 
@@ -53,7 +52,7 @@ class ScenarioParameters:
     alpha_size: float                # Detection degradation slope in change volume per agent
 
     # --- Debt amplifier ---
-    delta_min: float                 # Debt amplifier floor at D_eff=1 (applied to throughput, review, escalation)
+    delta_min: float                 # Debt amplifier floor at D_eff = 1
     delta_exp: float                 # Debt amplifier shape exponent
     delta_impl: float                # Debt increment per feature
     delta_fix: float                 # Debt increment per fix
@@ -69,11 +68,11 @@ class ScenarioParameters:
     # Roles 4-6 are counted per deployed instance per sprint, the rest per artefact.
     c_token: tuple[float, ...] = field(default_factory=lambda: (0.0,) * AGENT_ROLE_COUNT)
     c_salary: float = 0.0            # Annual fully-loaded cost of one FTE
-    # Dollar cost of one escaped bug, by severity.  The defaults here and on c_token /
-    # c_salary above are for direct construction in tests; every scenario file sets them.
-    omega_min: float = 150.0         # Cost of one escaped minor bug
-    omega_maj: float = 300_000.0     # Cost of one escaped major bug
-    omega_sec: float = 1_000_000.0   # Cost of one escaped security bug
+    # Dollar cost of one escaped bug, by severity.  The defaults on these and on the two
+    # above only serve direct construction; every scenario file sets all five.
+    omega_min: float = 150.0
+    omega_maj: float = 300_000.0
+    omega_sec: float = 1_000_000.0
 
     def __post_init__(self) -> None:
         if len(self.c_token) != AGENT_ROLE_COUNT:
@@ -94,7 +93,6 @@ class ScenarioParameters:
             raise ValueError(f"h_qa must be > 0, got {self.h_qa}")
         if not (0.0 <= self.d_qa <= 1.0):
             raise ValueError(f"d_qa must be in [0, 1], got {self.d_qa}")
-        # Domains from the parameter tables of paper Section 3.5.
         if not (0.0 < self.c_test_ceil <= 1.0):
             raise ValueError(f"c_test_ceil must be in (0, 1], got {self.c_test_ceil}")
         if not (0.0 <= self.Gamma_doc <= 1.0):
@@ -103,9 +101,8 @@ class ScenarioParameters:
             value = getattr(self, name)
             if not (0.0 <= value <= 1.0):
                 raise ValueError(f"{name} must be in [0, 1], got {value}")
-        # The paper's domain is the open (0, 1); the upper end is admitted here because
-        # delta_min = 1 is the degenerate "debt has no effect" case (delta_D == 1), which
-        # the transition handles and which tests use to isolate the other mechanisms.
+        # The closed upper end admits delta_min = 1, the degenerate "debt has no effect"
+        # case (delta_D == 1), which the transition handles and tests rely on.
         if not (0.0 < self.delta_min <= 1.0):
             raise ValueError(f"delta_min must be in (0, 1], got {self.delta_min}")
         if self.delta_exp <= 0.0:

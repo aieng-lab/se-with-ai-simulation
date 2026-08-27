@@ -1,12 +1,12 @@
 """Scoring a configuration and selecting the one to report.
 
-A configuration is scored by its mean cost per feature and is admissible only when
-`value >= (1 - eps) * r_arrival`.  `preference_key` combines the two into a total
-preorder, so a candidate outside the admissible region is still ranked usefully.
+A configuration is scored by its mean cost per feature, and is admissible only when
+`value >= (1 - eps) * r_arrival`.  `preference_key` combines the two into a total preorder,
+so a candidate outside the admissible region is still ranked usefully.
 
-Because the mean cost is a Monte Carlo estimate, the reported result is a pair: the
-minimiser `c*` and the set `I*` of admissible candidates whose cost CI overlaps its own,
-reduced by the parsimony tie-break.
+The mean cost is a Monte Carlo estimate, so the reported result is a pair: the minimiser
+`c*`, and the set `I*` of admissible candidates whose cost CI overlaps its own, reduced by
+the parsimony tie-break.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ class AggregatedObjectives:
     """Monte Carlo summary of one configuration over its replications.
 
     `cost_mean` is the objective and `value_mean` the quantity the throughput constraint
-    bounds; both carry a 95 % percentile bootstrap CI.  Every other field is reporting
-    only and takes no part in ranking or in `I*` membership.
+    bounds; both carry a 95 % percentile bootstrap CI.  Every other field is reporting only
+    and takes no part in ranking or in `I*` membership.
     """
 
     value_mean: float
@@ -60,13 +60,12 @@ _BOOTSTRAP_SALT = 0xB007_5EED
 
 
 def aggregate_config_result(
-    result: "ConfigResult",
+    result: ConfigResult,
     master_seed: int,
 ) -> AggregatedObjectives:
     """Means and 95 % percentile bootstrap CIs over the replications of `result`.
 
-    Only `cost` and `value` are bootstrapped; the remaining fields take part in no
-    comparison and are reported as plain means.
+    Only `cost` and `value` are bootstrapped; the remaining fields are plain means.
     """
     reps = result.replications
 
@@ -111,7 +110,7 @@ def aggregate_config_result(
 # Throughput constraint
 # ---------------------------------------------------------------------------
 
-def throughput_floor(params: "ScenarioParameters", epsilon: float) -> float:
+def throughput_floor(params: ScenarioParameters, epsilon: float) -> float:
     """The value a configuration must reach: `(1 - epsilon) * r_arrival`."""
     if not 0.0 <= epsilon < 1.0:
         raise ValueError(f"epsilon must be in [0, 1), got {epsilon}")
@@ -129,7 +128,7 @@ def satisfies_throughput(agg: AggregatedObjectives, floor: float) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Preference relation (Deb's feasibility rule)
+# Preference relation
 # ---------------------------------------------------------------------------
 
 def preference_key(agg: AggregatedObjectives, floor: float) -> tuple[float, float]:
@@ -141,16 +140,16 @@ def preference_key(agg: AggregatedObjectives, floor: float) -> tuple[float, floa
     return (violation(agg, floor), agg.cost_mean)
 
 
-def rank(aggs: "Sequence[AggregatedObjectives]", floor: float) -> list[int]:
+def rank(aggs: Sequence[AggregatedObjectives], floor: float) -> list[int]:
     """Indices of `aggs` ordered best first, ties keeping their input order."""
     return sorted(range(len(aggs)), key=lambda i: preference_key(aggs[i], floor))
 
 
-def best_index(aggs: "Sequence[AggregatedObjectives]", floor: float) -> int | None:
+def best_index(aggs: Sequence[AggregatedObjectives], floor: float) -> int | None:
     """Index of `c*`, the best-ranked configuration; None for an empty pool.
 
-    `c*` violates the throughput constraint when no candidate satisfies it, so a caller
-    that reports it must check `satisfies_throughput` on the entry.
+    When no candidate satisfies the throughput constraint the least-violating one is
+    returned, so a caller that reports it must check `satisfies_throughput` on the entry.
     """
     if not aggs:
         return None
@@ -173,7 +172,7 @@ class ParsimonyKey:
     agents: tuple[int, ...]
 
 
-def parsimony_key(config: "TeamConfiguration") -> ParsimonyKey:
+def parsimony_key(config: TeamConfiguration) -> ParsimonyKey:
     """Build the ParsimonyKey of a configuration."""
     return ParsimonyKey(
         process=(config.N, config.R, config.F_freeze),
@@ -189,9 +188,9 @@ def parsimony_dominates(
 ) -> bool:
     """True when `a` runs `b`'s process, is no larger anywhere, smaller somewhere, and cheaper.
 
-    Only meaningful between candidates already known to be statistically tied, which is
-    the caller's precondition.  Requiring `cost_a < cost_b` makes this a strict partial
-    order, so a single filtering pass suffices and its result is order-independent.
+    Only meaningful between candidates already known to be statistically tied; that is the
+    caller's precondition.  Requiring `cost_a < cost_b` makes this a strict partial order,
+    so one filtering pass suffices and its result does not depend on the input order.
     """
     if key_a.process != key_b.process:
         return False
@@ -203,20 +202,20 @@ def parsimony_dominates(
 
 
 def report_optimum(
-    aggs: "Sequence[AggregatedObjectives]",
+    aggs: Sequence[AggregatedObjectives],
     floor: float,
-    keys: "Sequence[ParsimonyKey] | None" = None,
+    keys: Sequence[ParsimonyKey] | None = None,
 ) -> tuple[int | None, list[int]]:
     """The `(c*, I*)` pair to report: the index of `c*` and the indices of `I*`.
 
-    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost
-    CI overlaps `c*`'s.  With `keys` given, the parsimony tie-break then drops any member
-    another member dominates; `c*` cannot be dropped, since domination requires a
-    strictly lower mean cost.
+    A candidate belongs to `I*` when it satisfies the throughput constraint and its cost CI
+    overlaps `c*`'s.  With `keys` given, the parsimony tie-break then drops any member that
+    another member dominates.  `c*` itself can never be dropped: domination requires a
+    strictly lower mean cost, and `c*` is the minimiser.
 
-    `I*` is empty for an empty pool and for one in which no candidate is admissible;
-    in the latter case the least-violating candidate is still returned beside it, and
-    callers must mark such a result as inadmissible with `satisfies_throughput`.
+    `I*` is empty for an empty pool, and for one in which no candidate is admissible; in
+    that case the least-violating candidate is still returned beside it, and callers must
+    mark the result inadmissible with `satisfies_throughput`.
     """
     best = best_index(aggs, floor)
     if best is None:
@@ -236,8 +235,8 @@ def report_optimum(
     if keys is None:
         return best, members
     # Domination requires an identical process triple, so only members sharing one can
-    # ever dominate each other.  Bucketing on it first keeps the scan quadratic in the
-    # bucket rather than in the whole preliminary set, which reaches four digits.
+    # dominate each other.  Bucketing on it first keeps the scan quadratic in the bucket
+    # rather than in the whole preliminary set, which can run to thousands of members.
     buckets: dict = {}
     for i in members:
         buckets.setdefault(keys[i].process, []).append(i)

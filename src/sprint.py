@@ -1,26 +1,23 @@
 """The sprint transition: one step of the discrete-time system.
 
-The ten steps are the paper's, in the paper's numbering (Section 3.6), and the order
-matters — each reads state the ones before it wrote:
+`step_sprint` advances the state through nine stages, in this order.  The order matters —
+each reads state the ones before it wrote — so the blocks below must not be reordered, and
+the random draws they make must not be moved, since a stream is addressed by index:
 
-  1  human capacity allocation (monitoring, reviews, escalations, QA, coding, fixing)
-  2  debt penalties: the amplifier delta_D from the t-1 queues and D_tech
-  3  feature arrival and implementation
-  4  test suite update
-  5  bug injection and detection
-  6  architecture queue update
-  7  bug fixing
-  8  escalation queue update, fed by the agent work completed above
-  9  general maintenance: technical debt and documentation
-  10 release event
-
-Steps 1 and 2 are evaluated in the opposite order below.  That is safe and deliberate:
-the capacity cascade never reads `delta_D`, and computing the amplifier first lets the
-whole of step 1 be written as one straight-line block.
+  debt penalties        the amplifier delta_D, from the previous sprint's queues
+  capacity allocation   monitoring, reviews, escalations, QA, coding, fixing
+  arrival               feature arrival and implementation
+  tests                 test suite growth, before detection so new tests count now
+  bugs                  injection and the detection pipeline
+  architecture          the three architecture queues
+  fixing                bug repair, humans first
+  escalations           the escalation queue, fed by the agent work completed above
+  maintenance           technical debt and documentation
+  release               everything unrepaired ships
 
 A team with no agents (`config.is_human_only`) diverges in exactly two places, both
-guarded by that predicate: it reserves f_qa of its capacity in step 2, and its step 5 is
-a single human review stage instead of the test/review/audit pipeline.
+guarded by that predicate: it reserves f_qa of its capacity for its own review, and its
+detection is a single human review stage instead of the test/review/audit pipeline.
 """
 
 from __future__ import annotations
@@ -43,8 +40,8 @@ if TYPE_CHECKING:
     from numpy.random import Generator
 
 
-#: What implementing one approved architecture proposal costs, in units of one feature:
-#: it consumes that much implementation capacity and is billed at that much.
+#: What implementing one approved architecture proposal costs, in units of one feature.
+#: It consumes that much implementation capacity and is billed at that much.
 ARCH_IMPL_COST_UNITS = 5.0
 
 
@@ -57,9 +54,9 @@ class SprintActions:
     instances for k=4,5,6, tests for k=7, documents for k=8.  The agent bill is its inner
     product with `c_token`.
 
-    The four scalars are reporting, not billing.  They are recorded because `units`
-    cannot answer "who did this": `units[0]` conflates agent features with implemented
-    architecture proposals, and human work appears in no entry at all.
+    The four scalars are reporting, not billing.  `units` cannot express who did the work:
+    `units[0]` conflates agent features with implemented architecture proposals, and human
+    work appears in no entry at all.
 
         impl_human   features delivered by humans, after the demand cap
         impl_agents  features delivered by agents; `units[0]` minus
@@ -85,8 +82,8 @@ def _volume_factor(impl: int, a: int, alpha_size: float) -> float:
     """Log-linear detection degradation in the change volume per detection agent.
 
     The `a` deployed instances share the sprint's `impl` features, so each inspects
-    `impl / a` of them.  Returns 0.0 when the service is not deployed, which is what
-    gates the corresponding detection stage off.  The result is in [0, 1].
+    `impl / a` of them.  Returns 0.0 when the service is not deployed, which switches the
+    corresponding detection stage off.  The result is in [0, 1].
     """
     if a <= 0:
         return 0.0
@@ -100,11 +97,11 @@ _FIX_PRIORITY: tuple[str, ...] = (
 )
 
 
-def _detect(rng: "Generator", n: int, p: float) -> int:
+def _detect(rng: Generator, n: int, p: float) -> int:
     """How many of `n` bugs a detection stage catches at probability `p`.
 
-    The `n > 0` guard is not just an optimisation: it keeps a stage with nothing to
-    inspect from consuming a draw, which is what makes a run reproducible by index.
+    The `n > 0` guard is load-bearing, not an optimisation: it keeps a stage with nothing
+    to inspect from consuming a draw, which would shift every draw after it.
     """
     return int(rng.binomial(n, p)) if n > 0 else 0
 
@@ -122,7 +119,7 @@ def _drain_bug_queues(state: SystemState, budget: int) -> int:
         available = getattr(state, queue)
         if available <= 0:
             continue
-        n = available if available < budget else budget
+        n = min(available, budget)
         setattr(state, queue, available - n)
         budget -= n
         repaired += n
@@ -134,7 +131,7 @@ def step_sprint(
     state: SystemState,
     config: TeamConfiguration,
     params: ScenarioParameters,
-    rng: "Generator",
+    rng: Generator,
 ) -> SprintActions:
     """Advance `state` from sprint t-1 to sprint t, in place.
 
@@ -146,7 +143,7 @@ def step_sprint(
     A_active = config.active_A(is_frozen)
     n_supervised = supervised_agent_count(A_active)
 
-    # --- Step 2: debt penalties ---------------------------------------------
+    # --- Debt penalties ------------------------------------------------------
     # The two queue debts are normalised by what the team could clear in one sprint:
     # H_capacity * N / H_x_time items.
     cap_review = params.H_capacity * config.N / params.H_review_time
@@ -157,7 +154,7 @@ def step_sprint(
     D_eff  = min(1.0, state.D_tech + D_arch + D_esc)
     delta_D = 1.0 - (1.0 - params.delta_min) * (D_eff ** params.delta_exp)
 
-    # --- Step 1: human capacity allocation -----------------------------------
+    # --- Human capacity allocation -------------------------------------------
     # Every budget here is per FTE; the terms that consume it scale by config.N.
     H_net = net_capacity(params.H_capacity, params.c_comm, config.N)
     doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
@@ -168,8 +165,8 @@ def step_sprint(
     H_after_mon = max(0.0, H_net - agents_per_fte * H_mon_eff)
 
     # The two residuals below are clamped as well: the served count is floored against
-    # the budget, but re-multiplying by the per-item cost can overshoot it by an ulp, and
-    # both consumers floor the result and would lose a whole item.
+    # the budget, but re-multiplying by the per-item cost can overshoot it by an ulp,
+    # and both consumers floor the result and would lose a whole item to it.
     rev_done = min(math.floor(H_after_mon * config.N / params.H_review_time), state.Q_rev)
     H_after_rev = max(0.0, H_after_mon - rev_done * params.H_review_time / config.N)
 
@@ -191,7 +188,7 @@ def step_sprint(
         (1.0 - params.f_fix) * H_after_qa * config.N / params.h_feature
     )
 
-    # --- Step 3: feature arrival and implementation -------------------------
+    # --- Feature arrival and implementation ----------------------------------
     arrivals = int(rng.poisson(params.r_arrival))
     a_1 = A_active[0]   # Feature Implementation Agent (k=1, index 0)
     total_impl_cap = int(params.r_F * delta_D * a_1)
@@ -210,14 +207,14 @@ def step_sprint(
     state.F_backlog = max(0, state.F_backlog + arrivals - impl)
     state.F_completed += impl
 
-    # --- Step 4: test suite update, before detection so new tests count now ---
+    # --- Test suite growth, before detection so new tests count now ----------
     # Past the coverage ceiling a further test buys nothing, so the agent (k=7) writes
     # nothing and is billed nothing.  max(0, .) guards an initial state above the cap.
     test_cap = params.c_test_ceil * state.F_completed
     tests_written = max(0.0, min(params.r_test * A_active[6], test_cap - state.N_test))
     state.N_test += tests_written
 
-    # --- Step 5: bug injection and detection --------------------------------
+    # --- Bug injection and detection -----------------------------------------
     # Only the agent stream is debt-amplified.
     r_bugs_eff = params.r_bugs * (2.0 - delta_D)
     bugs_raw = int(rng.poisson(impl_agents * r_bugs_eff))
@@ -283,7 +280,7 @@ def step_sprint(
     state.B_hid_maj += bugs_maj - det_maj
     state.B_hid_sec += bugs_sec - det_sec
 
-    # --- Step 6: architecture queues ----------------------------------------
+    # --- Architecture queues -------------------------------------------------
     # Q_arch (change requests) -> Q_rev (proposals awaiting review) -> Q_arch_impl
     # (approved, awaiting implementation).
     arch_chg_new = int(rng.poisson(params.f_arch_chg * impl))
@@ -293,26 +290,26 @@ def step_sprint(
     state.Q_rev = max(0, state.Q_rev + arch_chg_done - rev_done)
     state.Q_arch_impl = max(0, state.Q_arch_impl + rev_done - arch_impl_done)
 
-    # --- Step 7: bug fixing -------------------------------------------------
+    # --- Bug fixing -----------------------------------------------------------
     # Humans spend their budget first, then the agents spend theirs on what is left.
     fixes_human = _drain_bug_queues(state, fix_human_budget)
     a_3 = A_active[2]   # Bug Fixing Agent (k=3, index 2)
     fixes_agent = _drain_bug_queues(state, int(a_3 * delta_D * params.r_fix))
     total_fixes = fixes_human + fixes_agent
 
-    # --- Step 8: escalation queue -------------------------------------------
-    # The escalation rate applies per completed agent task, so W_agent sums the three
-    # roles whose output is counted in tasks.
+    # --- Escalation queue ------------------------------------------------------
+    # The rate is per completed agent task, so W_agent sums the three roles whose
+    # output is counted in tasks.
     W_agent = impl_agents + arch_chg_done + fixes_agent
     esc_new = int(rng.poisson(params.rho_esc * (2.0 - delta_D) * W_agent))
     state.Q_esc = max(0, state.Q_esc + esc_new - esc_done)
 
-    # --- Step 9: general maintenance — technical debt and documentation ------
+    # --- Maintenance: technical debt and documentation -------------------------
     D_raw = (state.D_tech
              + params.delta_impl * impl
              + params.delta_fix * total_fixes)
-    # The refactoring term is in the same D_tech units as the two increments above;
-    # nothing throttles the removal but the clip into [0, 1].
+    # The refactoring term is in the same D_tech units as the two increments above,
+    # and nothing throttles the removal but the clip into [0, 1].
     state.D_tech = max(0.0, min(1.0,
         D_raw - params.r_refactor * A_active[3],   # Refactoring Agent (k=4, index 3)
     ))
@@ -323,7 +320,7 @@ def step_sprint(
     docs_written = max(0.0, min(params.r_doc * A_active[7], doc_cap - state.N_doc))
     state.N_doc += docs_written
 
-    # --- Step 10: release event ---------------------------------------------
+    # --- Release event ----------------------------------------------------------
     if (t + 1) % config.R == 0:
         # Everything unrepaired ships, whether or not it was ever detected.
         escaped_min = state.B_hid_min + state.B_kno_min
@@ -338,7 +335,7 @@ def step_sprint(
         state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
         state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
 
-    # --- Billable work completed this sprint, by role -----------------------
+    # --- Billable work completed this sprint, by role ---------------------------
     # Roles 1-3 and 7-8 bill for what they produced, so one that no work reached bills
     # nothing; roles 4-6 bill per deployed instance whether or not they had work.
     return SprintActions(
@@ -358,4 +355,3 @@ def step_sprint(
         fixes_human=float(fixes_human),
         fixes_agent=float(fixes_agent),
     )
-

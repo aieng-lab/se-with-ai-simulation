@@ -117,7 +117,7 @@ class TestInitialState:
 
 class TestCostAccounting:
     def test_zero_costs_give_zero_cost(self, base_config, base_params):
-        # All three drivers of Eq. (cost_rep) priced at zero, the escaped bugs included:
+        # All three cost drivers priced at zero, the escaped bugs included:
         # this fixture does let bugs through, so leaving the weights alone would price
         # them and the total would not be zero.
         zero_params = dataclasses.replace(
@@ -143,7 +143,7 @@ class TestCostAccounting:
         )
         s = SimulationHorizon(T=4, K_search=1, K_final=1, master_seed=0)
         rep = run_configuration(base_config, s, params).replications[0]
-        # Eq. (obj_V): value is F_completed(T)/T, so the horizon recovers the count.
+        # value is F_completed(T)/T, so the horizon recovers the count.
         F_completed = round(rep.value * s.T)
 
         # Unit token costs, so C_agents is just the total work performed.
@@ -175,11 +175,11 @@ class TestCostAccounting:
             assert rep.actions[k] == pytest.approx(s.T)
 
     def test_saturated_demand_reproduces_the_nominal_bill(self, base_params):
-        """When no agent is idle, the bill of Eq. (cost_agents) reaches its ceiling.
+        """When no agent is idle, the agent bill reaches its ceiling.
 
         Every role then completes a full sprint's worth of work, so the per-role action
-        counts are exactly the rates of Table `tab:work_units`; this is what pins the
-        unit convention of each count.
+        counts are exactly its nominal rates; this is what pins the unit convention of
+        each count.
         """
         # Demand far above capacity and zero debt, so the implementation agent runs
         # at its full rate every sprint.
@@ -455,19 +455,17 @@ class TestAgainstThePersistedCampaign:
     """The reported `c*` of a finished campaign, re-simulated and compared bit for bit.
 
     Every random stream is addressed by `(config_hash, replication index)`, so
-    ``run_configuration(cfg, K=K_final, k_offset=K_search)`` reproduces *exactly* the
-    block the two-stage selection of Section 3.10 already ran — the persisted
-    ``optima.csv`` is therefore an exact golden record of the transition, the cost
-    accounting and the bootstrap, not an approximate one.  No search is involved, so the
-    whole check costs seconds rather than the hours a re-run would.
+    ``run_configuration(cfg, K=K_final, k_offset=K_search)`` reproduces *exactly* the block
+    the two-stage selection already ran.  The persisted ``optima.csv`` is therefore an
+    exact golden record of the transition, the cost accounting and the bootstrap, not an
+    approximate one, and no search is involved, so the check costs seconds.
 
-    This is what stands between an accidental edit to `step_sprint` and a campaign that
-    silently no longer matches the paper.  What it catches is a change in *behaviour*:
-    dropping the debt amplifier from Eq. (r_bugs_eff), say, moves all three
-    agent-supported scenarios below.  A perturbation far below the discretisation of the
-    Poisson and binomial draws is genuinely unobservable in the model and will not show
-    up here.  Skipped where no campaign has been consolidated, so a clean checkout is
-    unaffected.
+    This is what stands between an accidental edit to `step_sprint` and a campaign whose
+    results have silently moved.  It catches a change in *behaviour* — dropping the debt
+    amplifier from the effective bug rate, say, moves all three agent-supported scenarios
+    below — but not a perturbation far under the discretisation of the Poisson and
+    binomial draws, which is unobservable in the model anyway.  Skipped where no campaign
+    has been consolidated, so a clean checkout is unaffected.
     """
 
     @pytest.fixture(scope="class")
@@ -491,8 +489,8 @@ class TestAgainstThePersistedCampaign:
 
         horizon = load_simulation_horizon("config/horizon_default.json")
         params = scenario_params_for_id(scenario_id)
-        # The disjoint block of Section 3.10: the re-simulation runs replication indices
-        # [K_search, K_search + K_final), never an extension of the search's own block.
+        # The re-simulation runs the disjoint block of replication indices
+        # [K_search, K_search + K_final), never an extension of the search's own.
         result = run_configuration(
             team_config(row), horizon, params,
             K=horizon.K_final, k_offset=horizon.K_search,

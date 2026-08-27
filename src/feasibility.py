@@ -20,8 +20,9 @@ def check_feasibility(
 ) -> FeasibilityReport:
     """Check that supervising the agents leaves an FTE some capacity; say why if not.
 
-    Evaluated at perfect documentation coverage, i.e. at the lowest monitoring overhead
-    the configuration can incur, so passing is necessary but not sufficient.
+    Evaluated at perfect documentation coverage, the lowest monitoring overhead the
+    configuration can incur, so passing here is necessary but not sufficient: the sprint
+    transition can still exhaust the budget while coverage is being built up.
     """
     H_mon_eff_star = params.H_monitoring_overhead * (1.0 - params.Gamma_doc)
     H_net = net_capacity(params.H_capacity, params.c_comm, config.N)

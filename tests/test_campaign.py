@@ -239,12 +239,12 @@ class TestBuildTables:
         assert "Inadmissible runs: 0/1" in text
 
     def test_convergence_summary_reports_the_two_modes_separately(self):
-        """Section 5.1 gives the searches and the baseline enumerations two columns.
+        """A search and an enumeration get separate blocks.
 
-        A search and an exhaustive enumeration differ both in how large the preliminary
-        set is and in how far the selection narrows it, so a pooled median describes
-        neither.  Pinned on frames whose two modes cannot be confused: the search sets
-        are an order of magnitude larger.
+        The two differ both in how large the preliminary set is and in how far the
+        selection narrows it, so a pooled median describes neither.  Pinned on frames
+        whose two modes cannot be confused: the search sets are an order of magnitude
+        larger.
         """
         rows = pd.DataFrame(
             [_convergence_row("search", n_prelim=1000, n_final=40)] * 3
@@ -261,10 +261,9 @@ class TestBuildTables:
         assert "1e+03" not in baseline_block
 
     def test_the_i_star_stage_sizes_exclude_the_inadmissible_runs(self):
-        """An inadmissible run has an empty I* (Section 3.10).
+        """An inadmissible run has an empty I*, so the stage sizes leave it out.
 
-        Section 5.1's table is over the admissible runs for exactly that reason: a zero
-        at every stage is not a small set, it is the absence of one.
+        A zero at every stage is not a small set, it is the absence of one.
         """
         rows = pd.DataFrame([
             _convergence_row("search", n_prelim=100, n_final=10),
@@ -421,7 +420,7 @@ class TestBaselineUplift:
         assert uplift["cost_ratio"].tolist() == pytest.approx([4.0] * 12)
 
     def test_it_carries_the_two_tiers_the_join_cannot_supply(self):
-        """Section 5.2 reads the comparison by agent and by debt tier.
+        """The comparison is read by agent and by debt tier.
 
         Those are exactly the two groups the baseline holds at `UNUSED_TIER`, so they
         cannot come from the join keys and have to be carried from the search row.
@@ -442,10 +441,10 @@ class TestBaselineUplift:
         assert bool(row["admissible"]) and bool(row["baseline_admissible"])
 
     def test_an_inadmissible_side_is_flagged_but_kept(self):
-        """An empty I* marks the run inadmissible (Section 3.10); the row still lands.
+        """An empty I* marks the run inadmissible, but the row still lands.
 
-        Section 5.2 restricts the comparison to pairs where both sides are admissible,
-        which is a filter on these two columns rather than a missing row.
+        Restricting the comparison to pairs where both sides are admissible is then a
+        filter on these two columns rather than a missing row.
         """
         import pandas as pd
 
@@ -471,7 +470,7 @@ class TestBaselineUplift:
 # The multiplicative cost model
 # ---------------------------------------------------------------------------
 
-def _multiplier_optima(effects: "dict[str, dict[str, float]] | None" = None,
+def _multiplier_optima(effects: dict[str, dict[str, float]] | None = None,
                        noise: float = 0.0) -> pd.DataFrame:
     """A synthetic `optima.csv` whose cost is an exact product of per-tier factors.
 

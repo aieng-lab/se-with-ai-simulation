@@ -24,16 +24,16 @@ A campaign is a tree of finished runs, one per (scenario, result mode):
 ``elite_turnover.csv``
     Long format — one row per (scenario, mode, generation) — carrying the per-generation
     turnover and whether the incumbent changed.  Long rather than one column per
-    generation, since a search that exhausts its budget early runs fewer of them.
+    generation, because a search that exhausts its budget early runs fewer of them.
 
-`cost_multipliers` fits the additive log-cost model on top of ``optima.csv`` and yields
+`cost_multipliers` fits an additive log-cost model on top of ``optima.csv`` and yields
 ``multipliers.csv``: what each scenario tier multiplies the cost of the optimum by, and
 how much of the variance its group explains on its own.
 """
 
 from __future__ import annotations
 
-import json
+from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
 
@@ -54,12 +54,32 @@ from .config import (
     tier_column,
     tiers_present,
 )
-from .io import load_scenario_params
+from .io import load_scenario_params, read_json
 from .parameters import ScenarioParameters
 
 # ----------------------------------------------------------------------------
 # Scenario ids and parameters
 # ----------------------------------------------------------------------------
+
+#: The per-role column names of the campaign tables, k=1..8: the two composition
+#: vectors and the work each role completed over the horizon.
+DEV_PARAMETERS: tuple[str, ...] = tuple(
+    f"a_dev_{k}" for k in range(1, AGENT_ROLE_COUNT + 1))
+QA_PARAMETERS: tuple[str, ...] = tuple(
+    f"a_qa_{k}" for k in range(1, AGENT_ROLE_COUNT + 1))
+ACTION_PARAMETERS: tuple[str, ...] = tuple(
+    f"actions_{k}" for k in range(1, AGENT_ROLE_COUNT + 1))
+
+
+def require_columns(df: pd.DataFrame, columns: "Iterable[str]", what: str) -> None:
+    """Raise KeyError unless `df` carries every one of `columns`.
+
+    `what` names the table in the message, so a caller can say which input is short.
+    """
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise KeyError(f"{missing} are not columns of the {what}")
+
 
 def tiers_from_scenario_id(scenario_id: str) -> dict[str, str]:
     """Recover ``{group: tier}`` from a scenario id like ``h-l_p-m_d-h_a-l_b-m``."""
@@ -76,20 +96,15 @@ def tiers_from_scenario_id(scenario_id: str) -> dict[str, str]:
     return tiers
 
 
-@lru_cache(maxsize=None)
-def scenario_params_for_id(
-    scenario_id: str,
-    config_dir: str = "config",
-) -> ScenarioParameters:
+@lru_cache
+def scenario_params_for_id(scenario_id: str) -> ScenarioParameters:
     """Rebuild the `ScenarioParameters` a scenario id stands for.
 
-    Reads ``<config_dir>/<group>_<tier>.json`` for the five groups.  Cached, so the 432
-    scenarios cost at most 432 loads however often they are asked for.
+    Cached, because a consolidation asks for the same id once per result directory.
     """
-    tiers = tiers_from_scenario_id(scenario_id)
     return load_scenario_params({
-        group: scenario_config_path(group, tier, config_dir)
-        for group, tier in tiers.items()
+        group: scenario_config_path(group, tier)
+        for group, tier in tiers_from_scenario_id(scenario_id).items()
     })
 
 
@@ -108,7 +123,7 @@ def search_dirs(results_dir: Path) -> list[tuple[str, str, Path]]:
     return found
 
 
-def require_search_dirs(results_dir: "str | Path") -> list[tuple[str, str, Path]]:
+def require_search_dirs(results_dir: str | Path) -> list[tuple[str, str, Path]]:
     """`search_dirs`, raising FileNotFoundError on a missing or empty results tree."""
     results_dir = Path(results_dir)
     if not results_dir.is_dir():
@@ -119,10 +134,10 @@ def require_search_dirs(results_dir: "str | Path") -> list[tuple[str, str, Path]
     return searches
 
 
-def team_config(row: "pd.Series | dict") -> TeamConfiguration:
+def team_config(row: pd.Series | dict) -> TeamConfiguration:
     """Rebuild the TeamConfiguration a table row describes."""
-    A_dev = tuple(int(row[f"a_dev_{k + 1}"]) for k in range(AGENT_ROLE_COUNT))
-    A_qa = tuple(int(row[f"a_qa_{k + 1}"]) for k in range(AGENT_ROLE_COUNT))
+    A_dev = tuple(int(row[c]) for c in DEV_PARAMETERS)
+    A_qa = tuple(int(row[c]) for c in QA_PARAMETERS)
     return TeamConfiguration(N=float(row["N"]), A_dev=A_dev, R=int(row["R"]),
                              F_freeze=int(row["F_freeze"]), A_qa=A_qa)
 
@@ -136,42 +151,39 @@ def scenario_columns(scenario_id: str, mode: str) -> dict:
     return row
 
 
+def process_columns(obj: dict) -> dict:
+    """The three process controls of one objectives entry."""
+    return {"N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"]}
+
+
 def composition_columns(obj: dict) -> dict:
-    """The two composition vectors of one objectives entry, unrolled one column per role."""
-    row = {f"a_dev_{k + 1}": obj["A_dev"][k] for k in range(AGENT_ROLE_COUNT)}
-    row.update({f"a_qa_{k + 1}": obj["A_qa"][k] for k in range(AGENT_ROLE_COUNT)})
+    """The two composition vectors of one objectives entry, one column per role."""
+    row = dict(zip(DEV_PARAMETERS, obj["A_dev"]))
+    row.update(zip(QA_PARAMETERS, obj["A_qa"]))
     row["n_sup_dev"] = supervised_agent_count(tuple(obj["A_dev"]))
     row["n_sup_qa"] = supervised_agent_count(tuple(obj["A_qa"]))
     return row
 
 
-def optimum_row(
-    scenario_id: str,
-    mode: str,
-    summary: dict,
-    config_dir: str = "config",
-) -> dict | None:
+def optimum_row(scenario_id: str, mode: str, summary: dict) -> dict | None:
     """The `optima.csv` row for one run; None when nothing was simulated.
 
     `value_ratio` is the achieved throughput as a fraction of the arrival rate, so the
-    throughput constraint reads `value_ratio >= 1 - eps` whatever the scenario's
-    `r_arrival`.  The three ``cost_*_share`` columns sum to 1 exactly.
+    throughput constraint reads `value_ratio >= 1 - eps` whatever the scenario's `r_arrival`,
+    and the three ``cost_*_share`` columns sum to 1 exactly.
 
-    Every number is read from ``final_objectives``, the `K_final` block, and
-    `n_indistinguishable` is the final size of `I*`; ``convergence.csv`` has the sizes at
-    the earlier stages.
+    Every number is read from ``final_objectives``, the `K_final` block; ``convergence.csv``
+    carries the sizes of `I*` at the earlier stages.
     """
     best = summary.get("best")
     if best is None:
         return None
     obj = summary["final_objectives"][best]
-    params = scenario_params_for_id(scenario_id, config_dir)
+    params = scenario_params_for_id(scenario_id)
 
     row = scenario_columns(scenario_id, mode)
-    row.update({
-        "config_key": best,
-        "N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"],
-    })
+    row["config_key"] = best
+    row.update(process_columns(obj))
     row.update(composition_columns(obj))
     total = obj["cost_mean"]
     row.update({
@@ -196,8 +208,7 @@ def optimum_row(
         "fixes_human_mean": obj["fixes_human_mean"],
         "fixes_agent_mean": obj["fixes_agent_mean"],
     })
-    for k, units in enumerate(obj["actions_mean"], start=1):
-        row[f"actions_{k}"] = units
+    row.update(zip(ACTION_PARAMETERS, obj["actions_mean"]))
     return row
 
 
@@ -226,9 +237,9 @@ def scenario_row(
     return row
 
 
-#: The `i_star` counters of `SelectionReport.stats` that become `convergence.csv` columns,
-#: in the order the selection stages produce them.  The four set sizes are
-#: `n_prelim` -> `n_resimulated` -> `n_after_resim` -> `n_final`.
+#: The `i_star` keys of ``convergence.json`` that become `convergence.csv` columns, in
+#: the order the selection stages produce them.  Written out rather than derived from
+#: `search.SelectionStats`: this is the CSV's schema on the reader's side.
 _I_STAR_COLUMNS: tuple[str, ...] = (
     "n_prelim",
     "parsimony_removed_prelim",
@@ -246,9 +257,9 @@ _I_STAR_COLUMNS: tuple[str, ...] = (
 def convergence_row(scenario_id: str, mode: str, convergence: dict) -> dict:
     """The `convergence.csv` row for one run: the convergence measures as scalars.
 
-    The `tau_*` columns summarise the curve `turnover_rows` carries in full: its first and
-    last value and the mean over the last ten generations, i.e. the level the elite
-    turnover settles at.  They are None for an enumeration, which has no generations.
+    The `tau_*` columns summarise the curve `turnover_rows` carries in full: its first and last
+    value, and the mean over the last ten generations.  All three are None for an enumeration,
+    which has no generations.
     """
     tau = list(convergence.get("elite_turnover") or [])
     row = scenario_columns(scenario_id, mode)
@@ -293,7 +304,6 @@ def turnover_rows(scenario_id: str, mode: str, convergence: dict) -> list[dict]:
 
 def build_tables(
     results_dir: str | Path,
-    config_dir: str = "config",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Read every finished run under `results_dir`.
 
@@ -306,52 +316,49 @@ def build_tables(
     c_rows: list[dict] = []
     t_rows: list[dict] = []
     for scenario_id, mode, d in searches:
-        manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
-        summary = json.loads((d / "search_summary.json").read_text(encoding="utf-8"))
-        row = optimum_row(scenario_id, mode, summary, config_dir)
+        manifest = read_json(d / "manifest.json")
+        summary = read_json(d / "search_summary.json")
+        row = optimum_row(scenario_id, mode, summary)
         if row is not None:
             o_rows.append(row)
         s_rows.append(scenario_row(scenario_id, mode, manifest, summary))
-        convergence = json.loads((d / "convergence.json").read_text(encoding="utf-8"))
+        convergence = read_json(d / "convergence.json")
         c_rows.append(convergence_row(scenario_id, mode, convergence))
         t_rows.extend(turnover_rows(scenario_id, mode, convergence))
     return (pd.DataFrame(o_rows), pd.DataFrame(s_rows),
             pd.DataFrame(c_rows), pd.DataFrame(t_rows))
 
 
-def search_rows(optima: "pd.DataFrame") -> "pd.DataFrame":
-    """The rows of a campaign table that describe a search, not the human-only baseline.
-
-    The single definition of "is a search": every consumer that excludes the baseline
-    goes through this, so adding a third result mode is one edit rather than a hunt for
-    the sites that spell the predicate out.
-    """
+def search_rows(optima: pd.DataFrame) -> pd.DataFrame:
+    """The rows of a campaign table that describe a search, not the human-only baseline."""
     if optima.empty or "mode" not in optima.columns:
         return optima
     return optima[optima["mode"] != HUMAN_ONLY_MODE]
 
 
-def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
+def baseline_rows(optima: pd.DataFrame) -> pd.DataFrame:
+    """The rows of a campaign table that describe the human-only baseline."""
+    if optima.empty or "mode" not in optima.columns:
+        return optima.iloc[:0]
+    return optima[optima["mode"] == HUMAN_ONLY_MODE]
+
+
+def baseline_uplift(optima: pd.DataFrame) -> pd.DataFrame:
     """Cost of each search optimum against the human-only baseline at the same tiers.
 
     One row per (campaign scenario, search mode) that has a baseline sharing its
-    `human` / `project` / `bugimpact` tiers.  `cost_ratio = cost_mean(baseline) /
-    cost_mean(c*)`, so above 1 the agent-supported optimum is the cheaper of the two.
+    `BASELINE_VARYING_GROUPS` tiers.  `cost_ratio = cost_mean(baseline) / cost_mean(c*)`, so
+    above 1 the agent-supported optimum is the cheaper of the two.
 
-    The join is on three groups, not five, because the baseline is inert in `debt` and
-    `agent`: one baseline row is the reference for all 12 of their combinations.  All
-    five tier columns are carried anyway — the comparison is *read* by agent and by debt
-    tier, which is where its strongest interaction lies, and those two are exactly the
-    ones the join cannot supply.
-
-    `admissible` is true only where both sides reported an admissible optimum, which is
-    the population the comparison is meaningful over: a ratio against a baseline that
-    never kept up with the arriving work compares a cost to a shortfall.
+    The join is on three groups, not five, because the baseline is inert in `debt` and `agent`;
+    all five tier columns are carried anyway, so the result can still be read by those two.
+    `admissible` is true only where both sides reported an admissible optimum, which is the
+    population the ratio is meaningful over.
     """
     if optima.empty or "mode" not in optima.columns:
         return pd.DataFrame()
 
-    base = optima[optima["mode"] == HUMAN_ONLY_MODE]
+    base = baseline_rows(optima)
     search = search_rows(optima)
     if base.empty or search.empty:
         return pd.DataFrame()
@@ -366,7 +373,7 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
         on=join, how="inner", validate="many_to_one",
     )
     merged["cost_ratio"] = merged["baseline_cost_mean"] / merged["cost_mean"]
-    # An inadmissible run has an empty I* (Section 3.10), which is what marks it here.
+    # An inadmissible run has an empty I*, which is what marks it here.
     merged["admissible"] = (merged["n_indistinguishable"] > 0)
     merged["baseline_admissible"] = (merged["baseline_n_indistinguishable"] > 0)
 
@@ -382,7 +389,7 @@ def baseline_uplift(optima: "pd.DataFrame") -> "pd.DataFrame":
 # Search convergence summary
 # ----------------------------------------------------------------------------
 
-def _median_iqr_max(values: "pd.Series") -> str:
+def _median_iqr_max(values: pd.Series) -> str:
     """Render a column as `median [q1, q3], max = …`.
 
     Order statistics rather than mean and sd, because these distributions are skewed.
@@ -394,14 +401,12 @@ def _median_iqr_max(values: "pd.Series") -> str:
             f"max = {v.max():.3g}")
 
 
-def _i_star_block(rows: "pd.DataFrame", label: str) -> list[str]:
+def _i_star_block(rows: pd.DataFrame, label: str) -> list[str]:
     """The four `I*` stage sizes and the three reduction steps, for one result mode.
 
-    The stage sizes describe the searches that ended admissible, which is the population
-    Section 5.1's table reports: an inadmissible search has an empty preliminary `I*`, so
-    including it would put a zero into every stage.  The reduction-step totals below them
-    are over *all* of `rows`, since a search that ends inadmissible still spends
-    re-simulation effort.
+    The stage sizes cover the runs that ended admissible only: an inadmissible one has an empty
+    preliminary `I*` and would put a zero into every stage.  The reduction-step totals below
+    them are over *all* of `rows`, since an inadmissible run still spends re-simulation effort.
     """
     n = len(rows)
     if not n:
@@ -422,8 +427,8 @@ def _i_star_block(rows: "pd.DataFrame", label: str) -> list[str]:
     prelim = rows["n_prelim"].sum()
     removed = rows["parsimony_removed"].sum()
     after = rows["n_after_resim"].sum()
-    # Counted over the admissible runs: an inadmissible one re-simulates a single
-    # candidate, so its `c*` cannot move and would only dilute the rate.
+    # Over the admissible runs only: an inadmissible one re-simulates a single
+    # candidate, whose `c*` cannot move, and would only dilute the rate.
     changed = int(admissible["best_changed_by_resim"].astype(bool).sum())
     discarded = rows["n_discarded_throughput"]
     lines.append("")
@@ -448,12 +453,11 @@ def _i_star_block(rows: "pd.DataFrame", label: str) -> list[str]:
     return lines
 
 
-def convergence_summary(convergence: "pd.DataFrame") -> str:
+def convergence_summary(convergence: pd.DataFrame) -> str:
     """Render `convergence.csv` as a text block, one section per group of measures.
 
-    The two result modes are reported **separately**, as Section 5.1 does: a search and an
-    exhaustive enumeration differ in what they spend and in how far the selection narrows
-    them, so pooling the 36 baselines into the 432 searches misstates both.
+    The two result modes get separate blocks: a search and an exhaustive enumeration differ in
+    what they spend and in how far the selection narrows them.
     """
     if convergence.empty:
         return "Search convergence: no search carries a convergence record.\n"
@@ -465,10 +469,11 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
     if searched.empty:
         lines.append("  no generational search in this campaign (enumeration only)")
     else:
-        lines.append(f"  generations run                  {_median_iqr_max(searched['n_generations_run'])}")
-        lines.append(f"  tau_1  (first generation)        {_median_iqr_max(searched['tau_first'])}")
-        lines.append(f"  tau_G  (last generation)         {_median_iqr_max(searched['tau_last'])}")
-        lines.append(f"  tau over the last 10 generations {_median_iqr_max(searched['tau_mean_last_10'])}")
+        for caption, column in (("generations run", "n_generations_run"),
+                                ("tau_1  (first generation)", "tau_first"),
+                                ("tau_G  (last generation)", "tau_last"),
+                                ("tau over the last 10 generations", "tau_mean_last_10")):
+            lines.append(f"  {caption:<33}{_median_iqr_max(searched[column])}")
 
     lines.append("")
     lines.append("Size of I* at the four stages of the selection, by result mode")
@@ -493,21 +498,21 @@ def convergence_summary(convergence: "pd.DataFrame") -> str:
 # The multiplicative effect of each scenario group on the cost
 # ----------------------------------------------------------------------------
 
-def admissible_optima(optima: "pd.DataFrame", mode: str = SEARCH_MODE) -> "pd.DataFrame":
-    """The rows of `optima` that `mode` reported an admissible `c*` for.
+def admissible_optima(optima: pd.DataFrame) -> pd.DataFrame:
+    """The searched rows of `optima` whose reported `c*` is admissible.
 
-    An inadmissible search has an empty `I*` (Section 3.10), so `n_indistinguishable`
-    is the marker; `feasible_throughput` says the same thing and is checked with it.
+    An inadmissible run has an empty `I*`, so `n_indistinguishable == 0` marks it;
+    `feasible_throughput` says the same thing and is checked alongside it.
     """
     if optima.empty:
         return optima
-    return optima[(optima["mode"] == mode)
+    return optima[(optima["mode"] == SEARCH_MODE)
                   & (optima["n_indistinguishable"] > 0)
                   & optima["feasible_throughput"].astype(bool)]
 
 
-def _tier_design(frame: "pd.DataFrame", groups: "tuple[str, ...]",
-                 references: dict) -> "tuple[np.ndarray, list[tuple[str, str]]]":
+def _tier_design(frame: pd.DataFrame, groups: tuple[str, ...],
+                 references: dict) -> tuple[np.ndarray, list[tuple[str, str]]]:
     """Intercept plus one 0/1 dummy per non-reference tier of each group in `groups`."""
     columns: list[tuple[str, str]] = []
     for group in groups:
@@ -521,7 +526,7 @@ def _tier_design(frame: "pd.DataFrame", groups: "tuple[str, ...]",
     return design, columns
 
 
-def _r_squared(design: "np.ndarray", y: "np.ndarray") -> "tuple[np.ndarray, float]":
+def _r_squared(design: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, float]:
     """Least-squares fit of `y` on `design`; returns the coefficients and R^2."""
     coef, *_ = np.linalg.lstsq(design, y, rcond=None)
     residual = y - design @ coef
@@ -530,19 +535,16 @@ def _r_squared(design: "np.ndarray", y: "np.ndarray") -> "tuple[np.ndarray, floa
     return coef, (1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0)
 
 
-def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
+def cost_multipliers(optima: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """How much each scenario tier multiplies the cost per feature of the optimum.
 
-    An additive model on ``log10(cost_mean)`` with one dummy per tier and no
-    interactions, fitted over the admissible search optima.  A coefficient is a
-    multiplier on the cost once exponentiated, so the five groups are reported as
-    independent multipliers relative to the *cheapest* tier of their own group — which
-    is what makes the trends readable one group at a time.
+    An additive model on ``log10(cost_mean)`` with one dummy per tier and no interactions,
+    fitted over the admissible search optima.  Exponentiating a coefficient turns it into a
+    multiplier relative to the cheapest tier of its own group.
 
     Returns the per-(group, tier) table and a dict of fit statistics: `r_squared`,
-    `residual_sd` (in decades) and one `eta_squared_<group>` per group, the R^2 of the
-    single-group model, i.e. the share of the variance of the log cost that the group
-    explains on its own.
+    `residual_sd` (in decades) and one `eta_squared_<group>` per group — the R^2 of the
+    single-group model, i.e. the share of the log-cost variance that group explains alone.
     """
     frame = admissible_optima(optima)
     if frame.empty:
@@ -551,8 +553,8 @@ def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
     y = np.log10(frame["cost_mean"].to_numpy(dtype=float))
     groups = tuple(g for g in SCENARIO_GROUPS if frame[tier_column(g)].nunique() > 1)
 
-    # The reference is the tier with the lowest mean log cost, so every multiplier is
-    # >= 1 and the table reads as "how much dearer than the cheapest tier".
+    # The tier with the lowest mean log cost, so every multiplier comes out >= 1 and the
+    # table reads as "how much dearer than the cheapest tier of this group".
     references = {
         g: frame.groupby(tier_column(g))["cost_mean"].apply(lambda c: np.log10(c).mean()).idxmin()
         for g in groups
@@ -586,8 +588,8 @@ def cost_multipliers(optima: "pd.DataFrame") -> "tuple[pd.DataFrame, dict]":
     return pd.DataFrame(rows), stats
 
 
-def multipliers_summary(table: "pd.DataFrame", stats: dict) -> str:
-    """Render `multipliers.csv` as a text block, groups ordered by the variance they explain."""
+def multipliers_summary(table: pd.DataFrame, stats: dict) -> str:
+    """Render `multipliers.csv` as text, groups ordered by the variance they explain."""
     if table.empty:
         return "Cost multipliers: no admissible search optimum to fit.\n"
 

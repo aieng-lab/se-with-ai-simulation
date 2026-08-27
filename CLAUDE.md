@@ -23,7 +23,7 @@ src/                    Python simulation package
     parameters.py       ScenarioParameters (39 fields)
     state.py            SystemState
     rng.py              reproducible PCG-64 seeding (FNV-1a config hash)
-    io.py               load_simulation_horizon / load_scenario_params
+    io.py               read_json + load_simulation_horizon / load_scenario_params
                         / load_search_config / load_initial_state
     feasibility.py      check_feasibility — human-capacity feasibility condition (§3.6)
     sprint.py           step_sprint — full 10-step sprint transition; returns SprintActions
@@ -32,7 +32,9 @@ src/                    Python simulation package
     selection.py        aggregate_config_result (bootstrap CI), the throughput constraint,
                         the `preference_key` ranking, report_optimum (the (c*, I*) pair)
     results.py          save_result/load_result (the per-candidate sample JSON)
-    campaign.py         minimal campaign consolidation: optima.csv + scenarios.csv +
+    campaign.py         the column-name constants (DEV_/QA_/ACTION_PARAMETERS), the
+                        shared require_columns / search_rows / baseline_rows helpers, and
+                        the campaign consolidation: optima.csv + scenarios.csv +
                         convergence.csv + elite_turnover.csv schemas, convergence_summary,
                         and cost_multipliers — the §5.2 log-cost model (multipliers.csv)
     constellation.py    what the optima are *made of*: the final I* extraction
@@ -44,7 +46,8 @@ src/                    Python simulation package
                         (process_summary.csv)
     search.py           run_search (the only search) + run_human_only /
                         human_only_grid (the §4.1 baseline) +
-                        two_stage_selection (the K'/K selection of §3.10)
+                        two_stage_selection (the K'/K selection of §3.10),
+                        reporting through the SelectionStats dataclass
     visualization.py    matplotlib plot functions + visualize_campaign /
                         visualize_team_summary helpers
     main.py             CLI: `python -m src.main optimize|campaign|constellation`
@@ -78,7 +81,7 @@ scripts/
 run_experiments.sh      campaign driver: 432 searches in parallel, resumable (§4.2);
                         MODE=human_only runs the 36 §4.1 baselines instead
 
-tests/                  pytest suite (570 tests, ~70 s — the campaign figures dominate)
+tests/                  pytest suite (566 tests, ~75 s — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
     experiments/        the campaign re-run of 2026-08-20: 432 `search` +
                         36 `human_only` scenario dirs, current as of that date.
@@ -121,7 +124,16 @@ input that only ever took a single value. Dropped with them: `AGENT_ROLE_NAMES` 
 reference anywhere), `SystemState.B_kno` / `B_hid` (tests only — `tests/test_sprint.py`
 has module-level helpers instead), `simulation.phase_sprint_counts` with `optima.csv`'s
 `T_dev` / `T_qa`, `optima.csv`'s `throughput_floor` (it is `r_arrival · (1-ε)`),
-`optimum_row`'s unused `manifest` parameter, and the `agent-sim` console script. **The
+`optimum_row`'s unused `manifest` parameter, and the `agent-sim` console script.
+**(4)** The last of the dead flexibility: the `config_dir` parameter of
+`scenario_config_path` / `scenario_params_for_id` / `optimum_row` / `build_tables` /
+`role_bill` (now the `config.CONFIG_DIR` constant), `admissible_optima`'s `mode=`,
+`build_process_summary`'s `by=` (now `constellation.ROLE_SPLIT_GROUP`),
+`_padded_log_range`'s `extra_decades_below=`, `plot_team_shape`'s `block_group` /
+`bar_group` / `panel_group` **and its `panel_group=None` single-panel branch** — it reads
+the `COMPOSITION_*_GROUP` constants directly, so `_ShareWeight.xlabel` and
+`config.require_distinct_groups` went with it — and `constellation.search_optima`, a pure
+alias for `campaign.search_rows`. **The
 figures are byte-identical across all of this** — that is the check to run (below), not a
 matter of judgement.
 
@@ -198,7 +210,7 @@ the plotting code changed.  It reads `elite_turnover.csv` **only if it exists**:
 all-baseline tree writes none, because an enumeration has no generations, and requiring
 it made `--figures-only` fail on a tree the non-`--figures-only` path handles.  There is
 no `--format`, no `--config-dir` and **no channel flags** on either subcommand: §5 is
-PNG throughout, the scenario JSONs are always read from `config/`, and every figure is
+PNG throughout, the scenario JSONs are always read from `config.CONFIG_DIR`, and every figure is
 drawn on one fixed layout — `visualization.MATRIX_CHANNELS` for the three optima matrices,
 `visualization.COMPOSITION_{BLOCK,BAR,PANEL}_GROUP` for the composition figures and
 `constellation.CELL_GROUPS` for the cell grid.  The `--x/--y/--color/--marker/--size` and
@@ -301,7 +313,7 @@ composition to describe — which is also why these figures take no `baseline` o
 the two join on `(scenario_id, mode, config_key)`; `is_best` flags `c*`. It is written
 for **every** mode in the tree — 21,946 rows on the current campaign, over the 450 of 468
 runs with a non-empty `I*`, of which 21,596 are `search` — and
-`constellation.search_optima` does the mode filtering the cell tables need, so the file
+`campaign.search_rows` does the mode filtering the cell tables need, so the file
 stays a raw reading of the campaign.
 `constellation_cells.csv` is long — one row per (population, cell, parameter) with `mean`,
 `sd`, `n_scenarios`, `n_members` — over the 23 `CONSTELLATION_PARAMETERS`: the process
@@ -350,11 +362,10 @@ must be formed *within* a scenario before being averaged, and a ratio of aggrega
 be the largest scenario's ratio rather than the typical one. Do not "simplify" them onto
 the cell table. Their three groups are the module constants
 `COMPOSITION_BLOCK_GROUP` / `COMPOSITION_BAR_GROUP` / `COMPOSITION_PANEL_GROUP`
-(`project` / `bugimpact` / `agent`). The channel-collision path that used to pool the
-panels back into one — needed only because `--cols` / `--rows` could claim the group the
-panels were on — went with those flags. `plot_team_shape` still rejects a collision: it
-is the primitive and takes its three groups as arguments, but `visualize_team_summary`
-can no longer produce one.
+(`project` / `bugimpact` / `agent`). `plot_team_shape` reads those three constants
+directly rather than taking them as arguments: nothing ever passed anything else, so the
+channel-collision validation and the pooled single-panel path it guarded are both gone,
+and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
 
 - `composition_<what>.png` (`plot_team_shape`): a 100 % stacked horizontal bar per
   (project, bugimpact) cell, eight segments, and **two dollar figures annotated at the
@@ -363,8 +374,8 @@ can no longer produce one.
   repeats in each: **whether a ladder is reproduced across the blocks is the "which group
   causes this" reading**, and a stacked bar makes an invariance as visible as a change.
 
-  **Three scenario groups are read off the figure, not two**: `panel_group` (`agent` by
-  default) repeats that whole block structure once per panel, **two panels to a grid
+  **Three scenario groups are read off the figure, not two**: `COMPOSITION_PANEL_GROUP`
+  (`agent`) repeats that whole block structure once per panel, **two panels to a grid
   row**, so the same reading extends to a third group. The agent tier earns a panel
   because `team_drivers.png` puts it among the settings that move the team, and because
   pooling it averages teams the model prices an order of magnitude apart —
@@ -374,12 +385,9 @@ can no longer produce one.
   other on. Every panel carries the same rows — that is what makes them comparable — so
   the panels share the row axis, the tier and block labels are drawn once per *grid row*
   (the left column only), the x label once for the whole grid, and only the column of
-  absolute totals repeats, since each panel has its own. `panel_group=None` gives the
-  pooled single-panel form — reachable only by calling `plot_team_shape` directly, since
-  `visualize_team_summary` always panels on `agent` — and is the only form that carries
-  `_ShareWeight.xlabel`; the
-  panelled one has percent ticks and a title ("Share of development costs", "Share of
-  agent costs") and does not need the sentence, let alone four copies of it.
+  absolute totals repeats, since each panel has its own. There is no pooled single-panel
+  form any more: the figure has percent ticks and a title ("Share of development costs",
+  "Share of agent costs"), which is what the x label used to say.
 
   **The two annotated columns are the team's bill and the bugs' bill, per feature.** The
   first is the weighting's own total (`_ShareWeight.total_column`); the second is
@@ -580,7 +588,8 @@ figure no longer draws it.
   numbers rather than plotted.
 - `quality_development_matrix.png` (`plot_quality_development_matrix`): the other
   half of that split — the two team drivers added back together (x = `cost_human_mean +
-  cost_agent_mean`, a column derived on a copy inside the plot function, **not** in
+  cost_agent_mean`, derived as `cost_team_mean` on a copy inside the plot function —
+  the same name and quantity `constellation.role_bill` writes, but **not** in a raw
   `optima.csv`) against the one the composition only influences (y = `cost_quality_mean`).
   Same unit again, so same treatment as `human_agent_matrix`: shared log range ($5.90 –
   $1.5 M for the current campaign), equal aspect, 1:1 diagonal. Above the line the escaped

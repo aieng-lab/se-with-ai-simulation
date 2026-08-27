@@ -1,39 +1,22 @@
-"""CLI entry point for agent-ai-cost-sim.
+"""CLI entry point for agent-ai-cost-sim.  Three subcommands, one per pipeline stage:
 
-Usage
------
-Search for the cheapest team that keeps up with the project:
-    python -m src.main optimize config/search_default.json --out results/search_default
-    python -m src.main optimize config/search/search_h-l_p-m_d-h_a-l_b-m.json \
-        --samples none --progress-every 500 --out results/one_scenario
+    optimize        run one search, or enumerate the zero-agent baseline grid when the
+                    search config carries `"human_only": true`.  Writes manifest.json,
+                    search_summary.json, convergence.json and samples/.
+    campaign        consolidate a tree of finished runs into the CSV tables and the
+                    optima figures.
+    constellation   describe what those optima are made of: the cell tables, the
+                    role/process shares and the team-structure figures.
 
-Enumerate the zero-agent baseline grid instead of searching (the baseline configs
-carry `"human_only": true`, which is what selects the enumerator):
-    python -m src.main optimize config/search_baseline/search_h-h_p-l_d-X_a-X_b-m.json \
-        --out results/baseline_one
-
-Run the whole campaign:
-    ./run_experiments.sh          (see its --help; generate the configs first with
-                                   scripts/generate_search_configs.py)
-
-Consolidate a finished campaign into its tables and the five-channel optima figures:
-    python -m src.main campaign [results/experiments] [--out results/analysis]
-    python -m src.main campaign --figures-only    (redraw from an existing optima.csv)
-    python -m src.main campaign --no-figures      (rewrite the CSVs only)
-
-Describe what those optima are made of — the cell tables, the role/process shares and the
-three team-structure figures:
-    python -m src.main constellation [results/experiments] [--out results/analysis]
-    python -m src.main constellation --figures-only
-
-The figure layouts are fixed, not flags: `visualization.MATRIX_CHANNELS` for the three
-optima matrices and `constellation.CELL_GROUPS` for the cell grid.  Section 5 reads every
-figure off one layout, so there is nothing to choose.
+`./run_experiments.sh` drives `optimize` over a whole campaign; see its --help.  The
+figure layouts are module constants rather than flags — `visualization.MATRIX_CHANNELS`,
+`visualization.COMPOSITION_*_GROUP` and `constellation.CELL_GROUPS`.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 import time
@@ -57,6 +40,7 @@ from .io import (
     load_scenario_params,
     load_search_config,
     load_simulation_horizon,
+    read_json,
 )
 from .parameters import ScenarioParameters
 from .search import (
@@ -86,8 +70,8 @@ def _objective_entry(config: TeamConfiguration, agg: AggregatedObjectives,
     """One `search_summary.json` objectives entry: the configuration and its aggregates.
 
     Used for both blocks of that file — `objectives` at `K_search` for every simulated
-    candidate and `final_objectives` at `K_final` for the re-simulated ones — so the two
-    have identical shape.
+    candidate, `final_objectives` at `K_final` for the re-simulated ones — so the two have
+    identical shape.
     """
     return {
         "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
@@ -185,8 +169,8 @@ def _search_summary_payload(outcome: SearchOutcome, report: SelectionReport,
     """`search_summary.json`: the reported pair, and the objectives behind it.
 
     `objectives` holds every simulated candidate at `K_search`, which is what the search
-    ranked by; `final_objectives` holds the re-simulated ones at `K_final`, which is what
-    `best` and `indistinguishable` key into and what every reported number comes from.
+    ranked by.  `final_objectives` holds the re-simulated ones at `K_final`, which is what
+    `best` and `indistinguishable` key into and where every reported number comes from.
     """
     configs = outcome.configs_by_key
     return {
@@ -211,8 +195,8 @@ def _convergence_payload(search_cfg: SearchConfiguration, horizon: SimulationHor
                          wall_clock_s: float, resim_s: float) -> dict:
     """`convergence.json`: the per-generation record and the stages of the selection.
 
-    Written separately from the manifest so that consolidating a campaign does not have
-    to parse the manifest's per-candidate block for a handful of scalars.
+    Written separately from the manifest so that consolidating a campaign does not have to
+    parse the manifest's per-candidate block for a handful of scalars.
     """
     return {
         "scenario_id": search_cfg.scenario_id,
@@ -225,7 +209,7 @@ def _convergence_payload(search_cfg: SearchConfiguration, horizon: SimulationHor
         "incumbent_changed": [bool(b) for b in outcome.incumbent_changed],
         "incumbent_turnover": outcome.incumbent_turnover,
         "best_cost": outcome.best_cost,
-        "i_star": report.stats,
+        "i_star": dataclasses.asdict(report.stats),
         "best_admissible": report.best_admissible,
         "value_ratio": (final_best["value_mean"] / params.r_arrival
                         if final_best else None),
@@ -257,37 +241,35 @@ def _print_optimum(report: SelectionReport, horizon: SimulationHorizon, floor: f
     print(f"  A_qa ={obj['A_qa']}")
 
     if not report.best_admissible:
-        # With nothing admissible there is no c* for a set to form around, so I* is
-        # empty rather than a set of one; the line below would read as a tie.
+        # With nothing admissible there is no c* for a set to form around, so I* is empty
+        # rather than a set of one; the count below would read as a tie.
         print("Indistinguishable set I*: empty (the result is inadmissible)")
         return
 
     st = report.stats
     print(f"Statistically indistinguishable from c*: {len(report.keep_keys)} config(s)")
-    print(f"  I*: {st['n_prelim']} at K'={horizon.K_search} → "
-          f"{st['n_resimulated']} after the parsimony tie-break → "
-          f"{st['n_after_resim']} after the re-simulation at K={horizon.K_final} "
-          f"({st['n_discarded_throughput']} discarded on throughput) → "
-          f"{st['n_final']} after the second tie-break")
-    if st["best_changed_by_resim"]:
+    print(f"  I*: {st.n_prelim} at K'={horizon.K_search} → "
+          f"{st.n_resimulated} after the parsimony tie-break → "
+          f"{st.n_after_resim} after the re-simulation at K={horizon.K_final} "
+          f"({st.n_discarded_throughput} discarded on throughput) → "
+          f"{st.n_final} after the second tie-break")
+    if st.best_changed_by_resim:
         print("  the re-simulation moved c* to a different configuration")
 
 
 def _cmd_optimize(args: argparse.Namespace) -> None:
     cfg_path = Path(args.search_config)
     search_cfg = load_search_config(cfg_path)
-    # The zero-agent enumerator is selected by the search config alone; the baseline
-    # configs that scripts/generate_search_configs.py --baseline writes carry the flag.
+    # The search config alone selects the zero-agent enumerator; the baseline configs
+    # that `scripts/generate_search_configs.py --baseline` writes carry the flag.
     human_only = search_cfg.human_only
     mode = HUMAN_ONLY_MODE if human_only else SEARCH_MODE
     if args.samples is not None:
         search_cfg = replace(search_cfg, samples=args.samples)
 
     horizon = load_simulation_horizon(search_cfg.horizon_path)
-    scenario_values = {
-        group: json.loads(Path(path).read_text(encoding="utf-8"))
-        for group, path in search_cfg.scenario_paths.items()
-    }
+    scenario_values = {group: read_json(path)
+                       for group, path in search_cfg.scenario_paths.items()}
     params = load_scenario_params(search_cfg.scenario_paths)
     initial_state = load_initial_state(args.start_state)
 
@@ -295,9 +277,8 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
 
     out_dir = Path(args.out)
     # `campaign.search_dirs` reads the result mode back off this directory's name, so a
-    # run whose directory says one thing and whose config does another would be
-    # mislabelled for the whole of the analysis — a search filed as a human-only
-    # baseline, or the reverse.  Nothing downstream can detect that, so refuse here.
+    # run whose directory and config disagree would be mislabelled for the whole of the
+    # analysis.  Nothing downstream can detect that, so refuse here.
     if out_dir.name in RESULT_MODES and out_dir.name != mode:
         print(f"Error: {cfg_path} runs in {mode!r} mode, but --out names a "
               f"{out_dir.name!r} directory ({out_dir}).  The result mode is read back "
@@ -324,15 +305,15 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     )
     resim_s = time.perf_counter() - t_select
 
-    # Samples are written only now, so the "best" policy can restrict them to the
-    # configurations actually reported.  I* is empty when nothing reached the throughput
-    # floor, so fall back to c*, which is still reported, just marked inadmissible.
+    # Written only now, so the "best" policy can restrict them to the configurations
+    # actually reported.  I* is empty when nothing reached the throughput floor, so fall
+    # back to c*, which is still reported, just marked inadmissible.
     if search_cfg.samples == "none":
         sample_keys: list[str] = []
     elif search_cfg.samples == "best":
         sample_keys = report.keep_keys or (
             [report.best_key] if report.best_key is not None else [])
-    else:  # unreachable: SearchConfiguration validates against SAMPLE_POLICIES
+    else:  # unreachable: SearchConfiguration validates `samples` against SAMPLE_POLICIES
         raise ValueError(f"unknown sample policy {search_cfg.samples!r}")
     # The re-simulated results replace the search's for the keys they cover, so a
     # reported candidate's sample file carries the K_final replications behind its row.
@@ -359,14 +340,14 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
           f"({outcome.n_simulated} simulated, "
           f"{outcome.n_evaluated - outcome.n_simulated} infeasible) "
           f"in {wall_clock_s:.1f} s")
-    print(f"Re-simulated {report.stats['n_resimulated']} configuration(s) at "
+    print(f"Re-simulated {report.stats.n_resimulated} configuration(s) at "
           f"K={horizon.K_final} in {resim_s:.1f} s")
     _print_optimum(report, horizon, floor, final_best)
     print()
     print(f"Results saved to: {out_dir}")
 
 
-def _read_table(path: Path, label: str, hint: str) -> "pd.DataFrame":
+def _read_table(path: Path, label: str, hint: str) -> pd.DataFrame:
     """Load a consolidated CSV, or exit with the command that would produce it."""
     if not path.is_file():
         print(f"Error: {path} does not exist; {hint}", file=sys.stderr)
@@ -374,6 +355,22 @@ def _read_table(path: Path, label: str, hint: str) -> "pd.DataFrame":
     frame = pd.read_csv(path)
     print(f"Loaded {len(frame)} {label} from {path}")
     return frame
+
+
+def _write_csv(frame: pd.DataFrame, path: Path, label: str,
+               always: bool = False) -> None:
+    """Write a consolidated table and report it; skip an empty one unless `always`."""
+    if frame.empty and not always:
+        return
+    frame.to_csv(path, index=False)
+    print(f"  {path}   {len(frame)} {label}")
+
+
+def _write_text(text: str, path: Path) -> None:
+    """Write a rendered summary and echo it to stdout."""
+    path.write_text(text, encoding="utf-8")
+    print()
+    print(text, end="")
 
 
 def _cmd_campaign(args: argparse.Namespace) -> None:
@@ -387,8 +384,8 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
             print("\nNo optimum was reported; skipping the figures.")
             return
         # An all-baseline campaign writes no turnover CSV, because an enumeration has
-        # no generations; the convergence figure is simply skipped, as it is on the
-        # path that rebuilds the tables.
+        # no generations; the convergence figure is then skipped, as it is on the path
+        # that rebuilds the tables.
         turnover_path = out_dir / "elite_turnover.csv"
         turnover = (_read_table(turnover_path, "turnover point(s)", hint)
                     if turnover_path.is_file() else pd.DataFrame())
@@ -402,55 +399,35 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    scenarios_path = out_dir / "scenarios.csv"
-    optima.to_csv(optima_path, index=False)
-    scenarios.to_csv(scenarios_path, index=False)
-    convergence_path = out_dir / "convergence.csv"
-    turnover_path = out_dir / "elite_turnover.csv"
-    if not convergence.empty:
-        convergence.to_csv(convergence_path, index=False)
-    if not turnover.empty:
-        turnover.to_csv(turnover_path, index=False)
-
     uplift = baseline_uplift(optima)
-    uplift_path = out_dir / "baseline_uplift.csv"
-    if not uplift.empty:
-        uplift.to_csv(uplift_path, index=False)
-
     multipliers, multiplier_stats = cost_multipliers(optima)
-    multipliers_path = out_dir / "multipliers.csv"
-    if not multipliers.empty:
-        multipliers.to_csv(multipliers_path, index=False)
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     # One `scenarios` row per finished run, so the two counts come off that table.
     n_searches = len(scenarios)
     print(f"Collected {n_searches} search(es) over "
           f"{scenarios['scenario_id'].nunique()} scenario(s)")
-    print(f"  {optima_path}   {len(optima)} reported optima")
-    print(f"  {scenarios_path}   {n_searches} (scenario, mode) pairs")
-    if not uplift.empty:
-        print(f"  {uplift_path}   {len(uplift)} optima with a human-only reference")
-    if not convergence.empty:
-        print(f"  {convergence_path}   {len(convergence)} search(es) with convergence measures")
-    if not turnover.empty:
-        print(f"  {turnover_path}   {len(turnover)} generation(s) of elite turnover")
-    if not multipliers.empty:
-        print(f"  {multipliers_path}   {len(multipliers)} (group, tier) cost multipliers")
+    # `optima` and `scenarios` are written even when empty, so that a consolidated
+    # directory always has the two tables the other subcommands read.
+    _write_csv(optima, optima_path, "reported optima", always=True)
+    _write_csv(scenarios, out_dir / "scenarios.csv", "(scenario, mode) pairs",
+               always=True)
+    _write_csv(uplift, out_dir / "baseline_uplift.csv",
+               "optima with a human-only reference")
+    _write_csv(convergence, out_dir / "convergence.csv",
+               "search(es) with convergence measures")
+    _write_csv(turnover, out_dir / "elite_turnover.csv",
+               "generation(s) of elite turnover")
+    _write_csv(multipliers, out_dir / "multipliers.csv", "(group, tier) cost multipliers")
     if len(optima) < n_searches:
         print(f"  note: {n_searches - len(optima)} search(es) simulated no candidate")
 
     if not convergence.empty:
-        summary = convergence_summary(convergence)
-        (out_dir / "convergence_summary.txt").write_text(summary, encoding="utf-8")
-        print()
-        print(summary, end="")
-
+        _write_text(convergence_summary(convergence),
+                    out_dir / "convergence_summary.txt")
     if not multipliers.empty:
-        summary = multipliers_summary(multipliers, multiplier_stats)
-        (out_dir / "multipliers_summary.txt").write_text(summary, encoding="utf-8")
-        print()
-        print(summary, end="")
+        _write_text(multipliers_summary(multipliers, multiplier_stats),
+                    out_dir / "multipliers_summary.txt")
 
     if args.no_figures:
         print("\nDone.")
@@ -467,8 +444,7 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
     """What the optimal teams are made of, cut along two scenario groups.
 
     A second pass over the same tree, reading each ``search_summary.json``'s final `I*`
-    rather than just its `c*`, so it can be re-cut on a different grid without forcing a
-    re-consolidation.
+    rather than just its `c*`.  Needs ``campaign`` to have run first, for ``optima.csv``.
     """
     out_dir = Path(args.out)
 
@@ -482,7 +458,6 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
         return
 
     optima = _read_table(optima_path, "reported optima", optima_hint)
-    cells_path = out_dir / "constellation_cells.csv"
     results_dir = Path(args.results_dir)
     print(f"Reading the indistinguishable sets under {results_dir} ...")
     try:
@@ -499,29 +474,19 @@ def _cmd_constellation(args: argparse.Namespace) -> None:
         return
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    istar_path = out_dir / "indistinguishable.csv"
-    istar.to_csv(istar_path, index=False)
-    cells.to_csv(cells_path, index=False)
-    print(f"  {istar_path}   {len(istar)} I* members")
-    print(f"  {cells_path}   {len(cells)} (population, cell, parameter) rows")
-
-    summary = constellation_summary(cells)
+    _write_csv(istar, out_dir / "indistinguishable.csv", "I* members", always=True)
+    _write_csv(cells, out_dir / "constellation_cells.csv",
+               "(population, cell, parameter) rows", always=True)
     summary_path = out_dir / "constellation_summary.txt"
-    summary_path.write_text(summary, encoding="utf-8")
+    summary_path.write_text(constellation_summary(cells), encoding="utf-8")
     print(f"  {summary_path}")
 
-    # What the optima staff and how they set the process — the composition statistics
-    # that are quoted as shares rather than read off the cell grid.
     bills = role_bill(optima)
     usage = build_process_summary(bills, istar)
     if not usage.empty:
-        usage_path = out_dir / "process_summary.csv"
-        usage.to_csv(usage_path, index=False)
-        usage_text = process_summary(usage)
-        (out_dir / "process_summary.txt").write_text(usage_text, encoding="utf-8")
-        print(f"  {usage_path}   {len(usage)} role/process/I* statistics")
-        print()
-        print(usage_text, end="")
+        _write_csv(usage, out_dir / "process_summary.csv",
+                   "role/process/I* statistics", always=True)
+        _write_text(process_summary(usage), out_dir / "process_summary.txt")
 
     visualize_team_summary(bills, out_dir)
     print("\nDone.")
@@ -535,7 +500,18 @@ def main(argv: list[str] | None = None) -> None:
     )
     sub = parser.add_subparsers(metavar="COMMAND")
 
-    # -- optimize --
+    # Shared by the two subcommands that consolidate a finished campaign.
+    consolidate = argparse.ArgumentParser(add_help=False)
+    consolidate.add_argument("results_dir", nargs="?", default="results/experiments",
+                             metavar="RESULTS_DIR",
+                             help="Campaign output root (default: results/experiments)")
+    consolidate.add_argument("--out", default="results/analysis", metavar="DIR",
+                             help="Where OUT/optima.csv is read and the tables and "
+                                  "figures are written (default: results/analysis)")
+    consolidate.add_argument("--figures-only", action="store_true",
+                             help="Redraw the figures from an existing OUT/optima.csv "
+                                  "instead of re-reading the campaign")
+
     p_optimize = sub.add_parser("optimize", help="Search for optimal team compositions.")
     p_optimize.add_argument("search_config", metavar="SEARCH_CONFIG",
                          help="Path to search config JSON (e.g. config/search_default.json)")
@@ -558,48 +534,28 @@ def main(argv: list[str] | None = None) -> None:
     )
     p_optimize.set_defaults(func=_cmd_optimize)
 
-    # -- campaign --
     p_camp = sub.add_parser(
-        "campaign",
+        "campaign", parents=[consolidate],
         help="Consolidate a whole campaign into its CSV tables and the "
              "five-channel optima figures.",
     )
-    p_camp.add_argument("results_dir", nargs="?", default="results/experiments",
-                        metavar="RESULTS_DIR",
-                        help="Campaign output root (default: results/experiments)")
-    p_camp.add_argument("--out", default="results/analysis", metavar="DIR",
-                        help="Where to write the CSVs and figures "
-                             "(default: results/analysis)")
-    p_camp.add_argument("--figures-only", action="store_true",
-                        help="Redraw the figures from an existing OUT/optima.csv instead "
-                             "of re-reading the campaign and rewriting the CSVs")
     p_camp.add_argument("--no-figures", action="store_true",
                         help="Write the CSVs and the convergence summary but draw no "
                              "figures")
     p_camp.set_defaults(func=_cmd_campaign)
 
-    # -- constellation --
     p_const = sub.add_parser(
-        "constellation",
+        "constellation", parents=[consolidate],
         help="Describe what the optimal teams are made of, per cell of a two-group "
              "tier grid: mean and sd of every control variable, for c* and for I*.",
     )
-    p_const.add_argument("results_dir", nargs="?", default="results/experiments",
-                         metavar="RESULTS_DIR",
-                         help="Campaign output root (default: results/experiments)")
-    p_const.add_argument("--out", default="results/analysis", metavar="DIR",
-                         help="Where OUT/optima.csv is read and the tables and figures "
-                              "are written (default: results/analysis)")
-    p_const.add_argument("--figures-only", action="store_true",
-                         help="Redraw from an existing OUT/optima.csv instead of "
-                              "re-walking the result tree for I*")
     p_const.set_defaults(func=_cmd_constellation)
 
     if argv is None:
         argv = sys.argv[1:]
     args = parser.parse_args(argv)
-    # `add_subparsers` is not required, so that a bare invocation prints the usage
-    # rather than a bare traceback.
+    # `add_subparsers` is not required, so a bare invocation prints the usage rather
+    # than a traceback.
     if not hasattr(args, "func"):
         parser.print_help(sys.stderr)
         sys.exit(2)

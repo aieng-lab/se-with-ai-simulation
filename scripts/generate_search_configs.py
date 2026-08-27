@@ -2,8 +2,8 @@
 """Generate one search configuration per campaign scenario.
 
 Every generated file is `config/search_default.json` with its five `scenario` entries
-repointed at one tier combination; the search range, budget, horizon and seed are
-inherited unchanged, so every generated search shares the experimental setup.
+repointed at one tier combination.  The search range, budget, horizon and seed are
+inherited unchanged, so every generated search shares one experimental setup.
 
 Usage
 -----
@@ -57,8 +57,8 @@ def build_config(template: dict, tiers: tuple[str, ...]) -> dict:
 def baseline_tier_combinations() -> list[tuple[str, ...]]:
     """Tier tuples of the human-only baseline grid, in SCENARIO_GROUPS order.
 
-    `debt` and `agent` are held at UNUSED_TIER, so the product runs over the other three
-    groups only.
+    The groups outside BASELINE_VARYING_GROUPS are held at UNUSED_TIER, so the product
+    runs over the varying ones only.
     """
     per_group = [
         scenario_tiers(g) if g in BASELINE_VARYING_GROUPS else (UNUSED_TIER,)
@@ -70,7 +70,8 @@ def baseline_tier_combinations() -> list[tuple[str, ...]]:
 def build_baseline_config(template: dict, tiers: tuple[str, ...]) -> dict:
     """Like `build_config`, but for a human-only baseline scenario.
 
-    Sets `human_only`, which enumerates the zero-agent grid instead of searching.
+    Sets `human_only`, which makes `optimize` enumerate the zero-agent grid rather than
+    search.
     """
     config = build_config(template, tiers)
     tier_list = ", ".join(
