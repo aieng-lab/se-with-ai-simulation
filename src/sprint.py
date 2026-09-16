@@ -1,8 +1,9 @@
 """The sprint transition: one step of the discrete-time system.
 
-`step_sprint` advances the state through nine stages, in this order.  The order matters —
-each reads state the ones before it wrote — so the blocks below must not be reordered, and
-the random draws they make must not be moved, since a stream is addressed by index:
+`step_sprint` advances the state through nine stages, in this order.  
+Each reads state the ones before it wrote — so the blocks below must not be reordered,
+and the random draws they make must not be moved, since a stream is addressed by
+index:
 
   debt penalties        the amplifier delta_D, from the previous sprint's queues
   capacity allocation   monitoring, reviews, escalations, QA, coding, fixing
@@ -47,16 +48,14 @@ ARCH_IMPL_COST_UNITS = 5.0
 
 @dataclass(frozen=True, slots=True)
 class SprintActions:
-    """Work completed in one sprint: the billable agent vector, plus who did what.
+    """Work completed in one sprint.
 
-    `units` holds what each agent role completed, k=1..8, each entry in that role's own
+    `units` stores what each agent role completed, each entry in that role's own
     throughput unit: features for k=1, change requests for k=2, bugs for k=3, deployed
-    instances for k=4,5,6, tests for k=7, documents for k=8.  The agent bill is its inner
-    product with `c_token`.
+    instances for k=4,5,6, tests for k=7, documents for k=8.
 
-    The four scalars are reporting, not billing.  `units` cannot express who did the work:
-    `units[0]` conflates agent features with implemented architecture proposals, and human
-    work appears in no entry at all.
+    The four scalars are reporting, since `units[0]` conflates agent features with
+    implemented architecture proposals, and human work appears in no entry at all.
 
         impl_human   features delivered by humans, after the demand cap
         impl_agents  features delivered by agents; `units[0]` minus
@@ -82,8 +81,8 @@ def _volume_factor(impl: int, a: int, alpha_size: float) -> float:
     """Log-linear detection degradation in the change volume per detection agent.
 
     The `a` deployed instances share the sprint's `impl` features, so each inspects
-    `impl / a` of them.  Returns 0.0 when the service is not deployed, which switches the
-    corresponding detection stage off.  The result is in [0, 1].
+    `impl / a` of them.  Returns 0.0 when the service is not deployed.
+    The result is in [0, 1].
     """
     if a <= 0:
         return 0.0
@@ -100,8 +99,8 @@ _FIX_PRIORITY: tuple[str, ...] = (
 def _detect(rng: Generator, n: int, p: float) -> int:
     """How many of `n` bugs a detection stage catches at probability `p`.
 
-    The `n > 0` guard is load-bearing, not an optimisation: it keeps a stage with nothing
-    to inspect from consuming a draw, which would shift every draw after it.
+    The `n > 0` guard keeps a stage with nothing to inspect from consuming
+    a draw, which would shift every draw after it.
     """
     return int(rng.binomial(n, p)) if n > 0 else 0
 
@@ -155,16 +154,16 @@ def step_sprint(
     delta_D = 1.0 - (1.0 - params.delta_min) * (D_eff ** params.delta_exp)
 
     # --- Human capacity allocation -------------------------------------------
-    # Every budget here is per FTE; the terms that consume it scale by config.N.
+    # Every budget here is per FTE, the terms that consume it scale by config.N.
     H_net = net_capacity(params.H_capacity, params.c_comm, config.N)
     doc_cov = min(1.0, state.N_doc / max(1.0, state.F_completed))
     H_mon_eff = params.H_monitoring_overhead * (1.0 - params.Gamma_doc * doc_cov)
-    # Clamped: the feasibility gate only guarantees a positive remainder at doc_cov = 1,
+    # The feasibility gate only guarantees a positive remainder at doc_cov = 1,
     # so monitoring can still exhaust the budget early in a run.
     agents_per_fte = n_supervised / config.N
     H_after_mon = max(0.0, H_net - agents_per_fte * H_mon_eff)
 
-    # The two residuals below are clamped as well: the served count is floored against
+    # The served count is floored against
     # the budget, but re-multiplying by the per-item cost can overshoot it by an ulp,
     # and both consumers floor the result and would lose a whole item to it.
     rev_done = min(math.floor(H_after_mon * config.N / params.H_review_time), state.Q_rev)

@@ -95,9 +95,9 @@ def indistinguishable_rows(scenario_id: str, mode: str, summary: dict) -> list[d
     """One row per member of the final `I*` of one run.
 
     The members are ``summary["indistinguishable"]``, the key list the selection ends on,
-    looked up in ``final_objectives``.  Reading ``final_objectives`` wholesale instead would
+    looked up in ``final_objectives``.  Reading ``final_objectives`` directly would
     pick up the wider preliminary set, which the selection rule had already rejected.
-    `is_best` flags `c*`; an inadmissible run has an empty `I*` and contributes no rows.
+    `is_best` flags `c*`. An inadmissible run has an empty `I*` and contributes no rows.
     """
     keys = summary["indistinguishable"]
     final = summary["final_objectives"]
@@ -119,8 +119,7 @@ def indistinguishable_rows(scenario_id: str, mode: str, summary: dict) -> list[d
 def build_indistinguishable(results_dir: str | Path) -> pd.DataFrame:
     """Read every finished search under `results_dir` into one `I*` member table.
 
-    Same tree and same discovery as `campaign.build_tables`, so a partially finished campaign
-    contributes fewer rows.
+    Same tree and same discovery as `campaign.build_tables`.
     """
     searches = require_search_dirs(results_dir)
 
@@ -135,13 +134,13 @@ def build_indistinguishable(results_dir: str | Path) -> pd.DataFrame:
 # What each role costs
 # ----------------------------------------------------------------------------
 
-#: The per-role agent bill over the horizon in dollars, `actions_k * c_token_k`, one
+#: The per-role agent bill over in dollars, `actions_k * c_token_k`, one
 #: column per role.
 BILL_PARAMETERS: tuple[str, ...] = tuple(
     f"bill_{k}" for k in range(1, AGENT_ROLE_COUNT + 1))
 
-#: The same split in dollars per feature: `cost_agent_mean` apportioned by each role's
-#: share of the bill.  Rescaling rather than dividing by the feature count makes the eight
+#: The same split in dollars per feature: `cost_agent_mean` by each role's
+#: share of the bill. Rescaling rather than dividing by the feature count makes the eight
 #: columns sum to `cost_agent_mean` exactly, so a figure may mix them with
 #: `cost_human_mean`.
 AGENT_COST_PARAMETERS: tuple[str, ...] = tuple(
@@ -152,10 +151,10 @@ def role_bill(optima: pd.DataFrame) -> pd.DataFrame:
     """Add the per-role agent bill to a copy of an ``optima.csv`` frame.
 
     ``actions_k`` is the work role `k` completed over the horizon in its own throughput unit
-    and `c_token_k` prices that unit, so `BILL_PARAMETERS` is an exact split rather than an
-    apportionment.  Summing the eight reproduces `cost_agent_mean * F_completed` only to
+    and `c_token_k` prices that unit.
+    Summing the eight reproduces `cost_agent_mean * F_completed` only to
     within a fraction of a per cent, because `cost_agent_mean` is a mean of per-replication
-    ratios while this is a ratio of means; `AGENT_COST_PARAMETERS` avoids that gap by rescaling
+    ratios while this is a ratio of means. `AGENT_COST_PARAMETERS` avoids that gap by rescaling
     onto the reported figure.
     """
     frame = optima.copy()
@@ -239,7 +238,7 @@ def cell_statistics(
     stats = grouped[parameters].agg(["mean", "std"])
     counts = grouped.size().rename("n_scenarios")
     # `c_star` has one configuration per scenario, so its two counts coincide; `i_star`
-    # carries the pooled `|I*|` per scenario in `n_members`.
+    # contains the pooled `|I*|` per scenario in `n_members`.
     members = (grouped["n_members"].sum().rename("n_members")
                if "n_members" in df.columns else counts.rename("n_members"))
 
@@ -302,7 +301,7 @@ def constellation_summary(cells: pd.DataFrame) -> str:
     """The cell statistics as a text block, one section per population and outer tier.
 
     The second cell group runs across the columns and the parameters down the rows, so a block
-    stays inside a terminal width whatever the parameter count.
+    stays inside a terminal width.
     """
     if cells.empty:
         return (f"Team constellation by {CELL_GROUPS[0]} × {CELL_GROUPS[1]}: "
@@ -323,9 +322,9 @@ def constellation_summary(cells: pd.DataFrame) -> str:
              f"  {I_STAR:<8} the indistinguishable set I*, each scenario reduced to",
              "           its own mean first, so both populations weight scenarios equally",
              "",
-             "Structural zeros to read past: a_qa_1 and a_qa_2 are 0 by construction, and the",
-             "whole A_qa vector is 0 wherever F_freeze = 0 (TeamConfiguration canonicalises it),",
-             "so a zero A_qa cell means 'no feature freeze', not 'a freeze with no agents'.",
+             "Structural zeros to ignore: a_qa_1 and a_qa_2 are 0 by construction, and the",
+             "whole A_qa vector is 0 wherever F_freeze = 0, so a zero A_qa cell means",
+             "'no feature freeze', not 'a freeze with no agents'.",
              ""]
 
     # One column width for the whole file, so the blocks line up under each other.
@@ -377,7 +376,7 @@ def constellation_summary(cells: pd.DataFrame) -> str:
 def role_usage(bills: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
     """Per role: how often it is staffed, and its share of the head count and the bill.
 
-    `bills` is a `role_bill` frame restricted to the searched optima.  Both shares are formed
+    `bills` is a `role_bill` restricted to the searched optima.  Both are formed
     **within** a scenario before being averaged: the optimal team size spans orders of
     magnitude, so a ratio of aggregates would describe the largest scenario rather than the
     typical one.  With `by` given, the statistics are additionally split by that group's tier.
@@ -420,8 +419,7 @@ def process_usage(optima: pd.DataFrame) -> pd.DataFrame:
     """How the searched optima set the release process: the `R` spread and the freeze.
 
     One row per release cadence the optima actually use, plus one for "no feature freeze", each
-    a share of the reported optima.  The cadences are read off the frame rather than restated
-    from the search range, which they would silently fall behind.
+    a share of the reported optima.
     """
     if optima.empty:
         return pd.DataFrame()
@@ -463,8 +461,8 @@ def istar_process_diversity(istar: pd.DataFrame) -> pd.DataFrame:
 def build_process_summary(bills: pd.DataFrame, istar: pd.DataFrame) -> pd.DataFrame:
     """The long table behind `process_summary`: role usage, the process, and `I*` spread.
 
-    `bills` is a `role_bill` frame; only its admissible searched rows are described, since
-    neither a zero-agent team nor a team that fails to deliver describes an optimum.
+    `bills` is a `role_bill` frame with only its admissible rows,
+    since neither a zero-agent team nor a team that fails to deliver describes an optimum.
     """
     searched = admissible_optima(bills)
     if searched.empty:

@@ -120,8 +120,7 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
     return ScenarioParameters(**kwargs, c_token=c_token)
 
 
-#: The optional `search` keys and the cast each takes.  A key the JSON omits is left to
-#: the `SearchConfiguration` default rather than restated here.
+# The optional `search` keys and the cast each takes.  
 _SEARCH_FIELDS: dict = {
     "F_freeze_values": lambda v: tuple(int(x) for x in v),
     "sigma": float,
@@ -161,8 +160,7 @@ def load_search_config(path: str | Path) -> SearchConfiguration:
 def load_initial_state(path: str | Path) -> SystemState:
     """Load initial SystemState values from a flat JSON file.
 
-    Only the fields listed in the JSON are set; all others default to 0/0.0.
-    Unknown field names raise ValueError.
+    Only the fields listed in the JSON are set. All others default to 0/0.0.
     """
     data = read_json(path)
     valid = {f.name for f in dataclasses.fields(SystemState)}

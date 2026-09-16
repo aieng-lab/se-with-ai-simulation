@@ -54,7 +54,8 @@ def cost_components(
     """(C_human, C_agents) over a T-sprint horizon.
 
     `actions` is the per-role work completed over the horizon, accumulated from the
-    `SprintActions` of each sprint; `c_token[k]` prices one unit of it.
+    `SprintActions` of each sprint.
+    `c_token[k]` prices one unit of it.
     """
     if len(actions) != AGENT_ROLE_COUNT:
         raise ValueError(
@@ -77,7 +78,7 @@ def run_configuration(
 ) -> ConfigResult:
     """Run K independent replications of `config` under `settings` and `params`.
 
-    `initial_state` sets the starting system state; defaults to all-zero if not provided.
+    `initial_state` sets the starting system state. Defaults to all-zero if not provided.
 
     `K` overrides the replication count, which otherwise is `settings.K_search`, and
     `k_offset` shifts the block of replication indices from `[0, K)` to
@@ -128,7 +129,7 @@ def _run_replication(
     C_total = C_quality + C_human + C_agents
 
     F_done = state.F_completed
-    # A horizon can legitimately complete no feature at all, so floor the denominator.
+    # Can complete no feature at all, so floor the denominator.
     denom = max(1, F_done)
     return ReplicationResult(
         value=F_done / settings.T,

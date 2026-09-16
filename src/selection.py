@@ -63,10 +63,7 @@ def aggregate_config_result(
     result: ConfigResult,
     master_seed: int,
 ) -> AggregatedObjectives:
-    """Means and 95 % percentile bootstrap CIs over the replications of `result`.
-
-    Only `cost` and `value` are bootstrapped; the remaining fields are plain means.
-    """
+    """Means and 95 % percentile bootstrap CIs over the replications of `result`."""
     reps = result.replications
 
     def mean_of(field: str) -> float:
@@ -162,7 +159,7 @@ def best_index(aggs: Sequence[AggregatedObjectives], floor: float) -> int | None
 
 @dataclass(frozen=True, slots=True)
 class ParsimonyKey:
-    """What the parsimony tie-break compares: team size at a fixed process.
+    """Comparison key for teams.
 
     `process` is (N, R, F_freeze) and must match exactly for two candidates to be
     comparable.  `agents` concatenates A_dev and A_qa, so both phases are covered.
@@ -188,9 +185,8 @@ def parsimony_dominates(
 ) -> bool:
     """True when `a` runs `b`'s process, is no larger anywhere, smaller somewhere, and cheaper.
 
-    Only meaningful between candidates already known to be statistically tied; that is the
-    caller's precondition.  Requiring `cost_a < cost_b` makes this a strict partial order,
-    so one filtering pass suffices and its result does not depend on the input order.
+    Only meaningful between candidates already known to be statistically tied.
+    Requiring `cost_a < cost_b` makes this a strict partial order.
     """
     if key_a.process != key_b.process:
         return False

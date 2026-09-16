@@ -1,17 +1,12 @@
 """Search for the cheapest team that keeps up with the work the project generates.
 
 `run_search` maintains a population seeded by `_random_draws` and mutates parents drawn
-from an elite ranked by `src.selection`.  `run_human_only` sits beside it and enumerates
-the zero-agent grid instead; it is the only producer of teams with no agents, since the
-samplers and `_mutate` keep their `a_1 >= 1` floor.
+from an elite ranked by `src.selection`.  `run_human_only` enumerates
+the zero-agent grid instead, i.e., teams without agents. 
 
 `two_stage_selection` turns either outcome into the reported result: the candidates the
 search ranked at `K_search` replications are thinned by the parsimony tie-break, and what
 is left is re-simulated at `K_final` before `c*` and `I*` are settled.
-
-`src.main` persists an outcome as manifest.json (one entry per evaluated candidate),
-search_summary.json (c*, I*, and the objectives at both replication counts),
-convergence.json (the per-generation record) and samples/<key>.json.
 
 Supervised role counts are bounded per role by `saturation_bounds` and collectively by
 the human-capacity check in `src.feasibility`, which runs after the draw.  The autonomous
@@ -258,7 +253,7 @@ def _mutate(
 ) -> TeamConfiguration:
     """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
 
-    R is not among them.  Retries up to `_MUTATION_ATTEMPTS` times when the result is
+    Retries up to `_MUTATION_ATTEMPTS` times when the result is
     unchanged or invalid, and returns the parent if every attempt fails.  At F_freeze == 0 the
     A_qa option is dropped, since a child mutated there normalises back to its parent.
     """
@@ -320,16 +315,14 @@ def _random_draws(
 ) -> list[TeamConfiguration]:
     """Draw `n_samples` random (N, A_dev, A_qa, R, F_freeze) candidates.
 
-    Every draw satisfies `TeamConfiguration`'s structural constraints by construction, so the
-    only rejection path is the human-capacity check in `SearchOutcome.record`.
+    Every draw satisfies `TeamConfiguration`'s structural constraints by construction.
     """
     draws: list[TeamConfiguration] = []
     for _ in range(n_samples):
         N = float(rng.choice(search_cfg.N_values))
         R = int(rng.choice(search_cfg.R_values))
         # Drawn before the compositions, because it decides whether A_qa is a parameter
-        # at all.  Restricted to the values admissible for this R; the list is never
-        # empty, since SearchConfiguration requires 0 in F_freeze_values.
+        # at all.  Restricted to the values admissible for this R.
         F_freeze = int(rng.choice([v for v in search_cfg.F_freeze_values if 0 <= v <= R - 1]))
         A_dev = _sample_composition(rng, limits, qa=False)
         # With no freeze window the QA composition is never applied, so drawing one
@@ -362,8 +355,7 @@ def _config_key(config: TeamConfiguration, idx: int) -> str:
 class SearchOutcome:
     """Everything a search or enumeration produces, independent of how it is persisted.
 
-    `results` holds the per-candidate ConfigResults kept for sample export: empty under
-    the "none" retention policy, every simulated candidate otherwise.
+    `results` stores the per-candidate ConfigResults export.
     """
 
     manifest: dict[str, dict] = field(default_factory=dict)
@@ -440,8 +432,7 @@ def write_samples(
 ) -> None:
     """Persist `samples/<key>.json` for the requested keys.
 
-    `aggs_override` replaces the search's `K_search` aggregates for the keys it holds, so a
-    re-simulated candidate's sample file carries the `K_final` estimates it is reported from.
+    `aggs_override` replaces the search's `K_search` aggregates.
     """
     if not keys:
         return
@@ -488,7 +479,7 @@ def run_search(
 
     Every candidate that reaches the feasibility check consumes one evaluation, simulated or
     not, and the loop stops as soon as `budget` is spent.  A generation falls short of
-    `n_offspring` only when the mutation operator keeps producing duplicates.
+    `n_offspring` when the mutation operator keeps producing duplicates.
     """
     n_initial   = search_cfg.n_samples_initial
     n_gen       = search_cfg.n_generations
@@ -516,7 +507,7 @@ def run_search(
 
     # Rank the population and split it into the elite most offspring come from and the
     # remainder that supplies exploration.  The ranking is carried across the loop body, so
-    # one sort both supplies a generation's parents and measures the elite turnover.
+    # one sort supplies a generation's parents and measures the elite turnover.
     order = rank([a for _, _, a in outcome.aggs], floor)
     prev_elite = {outcome.aggs[i][1] for i in order[:n_elite]}
     prev_incumbent = outcome.aggs[order[0]][1] if order else None

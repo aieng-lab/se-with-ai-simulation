@@ -16,8 +16,8 @@ SCENARIO_GROUPS: tuple[str, ...] = ("human", "project", "debt", "agent", "bugimp
 # The three tiers every scenario group is defined at.
 SCENARIO_TIERS: tuple[str, ...] = ("low", "medium", "high")
 
-# The tiers each group is defined at.  `project` and `agent` carry a fourth one, so the
-# tier grid is not a cube; `scenario_tiers` is the accessor.
+# The tiers each group is defined at.  `project` and `agent` carry a fourth one.
+# `scenario_tiers` is the accessor.
 SCENARIO_GROUP_TIERS: dict[str, tuple[str, ...]] = {
     "human": SCENARIO_TIERS,
     "project": SCENARIO_TIERS + ("veryhigh",),
@@ -116,8 +116,6 @@ def scenario_id(tiers: tuple[str, ...]) -> str:
 # Retention policy for the per-candidate result.json files a search writes:
 #   "best" — only c* and the indistinguishable set I* it is reported with
 #   "none" — no per-candidate files; the aggregates live in search_summary.json
-# Retaining one file per simulated candidate is not offered: at the campaign's evaluation
-# budget that would be millions of files and tens of gigabytes per run.
 SAMPLE_POLICIES: tuple[str, ...] = ("best", "none")
 
 # How a result directory was produced.  Names the subdirectory under a scenario, the

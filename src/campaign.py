@@ -172,8 +172,8 @@ def optimum_row(scenario_id: str, mode: str, summary: dict) -> dict | None:
     throughput constraint reads `value_ratio >= 1 - eps` whatever the scenario's `r_arrival`,
     and the three ``cost_*_share`` columns sum to 1 exactly.
 
-    Every number is read from ``final_objectives``, the `K_final` block; ``convergence.csv``
-    carries the sizes of `I*` at the earlier stages.
+    Every number is read from ``final_objectives``, the `K_final` block. ``convergence.csv``
+    contains the sizes of `I*` at the earlier stages.
     """
     best = summary.get("best")
     if best is None:
@@ -238,8 +238,7 @@ def scenario_row(
 
 
 #: The `i_star` keys of ``convergence.json`` that become `convergence.csv` columns, in
-#: the order the selection stages produce them.  Written out rather than derived from
-#: `search.SelectionStats`: this is the CSV's schema on the reader's side.
+#: the order the selection stages produce them.
 _I_STAR_COLUMNS: tuple[str, ...] = (
     "n_prelim",
     "parsimony_removed_prelim",
@@ -257,7 +256,7 @@ _I_STAR_COLUMNS: tuple[str, ...] = (
 def convergence_row(scenario_id: str, mode: str, convergence: dict) -> dict:
     """The `convergence.csv` row for one run: the convergence measures as scalars.
 
-    The `tau_*` columns summarise the curve `turnover_rows` carries in full: its first and last
+    The `tau_*` columns summarise the curve of `turnover_rows`: its first and last
     value, and the mean over the last ten generations.  All three are None for an enumeration,
     which has no generations.
     """
@@ -404,7 +403,7 @@ def _median_iqr_max(values: pd.Series) -> str:
 def _i_star_block(rows: pd.DataFrame, label: str) -> list[str]:
     """The four `I*` stage sizes and the three reduction steps, for one result mode.
 
-    The stage sizes cover the runs that ended admissible only: an inadmissible one has an empty
+    The stage sizes cover the runs that ended admissible only. Inadmissible runs have an empty
     preliminary `I*` and would put a zero into every stage.  The reduction-step totals below
     them are over *all* of `rows`, since an inadmissible run still spends re-simulation effort.
     """

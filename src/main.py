@@ -1,16 +1,13 @@
 """CLI entry point for agent-ai-cost-sim.  Three subcommands, one per pipeline stage:
 
     optimize        run one search, or enumerate the zero-agent baseline grid when the
-                    search config carries `"human_only": true`.  Writes manifest.json,
+                    search config has `"human_only": true`.  Writes manifest.json,
                     search_summary.json, convergence.json and samples/.
-    campaign        consolidate a tree of finished runs into the CSV tables and the
-                    optima figures.
+    campaign        consolidate a tree of finished runs into the CSV tables result figures.
     constellation   describe what those optima are made of: the cell tables, the
                     role/process shares and the team-structure figures.
 
-`./run_experiments.sh` drives `optimize` over a whole campaign; see its --help.  The
-figure layouts are module constants rather than flags — `visualization.MATRIX_CHANNELS`,
-`visualization.COMPOSITION_*_GROUP` and `constellation.CELL_GROUPS`.
+The script `./run_experiments.sh` drives `optimize` over all configurations.
 """
 
 from __future__ import annotations
@@ -67,12 +64,7 @@ from .visualization import visualize_campaign, visualize_team_summary
 
 def _objective_entry(config: TeamConfiguration, agg: AggregatedObjectives,
                      floor: float) -> dict:
-    """One `search_summary.json` objectives entry: the configuration and its aggregates.
-
-    Used for both blocks of that file — `objectives` at `K_search` for every simulated
-    candidate, `final_objectives` at `K_final` for the re-simulated ones — so the two have
-    identical shape.
-    """
+    """One `search_summary.json` objectives entry: the configuration and its aggregates."""
     return {
         "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
         "A_dev": list(config.A_dev),
@@ -193,11 +185,7 @@ def _convergence_payload(search_cfg: SearchConfiguration, horizon: SimulationHor
                          mode: str, outcome: SearchOutcome, report: SelectionReport,
                          params: ScenarioParameters, final_best: dict | None,
                          wall_clock_s: float, resim_s: float) -> dict:
-    """`convergence.json`: the per-generation record and the stages of the selection.
-
-    Written separately from the manifest so that consolidating a campaign does not have to
-    parse the manifest's per-candidate block for a handful of scalars.
-    """
+    """`convergence.json`: the per-generation record and the stages of the selection."""
     return {
         "scenario_id": search_cfg.scenario_id,
         "mode": mode,
@@ -276,9 +264,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     _print_search_banner(cfg_path, search_cfg, horizon, params, mode, args.start_state)
 
     out_dir = Path(args.out)
-    # `campaign.search_dirs` reads the result mode back off this directory's name, so a
-    # run whose directory and config disagree would be mislabelled for the whole of the
-    # analysis.  Nothing downstream can detect that, so refuse here.
+    
     if out_dir.name in RESULT_MODES and out_dir.name != mode:
         print(f"Error: {cfg_path} runs in {mode!r} mode, but --out names a "
               f"{out_dir.name!r} directory ({out_dir}).  The result mode is read back "
@@ -305,9 +291,6 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
     )
     resim_s = time.perf_counter() - t_select
 
-    # Written only now, so the "best" policy can restrict them to the configurations
-    # actually reported.  I* is empty when nothing reached the throughput floor, so fall
-    # back to c*, which is still reported, just marked inadmissible.
     if search_cfg.samples == "none":
         sample_keys: list[str] = []
     elif search_cfg.samples == "best":
@@ -315,8 +298,7 @@ def _cmd_optimize(args: argparse.Namespace) -> None:
             [report.best_key] if report.best_key is not None else [])
     else:  # unreachable: SearchConfiguration validates `samples` against SAMPLE_POLICIES
         raise ValueError(f"unknown sample policy {search_cfg.samples!r}")
-    # The re-simulated results replace the search's for the keys they cover, so a
-    # reported candidate's sample file carries the K_final replications behind its row.
+
     outcome.results.update(report.final_results)
     write_samples(outcome, out_dir, sample_keys, report.final_aggs)
 
@@ -383,9 +365,7 @@ def _cmd_campaign(args: argparse.Namespace) -> None:
         if optima.empty:
             print("\nNo optimum was reported; skipping the figures.")
             return
-        # An all-baseline campaign writes no turnover CSV, because an enumeration has
-        # no generations; the convergence figure is then skipped, as it is on the path
-        # that rebuilds the tables.
+
         turnover_path = out_dir / "elite_turnover.csv"
         turnover = (_read_table(turnover_path, "turnover point(s)", hint)
                     if turnover_path.is_file() else pd.DataFrame())

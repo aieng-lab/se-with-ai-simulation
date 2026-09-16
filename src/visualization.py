@@ -60,8 +60,8 @@ QUALITY_DEVELOPMENT_TITLE = ("Escaped-bug vs. development cost, developers + age
 AGENT_HUMAN_RATIO_TITLE = "Agent-to-developer cost ratio at $c^\\star$"
 ELITE_TURNOVER_TITLE = "Elite turnover and $c^\\star$ drop per generation"
 
-#: Which scenario group drives which visual channel of the three optima matrices.  The
-#: two four-tier groups are placed deliberately: `project` is on the marker channel, the
+#: Which scenario group drives which visual channel of the three optima matrices. 
+# `project` is on the marker channel, the
 #: only per-point channel whose fourth level reads as a peer rather than as "more", and
 #: `agent` is on a facet axis, where its fourth tier costs one column rather than a fifth
 #: marker shape.  `_TIER_STYLES` gives `veryhigh` and `pessimistic` one shared slot, which
@@ -130,8 +130,8 @@ def plot_elite_turnover(
 ) -> Figure:
     """Elite turnover and the incumbent's cost drop, against the generation index.
 
-    Takes the long-format ``elite_turnover.csv`` — one row per (scenario, mode, generation)
-    — and draws three curves aggregated over searches: the turnover in blue on the left axis
+    Takes the long-format ``elite_turnover.csv`` - one row per (scenario, mode, generation)
+    - and draws three curves aggregated over searches: the turnover in blue on the left axis
     as a mean (solid) and a median (dotted), and the mean relative drop in `c*`'s cost in
     green on a logarithmic right-hand axis, which it needs because it runs one to two decades
     lower.  Carries no tier channels.
@@ -205,7 +205,7 @@ def plot_elite_turnover(
 # ---------------------------------------------------------------------------
 
 #: One visual style per tier, in mild -> extreme order so the legends read that way.
-#: `veryhigh` and `pessimistic` share the fourth slot; no scenario group holds both, so
+#: `veryhigh` and `pessimistic` share the fourth slot. No scenario group holds both, so
 #: no channel ever has to draw them side by side.
 class _TierStyle(NamedTuple):
     color: tuple
@@ -373,14 +373,14 @@ def _density_style(n: int) -> tuple[float, float]:
 
 
 #: Reserved to the right of the panels for the three channel legends, and the vertical
-#: gap between two of them.  In inches rather than figure fractions, because the legends
+#: gap between two of them. In inches rather than figure fractions, because the legends
 #: are the same size whatever the grid.
 _LEGEND_WIDTH_IN = 2.1
 _LEGEND_GAP_IN = 0.25
 
-#: Font sizes (points) for the tier grid.  The figure is 17-20 inches wide and is read
+#: Font sizes (points) for the tier grid. The figure is 17-20 inches wide and is read
 #: reduced to a text column's width, so these are sized against the printed result rather
-#: than the canvas.  Keep the panel geometry fixed when changing them.
+#: than the canvas. Keep the panel geometry fixed when changing them.
 _MATRIX_FONT: dict[str, int] = {
     "suptitle": 17,
     "column":   15,   # the facet tier heading, on the top row only
@@ -395,7 +395,7 @@ def _figure_bbox(fig: Figure, artist) -> matplotlib.transforms.Bbox:
     """`artist`'s bounding box in figure coordinates.
 
     A legend has no extent until a renderer has laid it out, and nothing has drawn the figure
-    yet; the Agg canvas pinned at import time supplies one without a draw pass.
+    yet. The Agg canvas pinned at import time supplies one without a draw pass.
     """
     renderer = fig.canvas.get_renderer()
     return artist.get_window_extent(renderer).transformed(fig.transFigure.inverted())
@@ -428,8 +428,8 @@ def _baseline_cell(
 ) -> pd.DataFrame:
     """The baseline rows belonging in the panel at (`x_tier`, `y_tier`).
 
-    A baseline row carries `UNUSED_TIER` for every group it does not vary, and such a group
-    constrains nothing: the row belongs in *every* tier of it, so a facet on one of them
+    A baseline row carries `UNUSED_TIER` for every group it does not vary:
+    the row belongs in *every* tier of it, so a facet on one of them
     repeats the same reference points down each column.
     """
     cell = baseline
@@ -489,12 +489,13 @@ def _draw_matrix(
     """The five-channel tier grid, for any pair of columns.
 
     The facet layout, the colour/shape/size encoding of the three non-facet groups and the
-    three proxy legends live here; callers pass `MATRIX_CHANNELS` and the two plot columns.
-
+    three proxy legends are implemented here.
+    Callers pass `MATRIX_CHANNELS` and the two plot columns.
     `x_floor` and `y_floor` clip non-positive values onto a log axis (`_log_floor`).
-    `shared_limits` puts one range on both axes and squares the panels — only valid where the
-    two columns share a unit, never for a share or a rank.  `baseline` holds the zero-agent
-    optima, matched to a panel by the facet groups alone (`_baseline_cell`).
+    `shared_limits` puts one range on both axes and squares the panels. Only valid where the
+    two columns share a unit, never for a share or a rank. 
+    `baseline` holds the zero-agent optima, matched to a panel by the facet groups
+    alone (`_baseline_cell`).
     """
     columns = tiers_present(df[tier_column(x_group)])
     rows = tiers_present(df[tier_column(y_group)])
@@ -605,11 +606,11 @@ def _draw_matrix(
                 Line2D([], [], linestyle="none", marker="o", markersize=8,
                        color=_BASELINE_COLOR, label=_BASELINE_LABEL)
             )
-        # A fixed width in inches, not a figure fraction: an extra facet column widens
+        # A fixed width in inches. An extra facet column widens
         # the figure, and that inch must go to the panels rather than to the legends.
         right = 1.0 - _LEGEND_WIDTH_IN / fig.get_figwidth()
         fig.tight_layout(rect=(0.0, 0.0, right, 1.0))
-        # Stacked by their measured heights: an entry is as tall as its marker and the
+        # Stacked by their measured heights. An entry is as tall as its marker and the
         # tier counts differ per channel, so a per-entry estimate would not place them.
         anchor_y = 0.97
         channel_names = ("colour", "shape", "size")
@@ -718,8 +719,7 @@ def plot_agent_human_ratio_matrix(
 
     y is `cost_agent_mean / cost_human_mean` on a log axis, with a reference line at 1.  x is
     that ratio's percentile rank within `df`, so the panels share one empirical distribution
-    and each is a fragment of it; filtering the frame before calling re-ranks what is left
-    against itself.
+    and each is a fragment of it.
     """
     _require_tier_columns(df)
     require_columns(df, ("cost_agent_mean", "cost_human_mean"), "optima table")
@@ -757,9 +757,8 @@ def plot_agent_human_ratio_matrix(
 # ---------------------------------------------------------------------------
 #
 # Two figures: what the optimal team is made of, and which scenario setting moves it.
-# Both take `optima.csv` rather than the aggregated cell table of `src.constellation`,
-# because their shares and rates have to be formed within a scenario before being
-# averaged — a ratio of means is not the mean of the ratios.
+# Both use `optima.csv`, because their shares and rates have to be formed within a 
+# scenario before being averaged — a ratio of means is not the mean of the ratios.
 
 #: The three scenario groups the composition figures lay out at once: blocks of bars, the
 #: ladder repeated inside each block, and one panel per tier.
@@ -801,8 +800,8 @@ class _ShareWeight(NamedTuple):
 #:
 #: Both weigh a role by what it bills, not by how many of it there are: a head-count share
 #: would overstate the three autonomous roles, which are billed flat and bounded only by
-#: their own saturation.  Both annotate the reported per-feature figure rather than a
-#: summed horizon bill, so a bar's end is in the unit the tables report.
+#: their own saturation.  Both annotate the reported per-feature figure, so a bar's end is
+#: in the unit the tables report.
 _SHARE_WEIGHTS: dict[str, _ShareWeight] = {
     "agent": _ShareWeight(
         columns=BILL_PARAMETERS, labels=AGENT_ROLE_ABBREV, colors=_ROLE_COLORS,
@@ -830,7 +829,7 @@ _PANEL_MARGIN_IN = 1.4
 _ROW_HEIGHT_IN = 0.30
 _BLOCK_GAP = 0.6
 
-#: Points to the right of a bar's end for the two annotated columns; each has to clear
+#: Points to the right of a bar's end for the two annotated columns. Each has to clear
 #: the widest figure the column before it can print.
 _ANNOTATION_OFFSETS = (4.0, 54.0)
 
