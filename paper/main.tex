@@ -20,9 +20,8 @@
 
 \begin{document}
 
-\title{Modeling and Optimizing Mixed AI-Human Software Development Teams:
-       A Stochastic Simulation Framework}
-%\titlerunning{Optimizing Mixed AI-Human Development Teams}
+\title{ What Should a Software Team Spend on Agents? Simulation-Based Cost Optimisation of Mixed AI-Human Teams}
+\titlerunning{Optimizing Mixed AI-Human Development Teams}
 
 \author{Steffen Herbold}
 
@@ -66,10 +65,21 @@ Agentic AI systems based on Large Language Models (LLMs) -- hereafter referred t
   \item[RQ] How should software development teams compose their human and agent workforce to deliver the work a project demands at the lowest total cost, counting the cost of the developers, the cost of the agents, and the cost of the defects that reach production?
 \end{description}
 
-To answer this question, we develop a simulation model of mixed AI-human software development teams. The core assumption of our process is that the human is still owning the code, takes responsibility for the quality, and guides the key design decisions. Agents support the human by implementing features, fixing bugs, and providing quality assurance, while also draining resources from the human developers because they require supervision. We simulate the development as a stochastic process that evolves over multiple sprints, where each sprint represents a fixed-duration development iteration. Within each sprint, human developers and agents implement features and fix bugs. Agents may fail at this task which escalates the responsibility for addressing an issue to the human developers. The new bugs, that are introduced through the development, can be detected by agents that review code, audit for security issues, and generate tests.
-Through these activities, new bugs are introduced, which agents can detect by providing tests or reviewing code. Large changes to the architecture require the sign-off by the human developers. 
+To answer this question, we develop a simulation model of mixed AI-human software development teams. The core assumption of our process is that the human developers is still own the code, take responsibility for the quality, and guide the key design decisions. Agents support the human developers by implementing features, fixing bugs, and providing quality assurance. At the same time, the agents also drain resources from the human developers because they require supervision, need feedback on design decisions, or help resolving issues where they fail autonomously. 
 
-The model is based on a discrete-time stochastic dynamical system that simulates the evolution of a software project over multiple sprints. The state of the project is represented by a 21-dimensional vector that tracks features, bugs, technical debt, and human capacity. The model incorporates eight specialist AI agent roles and one human developer role, each with specific functions and interactions. The simulation allows for different team compositions and process parameters. Since the salaries of the developers, the token costs of the agents, and the damage caused by defects that escape to production are all measurable in money, we can express what a team costs as a single figure, and search for the team that delivers the project's work at the lowest cost per feature.
+We simulate the development of a software product represented as a stochastic process that evolves over multiple sprints, where each sprint represents a fixed-duration development iteration. Within each sprint, human developers and agents implement features, inadvertently introduce bugs, as well as fix known bugs. Bugs can be detected by code reviews, more expensive audits for security issues, and generated tests. Implementing features can also require changes to the architecture, which are more expensive to implemented and require the sign-off by the human developers. Lack of architecture maintenance, code documentation, and refactoring accumulates debt, which can be reduced by agents investing effort in these activities to prevent a slow-down of the development. 
+
+Within our model, we distinguis between eight different agent roles for different development and quality assurance tasks, to not only analyze how much money should be spent on agents, but also how to allocate this money for different purposes. Costs are estimated based on the estimated token use by agents, salaries of human developers, and the cost of defects that reach production. Using a simple evolutionary search, we determine optimal team compositions for different scenarios, e.g., different assumption on agent skills and costs, development speed, and human capabilities and costs. 
+
+Our simulations show that the cost landscape of agentic software development is complex and the optimal team compositions depend on many factors. The key findings are:
+\begin{itemize}
+  \item \textbf{Agent capability matters more than agent cost.} High-capability agents require less human supervision reducing personal costs, while at the same time creating fewer defects, which reduces the number of bugs that escape to production. Consquently, cost differences for tokens matter less than the capability differences. 
+  \item \textbf{Agents only pay off if they are good enough.} Development with weaker estimates for agent capability is not cheaper than our human-only baseline. More optimistic estimates of agent capability nevertheless show that significant cost savings are possible. 
+  \item \textbf{Agents enable velocities that are impossible to achieve with human-only teams.} The throughput of agents can be scaled to extrem development speeds, possibly enabling new classes of products and more rapid development than can be achieved by human developers. 
+  \item \textbf{In most of our scenarios, costs for human developers exceed those for agents.} Unless extreme velocity is used forcing an equally strong reliance on agents, our simulation still favors paying more for human developers than for agents. 
+  \item \textbf{Escaped defects, not labour, is the main cost driver.} Since escaped defects are expensive, their prevention is crucial. This drives up team costs to ensure good quality assurance, but escaped (security) defects are still the biggest cost factor. 
+  \item \textbf{Quality assurance consumes most of the agent budget.} Since preventing bugs saves money, quality assurance activities are often scaled to the maximum and therefore dominate the costs for agents. In other words, getting features is cheap, but ensuring their quality is expensive. 
+\end{itemize}
 
 % ============================================================
 \section{Background and Related Work}
