@@ -59,7 +59,7 @@ TODO: write abstract.
   \textit{If that \$500000 engineer did not consume at least \$250000 worth of tokens, I am going to be deeply alarmed} --- Jensen Huang, CEO of Nvidia (March, 2026).
 \end{quote}
 
-Agentic AI systems based on Large Language Models (LLMs) -- hereafter referred to as agents -- have been shown to have strong capabilities in software engineering tasks, including code generation~\citep{TODO}, code review~\citep{TODO}, bug fixing~\citep{TODO}, and test generation~\citep{TODO}. This led to a rapid adoption of these agents in software development teams~\cite{TODO}. Recently, the uncritical adoption and unrestricted use of these agents is being rolled back, not least due to the spiraling costs~\citep{TODO}. Such problems are not unexpected with new technology, where we are still trying to understand all implications. Nevertheless, this raises the question is Jensen Huang's general estimate that developers should consume at least half of their salary in agent tokens is reasonable, or whether there are better ways to compose human and agent workforces. This is the central research question of this work:
+Agentic AI systems based on Large Language Models (LLMs) -- hereafter referred to as agents -- have been shown to have strong capabilities in software engineering tasks, including code generation~\citep{TODO}, code review~\citep{TODO}, bug fixing~\citep{TODO}, and test generation~\citep{TODO}. This led to a rapid adoption of these agents in software development teams~\cite{TODO}. Recently, the uncritical adoption and unrestricted use of these agents is being rolled back, not least due to the spiraling costs~\citep{TODO}. Such problems are not unexpected with new technology, where we are still trying to understand all implications of AI-native software development~\cite{hassan2026ainative}. Nevertheless, this raises the question is Jensen Huang's general estimate that developers should consume at least half of their salary in agent tokens is reasonable, or whether there are better ways to compose human and agent workforces. This is the central research question of this work:
 
 \begin{description}
   \item[RQ] How should software development teams compose their human and agent workforce to deliver the work a project demands at the lowest total cost, counting the cost of the developers, the cost of the agents, and the cost of the defects that reach production?
@@ -82,59 +82,19 @@ Our simulations show that the cost landscape of agentic software development is 
 \end{itemize}
 
 % ============================================================
-\section{Background and Related Work}
+\section{Related Work}
 \label{sec:related}
 % ============================================================
 
-% ---- 2.1 ----
-\subsection{Software Team and Process Simulation}
-\label{sec:related:process}
-%
-% - Situate within software process simulation (SPS): Abdel-Hamid \& Madnick
-%   system-dynamics model, COCOMO-derivative planning tools, agent-based SE
-%   process models (e.g., Concepcion \& Hilburn).
-% - Prior models treat headcount as a scalar; this work parameterises role
-%   composition as a 13-dimensional integer vector.
-% - Discrete-time sprint framing is closer to Scrum simulation literature
-%   (Cao et al.) than to continuous-time system dynamics.
-% - Limitations of prior models for AI-agent settings: uniform human productivity
-%   assumption, no CI/CD latency buffer, no role-specific degradation functions.
-% - Brooks' Law formulation: H_comm(N) = c_comm * (N-1) communication overhead
-%   is incorporated explicitly in the human capacity model.
+To the best of our knowledge, there is no directly related work, i.e., attempts to determine optimal human-agent team structures accounting for costs and quality of a software product, neither through simulation, nor through other methods. Note that the quantification of capabilities of human developers or AI agents is not discussed here, as this is not the objective of this work. Instead, we discuss the relevant work that we use to estimate the dynamics of our simulation model in Section~\ref{sec:setup}. Further, our work does not discuss how exactly humans and AI work together, how processes are defined or similar. We rather refer to the emerging literature on AI-based software engineering in this regard, e.g., \cite{hassan2026ainative, hassan2025agentic, li2025aiteammates}. Therefore, we rather focus on earlier methods for simulating software projects, which inspired this work. 
 
-% ---- 2.2 ----
-\subsection{AI Agents in Software Engineering}
-\label{sec:related:agents}
-%
-% - Empirical evidence on AI-assisted coding: GitHub Copilot productivity studies,
-%   LLM-based code review (CodeReviewer, etc.), automated bug fixing (SWE-bench,
-%   Devin, SWE-agent), automated test generation (CodaMosa, ChatUniTest).
-% - Distinguish tool-assisted human work from autonomous agent roles as modelled
-%   here: agents execute full tasks independently, not merely assist.
-% - Gap: individual-agent productivity studies do not model systemic effects on
-%   backlog stability, bug escape rates, or cost per feature in mixed teams.
-% - Emerging multi-agent SE frameworks (ChatDev, MetaGPT, OpenHands) as
-%   direct industrial motivation for the team-composition question.
-% - Cost structure reality: LLM API token pricing maps naturally to per-agent
-%   per-sprint cost model used here.
 
-% ---- 2.3 ----
-\subsection{Search-Based Optimisation of Software Processes}
-\label{sec:related:moea}
-%
-% - SBSE (search-based SE) for team and project planning: staffing optimisation,
-%   sprint planning, release planning under uncertainty.
-% - Cost-of-quality literature: framing defects as a monetary cost rather than as a
-%   separate objective, and the cost-of-quality accounting it comes from.
-% - Simulation-based optimisation / ranking-and-selection: selecting a best system
-%   when each evaluation is a noisy Monte Carlo estimate (Gupta subset selection,
-%   multiple comparisons with the best).
-% - Key distinction: our feasibility pre-filter (human-capacity condition at prior
-%   means) dramatically prunes the search space before any simulation, a technique
-%   not present in prior SBSE team-composition work.
-% - Motivate evolutionary search as appropriate for
-%   discrete, high-dimensional, partially infeasible composition spaces where no
-%   gradient is available.
+Simulation is a common experimental method to explore how situations evolve, given a model of the underlying system - in our case the dynamics of software development. \cite{abdelhamid1991dynamics} built the first such model for system dynamics and showed that a simulation of based staffing, schedule pressure, productivity, and defect generation can reproduce the behavior of a real-world project. \cite{kellner1999simulation} clarify that the simulation models serve a specific purpose. For software engineering, discrete-event simulations are the most common approach \citep{zhang2008reflections,garciagarcia2020simulation}, i.e., software is typically considered to be made up of artifacts that are evolved through time-discrete changes instead of through a continuous model, e.g., to simulate agile development~\cite{cao2010agile}. 
+
+Agent-based simulation method use a similar modeling approach to us. In such methods, agents act on and observe a simulation environment, typically with the goal to achieve some reward. The simulation then defines the types of agents and their behavior, e.g., to model human software developers as agents~\cite{smith2006agentbased}. We note that this usage of the term \textit{agent} differs from the AI agents for software development that we considere here. To avoid confusion, we hereafter rather write actor-based simulation and speak of actors instead, when refering to aspects of agent-based simulation. 
+Actor-based simulation simulation was further explored in the literature, e.g, to simulate developer decisions~\citep{agarwal2010flexible}, or to estimate effort and time required for projects~\cite{spasic2012avl}. \cite{honsel2015mining} suggest to use repository mining to model the behavior of human agents, and demonstrate that parameters estimated with repository mining can lead to accurate simulations of the evolution of open source projects~\citep{honsel2021investigation}. 
+
+The simulation model we develop is similar to the above, i.e., we have distinct actors with different behavior that drive the evolution of software system through time-discrete steps and we estimate the behavior of human actors using results from repository mining research. However, none of the above takes AI agents into account, due to which none of the simulation models is directly comparable to our work. This is the gap that our research addresses, i.e., a simulation framework that allows us to model how human developers and AI agents co-evolve software. 
 
 
 % ============================================================
@@ -142,8 +102,7 @@ Our simulations show that the cost landscape of agentic software development is 
 \label{sec:model}
 % ============================================================
 
-The model treats software development as a discrete-time stochastic dynamical
-system. The simulation runs for $T$ sprints; each sprint represents one
+We now describe our simulation model in which we treat software development as a discrete-time stochastic dynamical system, in line with prior work on software simulation (see~\ref{sec:related}). The simulation runs for $T$ sprints, where each sprint represents one
 fixed-duration iteration. States are indexed $t \in \{0, 1, \ldots, T\}$,
 where $S(0)$ is the fixed initial state (before any sprint executes) and
 $S(t)$ for $t \geq 1$ is the state produced by sprint $t$. The simulation
@@ -159,9 +118,7 @@ We derive the metrics that describe how well a team configuration performs from 
 \subsection{Roles}
 \label{sec:model:roles}
 
-
-
-There is only a single human role included in the model: the \textit{Human
+Similar to \cite{hassan2026ainative}, we assume that agents will conduct most of the actual software development work. Therefore, there is only a single human role included in our model: the \textit{Human
 Developer}. Developers communicate with each other, supervise agents,
 review and approve architecture proposals, resolve
 escalations that agents cannot handle autonomously, and contribute new
@@ -178,7 +135,7 @@ H_\mathrm{capacity}$ hours per sprint.
 We have eight specialist AI agent roles, indexed $k = 1,\ldots,8$. All agents of the
 same type are assumed to be statistically identical. We further distinguish between agents that
 require supervision and agents that run fully autonomously. The supervised agents consume monitoring capacity from
-the human developers but are otherwise assumed to execute tasks autonomously. Table~\ref{tab:roles} summarises each AI agent role's primary function.
+the human developers but are otherwise assumed to execute tasks autonomously. Table~\ref{tab:roles} summarises each AI agent role's primary function. We note that different roles does not mean that there must be different AI systems or agentic frameworks. This separation is rather introduced to enable the simulation to have distinct estimation for the agentic costs and capabilities for different aspects of software development and also to allow the allocation of these costs to optimize quality while minimizing costs. 
 
 The eight roles fall into three functional groups. The production roles
 (k = 1,\ldots,4) all directly contribute to the production code. 
@@ -1234,6 +1191,16 @@ The mixture of drawing most mutations from the elite and some from the rest of t
 
 \paragraph{Final selection.}
 At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistinguishable set $\mathcal{I}^\star$ are determined as described in Section~\ref{sec:model:selection} over all sampled configurations $\mathcal{P}_G$, including the re-simulation of the preliminary $\mathcal{I}^\star$ with $K$ replications.
+
+\subsection{Limitations of the simulation's scope}
+\label{sec:model:limitations}
+
+The simulation model is built with the intent to be able to analyze cost tradeoffs and understand team compositions. The aspects that we simulate were added because we believe they are key factors to understand these tradeoffs. However, our model is only an abtraction and makes simplifying assumptions about software development:
+\begin{itemize}
+  \item We use fixed efforts and costs for all features and bugs. An alternative would be to sample required efforts and costs, similar to how we sample feature arrival rates. However, the expected rates should converge to the average that we use, if simulations run sufficiently long. Thus, this is rather important to estimate short-term uncertainty and not long-term effects, which is why we opted against this additional complexity and only randomize the number of features that are arriving and the bug introduction rates. 
+  \item Related to the above, we also do not increase development costs for larger systems, e.g., as a factor of features already implemented. This simplification makes the estimation of cost parameters easier, but means that we have to assume an average cost over time, which might underestimate costs for larger systems over time. However, assuming that this affects human costs and agent costs similarly, this should only have a small effect on our results. 
+  \item Our simplification that human effort is debt-independent simplifies the model greatly, because the otherwise we would also have to model test generation and technical debt reduction for human developers, including a possibly complex model of how human developers allocate their time between these activities and the development activities feature implementation and bug fixes. We believe that this simplification is reasonable, because the human effort estimates that we use already include the work of coping with the complexity of an existing code base. However, this does not paint a fully realistic picture of how technical debt also slows down human developers over time. 
+\end{itemize}
 
 
 % ============================================================
