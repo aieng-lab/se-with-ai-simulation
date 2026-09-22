@@ -379,6 +379,17 @@ class TestMutation:
             parent = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
             assert parent.A_dev[0] >= 1
 
+    def test_f_freeze_stays_within_its_value_set(self, search_cfg):
+        """Mutation moves F_freeze within F_freeze_values, not merely within [0, R-1]."""
+        rng = np.random.default_rng(9)
+        parent = replace(self._parent(), R=13, F_freeze=2)
+        reached = set()
+        for _ in range(500):
+            child = _mutate(parent, rng, search_cfg, WIDE_LIMITS)
+            assert child.F_freeze in search_cfg.F_freeze_values
+            reached.add(child.F_freeze)
+        assert reached == {1, 2}
+
     def test_qa_is_not_mutated_while_the_freeze_window_is_closed(self, search_cfg):
         """A_qa is inert at F_freeze=0, so mutating it would only produce a duplicate.
 

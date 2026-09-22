@@ -1176,7 +1176,8 @@ first four when $F_\mathrm{freeze} = 0$:
 \begin{itemize}
   \item \emph{Mutate $N$:} replace the current value with an adjacent value in the
         discrete set $\mathcal{N}$ (the next smaller or larger element).
-  \item \emph{Mutate $F_\mathrm{freeze}$:} apply $\pm 1$ while ensuring that $F_\mathrm{freeze}$ stays in $[0, R-1]$.
+  \item \emph{Mutate $F_\mathrm{freeze}$:} replace the current value with an adjacent value in
+        the admissible set $\{f \in \mathcal{F}_\mathrm{freeze} : 0 \leq f \leq R-1\}$.
   \item \emph{Mutate $f_\mathrm{fix}$:} replace the current value with an adjacent value in
         $\mathcal{F}_\mathrm{fix}$.
   \item \emph{Mutate $\mathbf{A}_\mathrm{dev}$:} apply one elementary operation drawn uniformly from:

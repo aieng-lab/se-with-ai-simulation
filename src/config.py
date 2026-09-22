@@ -249,7 +249,7 @@ class SearchConfiguration:
     horizon_path: str
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
     R_values: tuple[int, ...]
-    F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
+    F_freeze_values: tuple[int, ...] = (0, 1, 2)   # must contain 0; see __post_init__
     f_fix_values: tuple[float, ...] = (0.5,)    # bug-fixing shares, in [0, 1]
     f_qa_values: tuple[float, ...] = (0.0,)     # QA reserves of the baseline, in [0, 1)
     sigma: float = 2.0                      # headroom factor on the saturation bounds

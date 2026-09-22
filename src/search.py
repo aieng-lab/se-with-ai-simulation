@@ -280,10 +280,12 @@ def _mutate(
             N = _adjacent(search_cfg.N_values, N, rng)
 
         elif mutation_type == 1:
-            # ±1, clamped to [0, R-1].  Going 0 -> 1 opens a freeze window onto the
-            # normalised zero A_qa, i.e. one staffed by nobody, which later A_qa mutations
-            # can grow.  Re-sampling A_qa here would perturb two parameters at once.
-            F_freeze = int(np.clip(F_freeze + int(rng.choice([-1, 1])), 0, config.R - 1))
+            # An adjacent value of F_freeze_values admissible for this R (<= R-1).  Going
+            # 0 -> 1 opens a freeze window onto the normalised zero A_qa, i.e. one staffed
+            # by nobody, which later A_qa mutations can grow.  Re-sampling A_qa here would
+            # perturb two parameters at once.
+            admissible = tuple(v for v in search_cfg.F_freeze_values if 0 <= v <= config.R - 1)
+            F_freeze = int(_adjacent(admissible, F_freeze, rng))
 
         elif mutation_type == 2:
             _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, limits,
