@@ -32,9 +32,7 @@ class ScenarioParameters:
     h_feature: float                 # Human hours per feature
     h_fix: float                     # Human hours per bug fixed
     c_comm: float                    # Per-peer communication overhead
-    f_fix: float                     # Share of residual capacity spent on bug fixing
-    # The three below are read only by a team with no agents (`config.is_human_only`).
-    f_qa: float                      # Share of net capacity reserved for QA in dev sprints
+    # The two below are read only by a team with no agents (`config.is_human_only`).
     h_qa: float                      # Human hours to review one implemented feature in full
     d_qa: float                      # Probability a fully reviewed bug is detected
 
@@ -83,12 +81,8 @@ class ScenarioParameters:
             raise ValueError(f"theta_maj must be in (0, 1), got {self.theta_maj}")
         if not (0.0 < self.theta_sec < 1.0):
             raise ValueError(f"theta_sec must be in (0, 1), got {self.theta_sec}")
-        if not (0.0 <= self.f_fix <= 1.0):
-            raise ValueError(f"f_fix must be in [0, 1], got {self.f_fix}")
         if self.r_bugs_human <= 0.0:
             raise ValueError(f"r_bugs_human must be > 0, got {self.r_bugs_human}")
-        if not (0.0 <= self.f_qa < 1.0):
-            raise ValueError(f"f_qa must be in [0, 1), got {self.f_qa}")
         if self.h_qa <= 0.0:
             raise ValueError(f"h_qa must be > 0, got {self.h_qa}")
         if not (0.0 <= self.d_qa <= 1.0):

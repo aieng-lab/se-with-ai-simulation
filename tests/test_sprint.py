@@ -210,12 +210,12 @@ class TestArchChangeQueue:
 
         Uses f_fix=1.0 so impl_human=0; all agent capacity goes to arch work first.
         """
-        params = dataclasses.replace(base_params, f_arch_chg=0.0, r_arch_chg=0.0,
-                                     f_fix=1.0)
+        params = dataclasses.replace(base_params, f_arch_chg=0.0, r_arch_chg=0.0)
+        config = dataclasses.replace(base_config, f_fix=1.0)
         initial_q = 5
         state = SystemState(F_backlog=0, Q_arch_impl=initial_q)
         rng = np.random.default_rng(14)
-        step_sprint(0, state, base_config, params, rng)
+        step_sprint(0, state, config, params, rng)
         # Q_arch_impl should have decreased (impl agents drain it with priority)
         assert state.Q_arch_impl < initial_q
         # F_completed must not have increased (arch impl ≠ user feature)
@@ -347,14 +347,14 @@ class TestDetectionGating:
         """High injection rate, nothing ever gets fixed, so B_kno reflects detection only."""
         return dataclasses.replace(
             base_params, r_bugs=2.0,
-            r_fix=0.0, f_fix=0.0,
+            r_fix=0.0,
             **overrides,
         )
 
     def _cfg(self, A_dev):
         # F_freeze=0 keeps every sprint in the development phase; R=4 with 3 sprints
         # run means no release fires, so nothing is flushed out of B_hid/B_kno.
-        return TeamConfiguration(N=2, A_dev=A_dev, A_qa=A_dev, R=4, F_freeze=0)
+        return TeamConfiguration(N=2, A_dev=A_dev, A_qa=A_dev, R=4, F_freeze=0, f_fix=0.0)
 
     def test_no_detection_agents_leaves_all_bugs_hidden(self, base_params):
         """a_5 = a_6 = a_7 = 0: bugs are injected but nothing is ever detected."""
@@ -507,7 +507,7 @@ class TestImplementationIsCappedByDemand:
     def test_human_capacity_far_beyond_the_backlog(self, base_config, base_params):
         """Cheap features + lots of humans: capacity dwarfs the tiny arrival stream."""
         from dataclasses import replace
-        p = replace(base_params, h_feature=0.1, h_fix=0.1, f_fix=0.5,
+        p = replace(base_params, h_feature=0.1, h_fix=0.1,
                     r_arrival=1.0, Gamma_doc=0.0)
         cfg = TeamConfiguration(N=5, A_dev=base_config.A_dev, R=4,
                                 F_freeze=0, A_qa=base_config.A_qa)
@@ -640,11 +640,12 @@ class TestEscalationsScaleWithAgentWork:
         from dataclasses import replace
         from src.config import AGENT_ROLE_COUNT
         p = replace(base_params, r_arrival=0.0, f_arch_chg=0.0, rho_esc=0.9,
-                    r_bugs=0.0, h_fix=0.1, f_fix=1.0, H_escalation_time=1e6,
+                    r_bugs=0.0, h_fix=0.1, H_escalation_time=1e6,
                     Gamma_doc=0.0)
         A = [0] * AGENT_ROLE_COUNT
         A[0] = 1
-        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=100, F_freeze=0, A_qa=_NO_QA)
+        cfg = TeamConfiguration(N=3, A_dev=tuple(A), R=100, F_freeze=0, A_qa=_NO_QA,
+                                f_fix=1.0)
         rng = np.random.default_rng(18)
         # Seed a large production bug queue that only humans can drain (no fix agents).
         state = SystemState(F_backlog=0, B_rel_min=500)
@@ -676,9 +677,10 @@ class TestContributionAccounting:
         """Humans are served first, so a thin arrival stream
         never reaches the implementation agent."""
         # One feature per sprint, and a human budget far above it.
-        p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=0.1, f_fix=0.0,
+        p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=0.1,
                                 f_arch_chg=0.0, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0, A_qa=_NO_QA)
+        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0, A_qa=_NO_QA,
+                                f_fix=0.0)
         state = SystemState(F_backlog=1)
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(22))
 
@@ -687,9 +689,10 @@ class TestContributionAccounting:
 
     def test_no_human_coding_time_leaves_it_all_to_the_agents(self, base_params):
         """With h_feature astronomically large the human budget floors to zero."""
-        p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=1e9, f_fix=0.0,
+        p = dataclasses.replace(base_params, r_arrival=0.0, h_feature=1e9,
                                 f_arch_chg=0.0, delta_min=1.0, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0, A_qa=_NO_QA)
+        cfg = TeamConfiguration(N=3, A_dev=_A(k1=2), R=8, F_freeze=0, A_qa=_NO_QA,
+                                f_fix=0.0)
         state = SystemState(F_backlog=50)
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(23))
 
@@ -700,8 +703,9 @@ class TestContributionAccounting:
     def test_fixes_human_counts_the_human_drain(self, base_params):
         """With no Bug Fixing Agent every repair is human, and none of it is billed."""
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
-                                h_fix=1.0, f_fix=1.0, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), R=100, F_freeze=0, A_qa=_NO_QA)
+                                h_fix=1.0, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), R=100, F_freeze=0, A_qa=_NO_QA,
+                                f_fix=1.0)
         state = SystemState(F_backlog=0, B_rel_min=500)
         before = state.B_rel_min
         actions = step_sprint(0, state, cfg, p, np.random.default_rng(24))
@@ -715,8 +719,9 @@ class TestContributionAccounting:
     def test_fixes_agent_is_exactly_the_billed_bug_fixing_unit(self, base_params):
         """fixes_agent duplicates u_3 by construction — pin that they cannot drift."""
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
-                                f_fix=0.0, h_feature=1e9, Gamma_doc=0.0)
-        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1, k3=2), R=100, F_freeze=0, A_qa=_NO_QA)
+                                h_feature=1e9, Gamma_doc=0.0)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1, k3=2), R=100, F_freeze=0, A_qa=_NO_QA,
+                                f_fix=0.0)
         state = SystemState(F_backlog=0, B_rel_maj=200)
         rng = np.random.default_rng(25)
         for t in range(5):
@@ -727,9 +732,10 @@ class TestContributionAccounting:
     def test_feature_freeze_moves_humans_off_features_onto_bugs(self, base_params):
         """impl_human is zero in a freeze sprint; the fixes are not."""
         p = dataclasses.replace(base_params, r_arrival=0.0, f_arch_chg=0.0, r_bugs=0.0,
-                                h_feature=0.1, h_fix=1.0, f_fix=0.0, Gamma_doc=0.0)
+                                h_feature=0.1, h_fix=1.0, Gamma_doc=0.0)
         # R=2 with F_freeze=1 makes t=1 a freeze sprint and t=0 a development one.
-        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), A_qa=_A(k3=0), R=2, F_freeze=1)
+        cfg = TeamConfiguration(N=1, A_dev=_A(k1=1), A_qa=_A(k3=0), R=2, F_freeze=1,
+                                f_fix=0.0)
 
         dev_state = SystemState(F_backlog=10, B_rel_min=100)
         dev = step_sprint(0, dev_state, cfg, p, np.random.default_rng(26))
@@ -769,10 +775,10 @@ class TestHumanBugInjectionIsFixedRate:
     @staticmethod
     def _human_only_cfg(N=4):
         zero = (0,) * AGENT_ROLE_COUNT
-        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=13, F_freeze=0)
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=13, F_freeze=0, f_fix=0.10)
 
     def _bugs_after(self, params, delta_min, seed=7, sprints=6):
-        p = dataclasses.replace(params, delta_min=delta_min, f_qa=0.0, d_qa=0.0)
+        p = dataclasses.replace(params, delta_min=delta_min, d_qa=0.0)
         state = _run_sprints(sprints, self._human_only_cfg(), p,
                              np.random.default_rng(seed), initial_backlog=200)
         return (state.B_hid_min + state.B_hid_maj + state.B_hid_sec
@@ -802,9 +808,10 @@ class TestHumanBugInjectionIsFixedRate:
         # impl equal to the demand in both runs, and vary only the debt carried in.
         A = [0] * AGENT_ROLE_COUNT
         A[0] = 5
-        cfg = TeamConfiguration(N=2, A_dev=tuple(A), R=99, F_freeze=0, A_qa=_NO_QA)
+        cfg = TeamConfiguration(N=2, A_dev=tuple(A), R=99, F_freeze=0, A_qa=_NO_QA,
+                                f_fix=1.0)
         p = dataclasses.replace(base_params, delta_min=0.10, delta_exp=1.0, r_F=1000.0,
-                                r_bugs=0.5, r_bugs_human=1e-9, f_fix=1.0, r_arrival=1e-9)
+                                r_bugs=0.5, r_bugs_human=1e-9, r_arrival=1e-9)
 
         def run(D_tech):
             state = SystemState(F_backlog=200, D_tech=D_tech)
@@ -826,13 +833,14 @@ class TestFreezeReinspection:
     """A freeze sprint re-inspects the hidden bugs of the current release cycle."""
 
     @staticmethod
-    def _freeze(base_params, A_qa, state, **overrides):
+    def _freeze(base_params, A_qa, state, f_qa=0.2, **overrides):
         # R=4, F_freeze=2: t=2 is frozen and no release fires.  delta_min = 1 pins
         # delta_D at 1, and h_fix / r_fix keep every detected bug in B_kno.
         p = dataclasses.replace(base_params, delta_min=1.0, h_fix=1e9, r_fix=0.0,
                                 **overrides)
         A_dev = _A(k1=1) if any(A_qa) else _NO_QA
-        cfg = TeamConfiguration(N=2, A_dev=A_dev, A_qa=A_qa, R=4, F_freeze=2)
+        cfg = TeamConfiguration(N=2, A_dev=A_dev, A_qa=A_qa, R=4, F_freeze=2,
+                                f_fix=0.10, f_qa=f_qa)
         step_sprint(2, state, cfg, p, np.random.default_rng(31))
         return state
 
@@ -886,14 +894,15 @@ class TestHumanOnlyCapacityReservation:
     """f_qa of net capacity is reserved, in every sprint."""
 
     @staticmethod
-    def _cfg(F_freeze, N=4):
+    def _cfg(F_freeze, N=4, f_qa=0.2):
         zero = (0,) * AGENT_ROLE_COUNT
-        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=F_freeze)
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=4, F_freeze=F_freeze,
+                                 f_fix=0.10, f_qa=f_qa)
 
     def _impl_at(self, params, f_qa, t, F_freeze=0):
-        p = dataclasses.replace(params, f_qa=f_qa)
         state = SystemState(F_backlog=10_000)
-        return step_sprint(t, state, self._cfg(F_freeze), p, np.random.default_rng(5))
+        return step_sprint(t, state, self._cfg(F_freeze, f_qa=f_qa), params,
+                           np.random.default_rng(5))
 
     def test_dev_sprint_implementation_falls_by_one_minus_f_qa(self, base_params):
         full = self._impl_at(base_params, 0.0, t=0).impl_human
@@ -908,8 +917,7 @@ class TestHumanOnlyCapacityReservation:
         # of the cycle's features is paid out of the fixing budget.
         def fixes(f_qa):
             state = SystemState(B_kno_min=5_000)
-            return step_sprint(2, state, self._cfg(2),
-                               dataclasses.replace(base_params, f_qa=f_qa),
+            return step_sprint(2, state, self._cfg(2, f_qa=f_qa), base_params,
                                np.random.default_rng(5)).fixes_human
 
         assert fixes(0.4) < fixes(0.0)
@@ -919,20 +927,19 @@ class TestHumanOnlyCapacityReservation:
         # equations, so the reservation is not paid out of coding time alone.
         state_full = SystemState(F_backlog=10_000, B_kno_min=5_000)
         state_res = SystemState(F_backlog=10_000, B_kno_min=5_000)
-        full = step_sprint(0, state_full, self._cfg(0),
-                           dataclasses.replace(base_params, f_qa=0.0),
+        full = step_sprint(0, state_full, self._cfg(0, f_qa=0.0), base_params,
                            np.random.default_rng(5)).fixes_human
-        reserved = step_sprint(0, state_res, self._cfg(0),
-                               dataclasses.replace(base_params, f_qa=0.5),
+        reserved = step_sprint(0, state_res, self._cfg(0, f_qa=0.5), base_params,
                                np.random.default_rng(5)).fixes_human
         assert reserved < full
 
     def test_agent_team_ignores_f_qa(self, base_config, base_params):
-        # f_qa is baseline-only: an agent-supported team must be bit-identical under it.
-        a = _run_sprints(5, base_config, dataclasses.replace(base_params, f_qa=0.0),
-                         np.random.default_rng(3))
-        b = _run_sprints(5, base_config, dataclasses.replace(base_params, f_qa=0.9),
-                         np.random.default_rng(3))
+        # f_qa is baseline-only, so an agent-supported team normalises it to 0 and is
+        # bit-identical under any value.
+        reserved = dataclasses.replace(base_config, f_qa=0.9)
+        assert reserved == base_config and reserved.f_qa == 0.0
+        a = _run_sprints(5, base_config, base_params, np.random.default_rng(3))
+        b = _run_sprints(5, reserved, base_params, np.random.default_rng(3))
         assert dataclasses.asdict(a) == dataclasses.asdict(b)
 
 
@@ -940,13 +947,14 @@ class TestHumanOnlyDetection:
     """Eqs. (cov_qa) / (qa_human): the human review stage replaces Test -> CR -> SA."""
 
     @staticmethod
-    def _cfg(N=4):
+    def _cfg(N=4, f_qa=0.2):
         zero = (0,) * AGENT_ROLE_COUNT
-        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=13, F_freeze=0)
+        return TeamConfiguration(N=N, A_dev=zero, A_qa=zero, R=13, F_freeze=0,
+                                 f_fix=0.10, f_qa=f_qa)
 
-    def _run(self, params, **overrides):
+    def _run(self, params, f_qa=0.2, **overrides):
         p = dataclasses.replace(params, **overrides)
-        return _run_sprints(6, self._cfg(), p, np.random.default_rng(9),
+        return _run_sprints(6, self._cfg(f_qa=f_qa), p, np.random.default_rng(9),
                             initial_backlog=400)
 
     def test_a_zero_agent_team_now_detects_bugs(self, base_params):
@@ -971,9 +979,9 @@ class TestHumanOnlyDetection:
         # and one feature of demand the ratio is far above 1, so p_qa is exactly d_qa and
         # raising the reservation further changes nothing.
         def run(f_qa):
-            p = dataclasses.replace(base_params, f_qa=f_qa, d_qa=1.0,
+            p = dataclasses.replace(base_params, d_qa=1.0,
                                     r_bugs_human=2.0, h_qa=0.01, r_arrival=1e-9)
-            return _run_sprints(4, self._cfg(), p, np.random.default_rng(4),
+            return _run_sprints(4, self._cfg(f_qa=f_qa), p, np.random.default_rng(4),
                                 initial_backlog=2)
 
         a, b = run(0.30), run(0.60)
@@ -1004,7 +1012,8 @@ class TestHumanOnlyDebtIsInert:
 
     def test_all_debt_parameters_leave_the_run_unchanged(self, base_params):
         zero = (0,) * AGENT_ROLE_COUNT
-        cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+        cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1,
+                                f_fix=0.10, f_qa=0.2)
 
         def run(**debt):
             p = dataclasses.replace(base_params, **debt)
@@ -1024,10 +1033,11 @@ class TestHumanOnlyDebtIsInert:
         # The other half of the claim: the baseline is independent of the agent tier,
         # which is what lets its grid drop that dimension entirely.
         zero = (0,) * AGENT_ROLE_COUNT
-        cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1)
+        cfg = TeamConfiguration(N=4, A_dev=zero, A_qa=zero, R=4, F_freeze=1,
+                                f_fix=0.10, f_qa=0.15)
 
         def run(**agent):
-            p = dataclasses.replace(base_params, f_qa=0.15, d_qa=0.8, **agent)
+            p = dataclasses.replace(base_params, d_qa=0.8, **agent)
             return _run_sprints(10, cfg, p, np.random.default_rng(17),
                                 initial_backlog=300)
 

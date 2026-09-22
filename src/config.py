@@ -150,7 +150,7 @@ def net_capacity(H_capacity: float, c_comm: float, N: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class TeamConfiguration:
-    """The configuration tuple (N, A_dev, A_qa, R, F_freeze), fixed across replications.
+    """The configuration tuple (N, A_dev, A_qa, R, F_freeze, f_fix), fixed across replications.
 
     N       staffing level in full-time equivalents, so it may be fractional.
     A_dev   (a_1, ..., a_8), the development-phase composition.  Either all zero (a team
@@ -163,6 +163,9 @@ class TeamConfiguration:
     F_freeze
             how many sprints at the end of each release cycle use A_qa instead of A_dev.
             Sprints with (t % R) >= (R - F_freeze) are frozen.  Range [0, R-1].
+    f_fix   share of the developers' coding time spent on bug fixing, the rest on features.
+    f_qa    share of net capacity a team with no agents reserves for QA.
+            Never read by an agent-supported team, so normalised to 0 there.
 
     Only the per-configuration constraints are checked here.  The collective bound on the
     supervised roles needs the scenario parameters and lives in `src.feasibility`.
@@ -173,10 +176,16 @@ class TeamConfiguration:
     A_qa: tuple[int, ...]
     R: int
     F_freeze: int = 1
+    f_fix: float = 0.5
+    f_qa: float = 0.0
 
     def __post_init__(self) -> None:
         if self.N <= 0:
             raise ValueError(f"N must be > 0, got {self.N}")
+        if not 0.0 <= self.f_fix <= 1.0:
+            raise ValueError(f"f_fix must be in [0, 1], got {self.f_fix}")
+        if not 0.0 <= self.f_qa < 1.0:
+            raise ValueError(f"f_qa must be in [0, 1), got {self.f_qa}")
         if self.R < 1:
             raise ValueError(f"R must be >= 1, got {self.R}")
 
@@ -187,6 +196,7 @@ class TeamConfiguration:
         if any(self.A_dev):
             if self.A_dev[0] < 1:
                 raise ValueError("a_1 (Feature Implementation Agent) must be >= 1")
+            object.__setattr__(self, "f_qa", 0.0)   # only the baseline reads it
         elif any(self.A_qa):
             raise ValueError(
                 "A_qa must be all-zero when A_dev is all-zero (human-only baseline)"
@@ -240,6 +250,8 @@ class SearchConfiguration:
     N_values: tuple[float, ...]             # staffing levels in FTE; may be fractional
     R_values: tuple[int, ...]
     F_freeze_values: tuple[int, ...] = (0, 1)   # must contain 0; see __post_init__
+    f_fix_values: tuple[float, ...] = (0.5,)    # bug-fixing shares, in [0, 1]
+    f_qa_values: tuple[float, ...] = (0.0,)     # QA reserves of the baseline, in [0, 1)
     sigma: float = 2.0                      # headroom factor on the saturation bounds
     epsilon: float = 0.02                   # throughput-constraint tolerance
     budget: int = 500                       # candidate evaluations the search may spend
@@ -275,6 +287,10 @@ class SearchConfiguration:
                 f"F_freeze_values must contain 0 so that every R (in particular R=1) "
                 f"has an admissible feature-freeze length, got {self.F_freeze_values}"
             )
+        if not self.f_fix_values or any(not 0.0 <= f <= 1.0 for f in self.f_fix_values):
+            raise ValueError(f"f_fix_values must be non-empty, in [0, 1], got {self.f_fix_values}")
+        if not self.f_qa_values or any(not 0.0 <= f < 1.0 for f in self.f_qa_values):
+            raise ValueError(f"f_qa_values must be non-empty, in [0, 1), got {self.f_qa_values}")
         if not 0.0 <= self.epsilon < 1.0:
             raise ValueError(f"epsilon must be in [0, 1), got {self.epsilon}")
         if self.budget < 1:

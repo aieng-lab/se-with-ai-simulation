@@ -67,6 +67,7 @@ def _objective_entry(config: TeamConfiguration, agg: AggregatedObjectives,
     """One `search_summary.json` objectives entry: the configuration and its aggregates."""
     return {
         "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
+        "f_fix": config.f_fix, "f_qa": config.f_qa,
         "A_dev": list(config.A_dev),
         "A_qa": list(config.A_qa),
         "cost_mean": agg.cost_mean, "cost_ci": list(agg.cost_ci),
@@ -134,6 +135,8 @@ def _manifest_payload(cfg_path: Path, search_cfg: SearchConfiguration,
             "N_values": list(search_cfg.N_values),
             "R_values": list(search_cfg.R_values),
             "F_freeze_values": list(search_cfg.F_freeze_values),
+            "f_fix_values": list(search_cfg.f_fix_values),
+            "f_qa_values": list(search_cfg.f_qa_values),
             "sigma": search_cfg.sigma,
             "epsilon": search_cfg.epsilon,
             "budget": search_cfg.budget,
@@ -218,7 +221,8 @@ def _print_optimum(report: SelectionReport, horizon: SimulationHorizon, floor: f
         print(f"WARNING: no candidate reached the throughput floor of "
               f"{floor:.3f} features/sprint; reporting the least-violating one.")
     print(f"Best configuration c* ({report.best_key}):")
-    print(f"  N={obj['N']:g} R={obj['R']} F_freeze={obj['F_freeze']}  "
+    print(f"  N={obj['N']:g} R={obj['R']} F_freeze={obj['F_freeze']} "
+          f"f_fix={obj['f_fix']:g} f_qa={obj['f_qa']:g}  "
           f"cost={obj['cost_mean']:.0f} $/feature "
           f"[{obj['cost_ci'][0]:.0f}, {obj['cost_ci'][1]:.0f}]  "
           f"value={obj['value_mean']:.3f}")

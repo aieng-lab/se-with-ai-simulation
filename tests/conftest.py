@@ -18,7 +18,7 @@ def _make_A(*pairs) -> tuple[int, ...]:
 
 @pytest.fixture
 def base_config():
-    """N=2, R=4; a_1=2 impl, a_3=1 fix, a_4=1 refactor, a_7=1 test (4 supervised),
+    """N=2, R=4, f_fix=0.10; a_1=2 impl, a_3=1 fix, a_4=1 refactor, a_7=1 test (4 supervised),
     plus one Code Review and one Security Audit background service so both
     detection stages are exercised."""
     return TeamConfiguration(
@@ -26,6 +26,7 @@ def base_config():
         A_dev=_make_A((1, 2), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1)),
         A_qa=_make_A((3, 2), (4, 1), (5, 1), (6, 1), (7, 2)),
         R=4,
+        f_fix=0.10,
     )
 
 
@@ -38,9 +39,9 @@ def base_params():
         r_test=3.0, r_doc=2.0,
         H_capacity=40.0, H_monitoring_overhead=2.0,
         H_review_time=4.0, H_escalation_time=2.0,
-        h_feature=8.0, h_fix=4.0, c_comm=1.0, f_fix=0.10,
+        h_feature=8.0, h_fix=4.0, c_comm=1.0,
         # Human-only QA; inert for every agent-supported fixture team.
-        f_qa=0.2, h_qa=1.0, d_qa=0.8,
+        h_qa=1.0, d_qa=0.8,
         r_bugs=0.02, r_bugs_human=0.8,
         theta_maj=0.18, theta_sec=0.10,
         d_CR=0.7, d_SA=0.85, d_test=0.6, c_test_ceil=0.54,

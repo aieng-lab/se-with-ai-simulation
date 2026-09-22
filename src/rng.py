@@ -16,13 +16,14 @@ if TYPE_CHECKING:
 
 
 def config_hash(config: TeamConfiguration) -> int:
-    """FNV-1a 64-bit hash of (N, R, F_freeze, A_dev, A_qa)."""
+    """FNV-1a 64-bit hash of (N, R, F_freeze, A_dev, A_qa, f_fix, f_qa)."""
     h = 1469598103934665603      # offset basis
     prime = 1099511628211
-    # N is a float, so it is folded in at 1/100 FTE resolution to keep the mixing
-    # integer-only.
+    # N and the two shares are floats, so they are folded in at 1/100 resolution to keep
+    # the mixing integer-only.
     N_key = round(config.N * 100)
-    for value in (N_key, config.R, config.F_freeze, *config.A_dev, *config.A_qa):
+    for value in (N_key, config.R, config.F_freeze, *config.A_dev, *config.A_qa,
+                  round(config.f_fix * 100), round(config.f_qa * 100)):
         h = ((h ^ (value & 0xFFFFFFFFFFFFFFFF)) * prime) & 0xFFFFFFFFFFFFFFFF
     return h
 

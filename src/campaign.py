@@ -139,7 +139,8 @@ def team_config(row: pd.Series | dict) -> TeamConfiguration:
     A_dev = tuple(int(row[c]) for c in DEV_PARAMETERS)
     A_qa = tuple(int(row[c]) for c in QA_PARAMETERS)
     return TeamConfiguration(N=float(row["N"]), A_dev=A_dev, R=int(row["R"]),
-                             F_freeze=int(row["F_freeze"]), A_qa=A_qa)
+                             F_freeze=int(row["F_freeze"]), A_qa=A_qa,
+                             f_fix=float(row["f_fix"]), f_qa=float(row["f_qa"]))
 
 
 def scenario_columns(scenario_id: str, mode: str) -> dict:
@@ -152,8 +153,9 @@ def scenario_columns(scenario_id: str, mode: str) -> dict:
 
 
 def process_columns(obj: dict) -> dict:
-    """The three process controls of one objectives entry."""
-    return {"N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"]}
+    """The process controls of one objectives entry."""
+    return {"N": obj["N"], "R": obj["R"], "F_freeze": obj["F_freeze"],
+            "f_fix": obj["f_fix"], "f_qa": obj["f_qa"]}
 
 
 def composition_columns(obj: dict) -> dict:

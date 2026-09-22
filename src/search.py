@@ -245,38 +245,39 @@ def _mutate_composition(
             A[src] += 1   # nothing else can receive; undo and let the caller retry
 
 
+def _adjacent(values: tuple[float, ...], current: float, rng: np.random.Generator) -> float:
+    """A neighbour of `current` in the sorted ladder `values`, or `current` if it has none."""
+    ladder = sorted(values)
+    idx = ladder.index(current) if current in ladder else 0
+    candidates = ladder[max(0, idx - 1):idx] + ladder[idx + 1:idx + 2]
+    return float(rng.choice(candidates)) if candidates else current
+
+
 def _mutate(
     config: TeamConfiguration,
     rng: np.random.Generator,
     search_cfg: SearchConfiguration,
     limits: RoleLimits,
 ) -> TeamConfiguration:
-    """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa}.
+    """Perturb exactly one randomly chosen parameter from {N, F_freeze, A_dev, A_qa, f_fix}.
 
     Retries up to `_MUTATION_ATTEMPTS` times when the result is
     unchanged or invalid, and returns the parent if every attempt fails.  At F_freeze == 0 the
     A_qa option is dropped, since a child mutated there normalises back to its parent.
     """
-    n_mutation_types = 3 if config.F_freeze == 0 else 4
-    n_vals = sorted(search_cfg.N_values)   # the ladder is the same on every attempt
+    # 0=N, 1=F_freeze, 2=A_dev, 3=f_fix, 4=A_qa; the last is dropped at F_freeze == 0.
+    n_mutation_types = 4 if config.F_freeze == 0 else 5
     for _ in range(_MUTATION_ATTEMPTS):
-        mutation_type = int(rng.integers(n_mutation_types))  # 0=N, 1=F_freeze, 2=A_dev, 3=A_qa
+        mutation_type = int(rng.integers(n_mutation_types))
 
         N = config.N
         A_dev = list(config.A_dev)
         A_qa = list(config.A_qa)
         F_freeze = config.F_freeze
+        f_fix = config.f_fix
 
         if mutation_type == 0:
-            # An adjacent value in the sorted N ladder.
-            idx = n_vals.index(N) if N in n_vals else 0
-            candidates = []
-            if idx > 0:
-                candidates.append(n_vals[idx - 1])
-            if idx < len(n_vals) - 1:
-                candidates.append(n_vals[idx + 1])
-            if candidates:
-                N = float(rng.choice(candidates))
+            N = _adjacent(search_cfg.N_values, N, rng)
 
         elif mutation_type == 1:
             # ±1, clamped to [0, R-1].  Going 0 -> 1 opens a freeze window onto the
@@ -288,13 +289,16 @@ def _mutate(
             _mutate_composition(A_dev, SUPERVISED_ROLE_INDICES, limits,
                                 rng, min_impl=True)
 
+        elif mutation_type == 3:
+            f_fix = _adjacent(search_cfg.f_fix_values, f_fix, rng)
+
         else:
             _mutate_composition(A_qa, _QA_SUPERVISED_INDICES, limits,
                                 rng, min_impl=False)
 
         try:
             child = TeamConfiguration(N=N, A_dev=tuple(A_dev), R=config.R,
-                                      F_freeze=F_freeze, A_qa=tuple(A_qa))
+                                      F_freeze=F_freeze, A_qa=tuple(A_qa), f_fix=f_fix)
         except ValueError:
             continue   # invalid; retry
         if child != config:
@@ -313,7 +317,7 @@ def _random_draws(
     n_samples: int,
     limits: RoleLimits,
 ) -> list[TeamConfiguration]:
-    """Draw `n_samples` random (N, A_dev, A_qa, R, F_freeze) candidates.
+    """Draw `n_samples` random (N, A_dev, A_qa, R, F_freeze, f_fix) candidates.
 
     Every draw satisfies `TeamConfiguration`'s structural constraints by construction.
     """
@@ -329,8 +333,9 @@ def _random_draws(
         # would attach coordinates that do not affect the candidate's behaviour.
         A_qa = (_sample_composition(rng, limits, qa=True)
                 if F_freeze > 0 else (0,) * AGENT_ROLE_COUNT)
+        f_fix = float(rng.choice(search_cfg.f_fix_values))
         draws.append(TeamConfiguration(N=N, A_dev=A_dev, R=R,
-                                       F_freeze=F_freeze, A_qa=A_qa))
+                                       F_freeze=F_freeze, A_qa=A_qa, f_fix=f_fix))
     return draws
 
 
@@ -397,6 +402,7 @@ class SearchOutcome:
         entry: dict = {
             "feasible": feasibility.feasible,
             "N": config.N, "R": config.R, "F_freeze": config.F_freeze,
+            "f_fix": config.f_fix, "f_qa": config.f_qa,
             "A_dev": list(config.A_dev),
             "A_qa": list(config.A_qa),
         }
@@ -571,15 +577,19 @@ def run_search(
 def human_only_grid(search_cfg: SearchConfiguration) -> list[TeamConfiguration]:
     """Every zero-agent team in the search range, in a deterministic order.
 
-    With both composition vectors fixed at zero, only `(N, R, F_freeze)` remain free.
+    With both composition vectors fixed at zero, only `(N, R, F_freeze, f_fix, f_qa)`
+    remain free.
     """
     zero = (0,) * AGENT_ROLE_COUNT
     return [
-        TeamConfiguration(N=N, A_dev=zero, R=R, F_freeze=F, A_qa=zero)
+        TeamConfiguration(N=N, A_dev=zero, R=R, F_freeze=F, A_qa=zero,
+                          f_fix=f_fix, f_qa=f_qa)
         for N in search_cfg.N_values
         for R in search_cfg.R_values
         for F in search_cfg.F_freeze_values
         if 0 <= F <= R - 1
+        for f_fix in search_cfg.f_fix_values
+        for f_qa in search_cfg.f_qa_values
     ]
 
 

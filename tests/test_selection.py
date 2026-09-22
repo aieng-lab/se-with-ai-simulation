@@ -221,7 +221,7 @@ def _cfg(N=2.0, R=4, F_freeze=1, A_dev=None, A_qa=None) -> TeamConfiguration:
 class TestParsimonyRelation:
     def test_key_covers_the_process_and_both_phases(self):
         key = parsimony_key(_cfg())
-        assert key.process == (2.0, 4, 1)
+        assert key.process == (2.0, 4, 1, 0.5, 0.0)
         assert len(key.agents) == 16
 
     def test_inert_qa_half_is_zero(self):

@@ -187,11 +187,11 @@ class TestCostAccounting:
             base_params, c_salary=0.0, r_arrival=500.0, delta_min=1.0,
             delta_impl=0.0, delta_fix=0.0, r_refactor=0.0,
             c_token=tuple(1.0 for _ in range(AGENT_ROLE_COUNT)),
-            f_fix=0.0, h_feature=1e9,      # humans implement nothing
+            h_feature=1e9,                 # humans implement nothing
         )
         config = TeamConfiguration(
             N=2, A_dev=(2, 0, 0, 0, 1, 1, 1, 1), R=4, F_freeze=0,
-            A_qa=_NO_QA,
+            A_qa=_NO_QA, f_fix=0.0,
         )
         s = SimulationHorizon(T=5, K_search=1, K_final=1, master_seed=3)
         rep = run_configuration(config, s, params).replications[0]
@@ -239,14 +239,14 @@ class TestCostAccounting:
 
         params = dataclasses.replace(
             base_params, r_arrival=0.0, f_arch_chg=0.0, delta_min=1.0,
-            f_fix=0.0, h_feature=1e9,      # humans implement nothing
+            h_feature=1e9,                 # humans implement nothing
         )
         # floor(r_F * a_1) = 3 * 4 = 12, so at five features per proposal only two fit,
         # and they leave 12 - 10 = 2 features' worth of capacity for the backlog.
         config = TeamConfiguration(
             N=2, A_dev=tuple(4 if k == 0 else 0 for k in range(AGENT_ROLE_COUNT)),
             R=8, F_freeze=0,
-            A_qa=_NO_QA,
+            A_qa=_NO_QA, f_fix=0.0,
         )
         state = SystemState(F_backlog=10, Q_arch_impl=5)
         actions = step_sprint(0, state, config, params, np.random.default_rng(0))

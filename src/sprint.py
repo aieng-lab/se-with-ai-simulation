@@ -176,14 +176,14 @@ def step_sprint(
     human_only = is_human_only(config)
     H_after_qa = H_after_esc
     if human_only:
-        H_after_qa = (1.0 - params.f_qa) * H_after_esc
+        H_after_qa = (1.0 - config.f_qa) * H_after_esc
 
     # f_fix of the remainder goes to bug fixing, the rest to coding; a freeze sprint
     # redirects the coding share to fixing too.
-    H_fix_human = H_after_qa if is_frozen else params.f_fix * H_after_qa
+    H_fix_human = H_after_qa if is_frozen else config.f_fix * H_after_qa
     fix_human_budget = math.floor(H_fix_human * config.N / params.h_fix)
     impl_human = 0 if is_frozen else math.floor(
-        (1.0 - params.f_fix) * H_after_qa * config.N / params.h_feature
+        (1.0 - config.f_fix) * H_after_qa * config.N / params.h_feature
     )
 
     # --- Feature arrival and implementation ----------------------------------
@@ -240,7 +240,7 @@ def step_sprint(
         # A single human review stage, replacing the three agentic ones below.  cov_qa
         # is the share of features the reserved capacity can review in full, and the
         # same detection probability applies to all three severities.
-        cov_qa = min(1.0, params.f_qa * config.N * H_net
+        cov_qa = min(1.0, config.f_qa * config.N * H_net
                           / (params.h_qa * max(1, volume)))
         p_qa = cov_qa * params.d_qa
         det_min = _detect(rng, bugs_min, p_qa)

@@ -24,6 +24,14 @@ class TestConfigHash:
         hashes = [config_hash(c) for c in cfgs]
         assert len(set(hashes)) == len(hashes)
 
+    def test_differs_on_the_effort_shares(self, base_config):
+        import dataclasses
+        from src.config import TeamConfiguration
+        assert config_hash(base_config) != config_hash(dataclasses.replace(base_config, f_fix=0.2))
+        zero = (0,) * len(base_config.A_dev)
+        a = TeamConfiguration(N=2, A_dev=zero, A_qa=zero, R=4, f_qa=0.1)
+        assert config_hash(a) != config_hash(dataclasses.replace(a, f_qa=0.2))
+
     def test_differs_on_R(self, base_config):
         from src.config import TeamConfiguration
         cfg2 = TeamConfiguration(N=base_config.N, A_dev=base_config.A_dev, A_qa=base_config.A_qa, R=2)

@@ -291,6 +291,19 @@ class TestMutation:
         return TeamConfiguration(N=2.0, A_dev=tuple(A_dev), A_qa=tuple(A_qa),
                                  R=4, F_freeze=1)
 
+    def test_f_fix_moves_to_an_adjacent_value(self, search_cfg):
+        cfg = replace(search_cfg, f_fix_values=(0.0, 0.1, 0.2, 0.3))
+        rng = np.random.default_rng(8)
+        parent = replace(self._parent(), f_fix=0.1)
+        moved = set()
+        for _ in range(500):
+            child = _mutate(parent, rng, cfg, WIDE_LIMITS)
+            if child.f_fix != parent.f_fix:
+                assert child.f_fix in (0.0, 0.2)
+                assert (child.N, child.A_dev, child.A_qa) == (parent.N, parent.A_dev, parent.A_qa)
+                moved.add(child.f_fix)
+        assert moved == {0.0, 0.2}
+
     def test_children_are_structurally_valid(self, search_cfg):
         rng = np.random.default_rng(5)
         parent = self._parent()
@@ -528,7 +541,7 @@ class TestHumanOnlyEnumeration:
 
     @staticmethod
     def _full_range_cfg():
-        # The campaign search range, which gives 99 configurations.
+        # The campaign search range, which gives 10,890 configurations.
         return SearchConfiguration(
             scenario_paths={
                 group: f"config/{group}_medium.json" for group in SCENARIO_GROUPS
@@ -538,14 +551,17 @@ class TestHumanOnlyEnumeration:
             N_values=(0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0),
             R_values=(1, 2, 4, 13),
             F_freeze_values=(0, 1, 2),
+            f_fix_values=tuple(i / 10 for i in range(11)),
+            f_qa_values=tuple(i / 10 for i in range(10)),
             seed=7,
         )
 
-    def test_campaign_range_gives_99_configurations(self):
+    def test_campaign_range_gives_10890_configurations(self):
         grid = human_only_grid(self._full_range_cfg())
         # 11 staffing levels x 9 valid (R, F_freeze) pairs: R=1 admits only F=0, R=2
-        # admits {0,1}, and R=4 and R=13 admit all three.
-        assert len(grid) == 99
+        # admits {0,1}, and R=4 and R=13 admit all three; x 11 f_fix x 10 f_qa.
+        assert len(grid) == 99 * 11 * 10
+        assert len({(c.N, c.R, c.F_freeze, c.f_fix, c.f_qa) for c in grid}) == len(grid)
 
     def test_every_candidate_is_a_zero_agent_team(self, search_cfg):
         zero = (0,) * AGENT_ROLE_COUNT

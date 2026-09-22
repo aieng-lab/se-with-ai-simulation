@@ -64,6 +64,7 @@ class TestSaveLoadResult:
     def test_load_wrong_A_length_raises(self, tmp_path):
         import json
         bad = {"config": {"N": 1, "A_dev": [1] * 5, "R": 1, "F_freeze": 0,
+                          "f_fix": 0.5, "f_qa": 0.0,
                           "A_qa": []},
                "replications": [], "aggregated": {
                    "value_mean": 0, "value_ci": [0, 0],

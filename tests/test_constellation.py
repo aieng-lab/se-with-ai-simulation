@@ -42,7 +42,7 @@ _BASELINE_SID = "h-m_p-m_d-X_a-X_b-m"
 def _objective(A_dev, A_qa=(0,) * AGENT_ROLE_COUNT, N=2.0, R=4, F_freeze=1,
                cost=1000.0) -> dict:
     return {
-        "N": N, "R": R, "F_freeze": F_freeze,
+        "N": N, "R": R, "F_freeze": F_freeze, "f_fix": 0.5, "f_qa": 0.0,
         "A_dev": list(A_dev), "A_qa": list(A_qa),
         "cost_mean": cost, "cost_ci": [cost * 0.9, cost * 1.1],
         "value_mean": 12.0, "value_ci": [11.9, 12.1],

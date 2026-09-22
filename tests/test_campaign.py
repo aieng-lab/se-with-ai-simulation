@@ -66,7 +66,7 @@ _SID = "h-m_p-m_d-m_a-m_b-m"
 
 def _objective(cost=1000.0, value=12.0, admissible=True) -> dict:
     return {
-        "N": 2.0, "R": 4, "F_freeze": 1,
+        "N": 2.0, "R": 4, "F_freeze": 1, "f_fix": 0.5, "f_qa": 0.0,
         "A_dev": [2, 0, 1, 1, 3, 0, 1, 0],
         "A_qa": [0, 0, 2, 1, 1, 0, 1, 0],
         "cost_mean": cost, "cost_ci": [cost * 0.9, cost * 1.1],
@@ -286,12 +286,12 @@ class TestBuildTables:
 
 class TestTeamConfig:
     def test_rebuilds_the_configuration_from_a_row(self):
-        row = {"N": 2.0, "R": 4, "F_freeze": 1}
+        row = {"N": 2.0, "R": 4, "F_freeze": 1, "f_fix": 0.3, "f_qa": 0.0}
         for k in range(AGENT_ROLE_COUNT):
             row[f"a_dev_{k + 1}"] = 1 if k == 0 else 0
             row[f"a_qa_{k + 1}"] = 1 if k == 2 else 0
         cfg = team_config(row)
-        assert cfg.N == 2.0 and cfg.R == 4 and cfg.F_freeze == 1
+        assert cfg.N == 2.0 and cfg.R == 4 and cfg.F_freeze == 1 and cfg.f_fix == 0.3
         assert cfg.A_dev[0] == 1 and cfg.A_qa[2] == 1
 
 

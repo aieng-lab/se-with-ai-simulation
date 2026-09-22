@@ -123,6 +123,8 @@ def load_scenario_params(group_paths: Mapping[str, str | Path]) -> ScenarioParam
 # The optional `search` keys and the cast each takes.  
 _SEARCH_FIELDS: dict = {
     "F_freeze_values": lambda v: tuple(int(x) for x in v),
+    "f_fix_values": lambda v: tuple(float(x) for x in v),
+    "f_qa_values": lambda v: tuple(float(x) for x in v),
     "sigma": float,
     "epsilon": float,
     "budget": int,

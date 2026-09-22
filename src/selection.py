@@ -161,18 +161,18 @@ def best_index(aggs: Sequence[AggregatedObjectives], floor: float) -> int | None
 class ParsimonyKey:
     """Comparison key for teams.
 
-    `process` is (N, R, F_freeze) and must match exactly for two candidates to be
+    `process` is (N, R, F_freeze, f_fix, f_qa) and must match exactly for two candidates to be
     comparable.  `agents` concatenates A_dev and A_qa, so both phases are covered.
     """
 
-    process: tuple[float, int, int]
+    process: tuple[float, int, int, float, float]
     agents: tuple[int, ...]
 
 
 def parsimony_key(config: TeamConfiguration) -> ParsimonyKey:
     """Build the ParsimonyKey of a configuration."""
     return ParsimonyKey(
-        process=(config.N, config.R, config.F_freeze),
+        process=(config.N, config.R, config.F_freeze, config.f_fix, config.f_qa),
         agents=tuple(config.A_dev) + tuple(config.A_qa),
     )
 
