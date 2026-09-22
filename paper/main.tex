@@ -108,7 +108,7 @@ where $S(0)$ is the fixed initial state (before any sprint executes) and
 $S(t)$ for $t \geq 1$ is the state produced by sprint $t$. The simulation
 horizon is $T$. The simulation configuration is defined by the team composition and process parameters 
 $\mathbf{c} = (N, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze})$. The parameters
-$N$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Sections~\ref{sec:model:roles} and~\ref{sec:model:team}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 21-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
+$N$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Sections~\ref{sec:model:roles} and~\ref{sec:model:team}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 22-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
 
 We derive the metrics that describe how well a team configuration performs from the terminal state and the per-sprint record of the work the agents completed (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We require that a configuration keeps up with the work the project generates while minimizing costs to formulate this as a search problem (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not only report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe the search strategy we use to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
 
@@ -233,13 +233,13 @@ For $F_\mathrm{freeze} \geq 1$, $\mathbf{A}_\mathrm{qa}$ is required to have $a_
 \subsection{State Space}
 \label{sec:model:state}
 
-$S(t)$ denotes the 21-component system state produced by sprint $t$ (for $t \geq 1$); $S(0)$ is the fixed initial state. The components fall into four
-clusters summarized in Table~\ref{tab:state}: two variables that describe the features in the backlog and completed; twelve variables that track bugs in their various stages; five variables that track technical debt and human capacity queues; and two variables that track test infrastructure and documentation coverage.
+$S(t)$ denotes the 22-component system state produced by sprint $t$ (for $t \geq 1$); $S(0)$ is the fixed initial state. The components fall into four
+clusters summarized in Table~\ref{tab:state}: three variables that describe the features in the backlog, completed, and implemented in the current release cycle; twelve variables that track bugs in their various stages; five variables that track technical debt and human capacity queues; and two variables that track test infrastructure and documentation coverage.
 
 \subsubsection{Feature pipeline}
 $F_\mathrm{backlog}(t) \in \mathbb{N}_{\geq 0}$ counts features awaiting
 implementation after sprint $t$ completed. Within each sprint, this queue grows governed by the configuration parameters (see Section~\ref{sec:model:parameters}), while the \textit{Feature Implementation Agents} and the
-direct coding capacity of \textit{Human Developers} reduce the value of pending features by implementing them and thereby growing the monotonically increasing cumulative count of fully implemented features $F_\mathrm{completed}(t) \in \mathbb{N}_{\geq 0}$.
+direct coding capacity of \textit{Human Developers} reduce the value of pending features by implementing them and thereby growing the monotonically increasing cumulative count of fully implemented features $F_\mathrm{completed}(t) \in \mathbb{N}_{\geq 0}$. $F_\mathrm{cycle}(t) \in \mathbb{N}_{\geq 0}$ counts the features implemented since the last release.
 
 \subsubsection{Bug queues}
 
@@ -299,6 +299,7 @@ Symbol & Description & Domain & Modified (step) \\
 \midrule
 $F_\mathrm{backlog}(t)$     & Features awaiting implementation                      & $\mathbb{N}_{\geq 0}$  & 3 \\[2pt]
 $F_\mathrm{completed}(t)$   & Cumulative features shipped            & $\mathbb{N}_{\geq 0}$  & 3 \\[2pt]
+$F_\mathrm{cycle}(t)$       & Features implemented in the current release cycle & $\mathbb{N}_{\geq 0}$  & 3, 10 \\[2pt]
 \midrule
 $B_\mathrm{hid,min}(t)$     & Hidden minor bugs in the current release cycle           & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
 $B_\mathrm{hid,maj}(t)$     & Hidden major bugs in the current release cycle          & $\mathbb{N}_{\geq 0}$  & 5, 10 \\[2pt]
@@ -620,8 +621,10 @@ and the state variables are updated as:
 \begin{align}
   F_\mathrm{backlog}(t)   &= F_\mathrm{backlog}(t-1) + \mathrm{arrivals}(t) - \mathrm{impl}(t),
     \label{eq:backlog_update} \\
-  F_\mathrm{completed}(t) &= F_\mathrm{completed}(t-1) + \mathrm{impl}(t).
-    \label{eq:completed_update}
+  F_\mathrm{completed}(t) &= F_\mathrm{completed}(t-1) + \mathrm{impl}(t),
+    \label{eq:completed_update} \\
+  F_\mathrm{cycle}(t) &= F_\mathrm{cycle}(t-1) + \mathrm{impl}(t).
+    \label{eq:cycle_update}
 \end{align}
 
 \subsubsection*{Step 4 --- Test Suite Update}
@@ -681,13 +684,33 @@ where $\theta_\mathrm{min} = 1 - \theta_\mathrm{maj} - \theta_\mathrm{sec}$.
 
 Detection proceeds in three sequential stages that model a workflow where first an existing test suite is run against code
 changes (simulating a CI pipeline), then code review is conducted, and finally a security audit is performed by a specialist agent. 
+Which bugs are inspected depends on the phase of the release cycle. During development sprints, the detection inspects the features developed in the current sprint and can hence only detect bugs in those features. The test suite is run first, and the change volume under inspection consists of the features implemented in the sprint. During feature-freeze sprints, the whole code of the current release cycle is re-inspected to detect bugs that are still hidden. This gives us the inspected bugs and the inspected volume as
+\begin{equation}
+  P_x(t) =
+  \begin{cases}
+    B_x(t) & \text{development sprints},\\[2pt]
+    B_\mathrm{hid,x}(t-1) & \text{feature-freeze sprints},
+  \end{cases}
+  \qquad
+  v(t) =
+  \begin{cases}
+    \mathrm{impl}(t) & \text{development sprints},\\[2pt]
+    F_\mathrm{cycle}(t) & \text{feature-freeze sprints},
+  \end{cases}
+  \label{eq:inspected}
+\end{equation}
+for $x \in \{\mathrm{min,maj,sec}\}$.
 
 The test suite detects bugs at rate
 \begin{equation}
-  p_\mathrm{test}(t) = \min\!\bigl(1,\; d_\mathrm{test}\,\mathrm{cov\_test}(t)\bigr),
+  p_\mathrm{test}(t) =
+  \begin{cases}
+    \min\!\bigl(1,\; d_\mathrm{test}\,\mathrm{cov\_test}(t)\bigr) & \text{development sprints},\\[2pt]
+    0 & \text{feature-freeze sprints},
+  \end{cases}
   \label{eq:p_test}
 \end{equation}
-where $\mathrm{cov\_test}(t)$ is given by Eq.~\eqref{eq:coverage}. 
+where $\mathrm{cov\_test}(t)$ is given by Eq.~\eqref{eq:coverage}. The test suite is not re-run during feature freezes, since it already ran against every change when it was implemented.
 
 Within our model, we assume that both agents invest effort that is reasonable to review a single feature in depth. If more features need to be reviewed, the per-feature review effectiveness is reduced. We model this through a degradation function $\Phi$ of the number of features relative to the number of agents. We use a logarithmic transformation to model this as diminishing returns:
 \begin{equation}
@@ -700,23 +723,23 @@ Within our model, we assume that both agents invest effort that is reasonable to
 \end{equation}
 The code review then detects bugs that survive testing at effective rate
 \begin{equation}
-  d_\mathrm{CR,eff}(t) = d_\mathrm{CR}\,\delta_D\,\Phi\bigl(\mathrm{impl}(t),\, a_{\cdot,5}\bigr),
+  d_\mathrm{CR,eff}(t) = d_\mathrm{CR}\,\delta_D\,\Phi\bigl(v(t),\, a_{\cdot,5}\bigr),
   \label{eq:dcr_eff}
 \end{equation}
 and the Security Audit Agent detects the security bugs that survive both earlier stages at rate
 \begin{equation}
-  d_\mathrm{SA,eff}(t) = d_\mathrm{SA}\,\delta_D\,\Phi\bigl(\mathrm{impl}(t),\, a_{\cdot,6}\bigr).
+  d_\mathrm{SA,eff}(t) = d_\mathrm{SA}\,\delta_D\,\Phi\bigl(v(t),\, a_{\cdot,6}\bigr).
   \label{eq:dsa_eff}
 \end{equation}
 
 Let $T_x(t)$, $\mathrm{CR}_x(t)$ denote the counts detected by tests and code review for type
 $x$, and $A_\mathrm{sec}(t)$ the count detected by the security audit. These are given by binomial draws with the corresponding detection probabilities:
 \begin{align}
-  T_x(t)        &\sim \mathrm{Binomial}\!\bigl(B_x(t),\; p_\mathrm{test}(t)\bigr),
+  T_x(t)        &\sim \mathrm{Binomial}\!\bigl(P_x(t),\; p_\mathrm{test}(t)\bigr),
     & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  \mathrm{CR}_x(t)  &\sim \mathrm{Binomial}\!\bigl(B_x(t)-T_x(t),\; d_\mathrm{CR,eff}(t)\bigr),
+  \mathrm{CR}_x(t)  &\sim \mathrm{Binomial}\!\bigl(P_x(t)-T_x(t),\; d_\mathrm{CR,eff}(t)\bigr),
     & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  A_\mathrm{sec}(t) &\sim \mathrm{Binomial}\!\bigl(B_\mathrm{sec}(t)-T_\mathrm{sec}(t)-\mathrm{CR}_\mathrm{sec}(t),\; d_\mathrm{SA,eff}(t)\bigr).
+  A_\mathrm{sec}(t) &\sim \mathrm{Binomial}\!\bigl(P_\mathrm{sec}(t)-T_\mathrm{sec}(t)-\mathrm{CR}_\mathrm{sec}(t),\; d_\mathrm{SA,eff}(t)\bigr).
     \nonumber
 \end{align}
 The known and hidden queues are incremented accordingly:
@@ -873,7 +896,7 @@ sprint (see Eq.~\eqref{eq:doc_cov}).
 If $t \bmod R = 0$, a release fires: all bugs remaining in the hidden and known queues
 escape to production: bugs that were never detected as well as bugs that were detected but not fixed before the release deadline.
 These bugs are added to the cumulative escaped counter
-and to the in-production repair queue. Afterwards, the hidden and known queues are reset to zero:
+and to the in-production repair queue. Afterwards, the hidden and known queues are reset to zero, and a new release cycle starts:
 \begin{align}
   B_\mathrm{esc,x}(t)  &= B_\mathrm{esc,x}(t-1) + B_\mathrm{hid,x}(t) + B_\mathrm{kno,x}(t),
     & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
@@ -882,7 +905,8 @@ and to the in-production repair queue. Afterwards, the hidden and known queues a
   B_\mathrm{hid,x}(t)  &= 0,
     & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
   B_\mathrm{kno,x}(t)  &= 0,
-    & x &\in \{\mathrm{min,maj,sec}\}.
+    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
+  F_\mathrm{cycle}(t) &= 0.
   \label{eq:release_update}
 \end{align}
 The $B_\mathrm{rel,x}$ rows use the unindexed $t$ form on the right because the
@@ -1200,6 +1224,7 @@ The simulation model is built with the intent to be able to analyze cost tradeof
   \item We use fixed efforts and costs for all features and bugs. An alternative would be to sample required efforts and costs, similar to how we sample feature arrival rates. However, the expected rates should converge to the average that we use, if simulations run sufficiently long. Thus, this is rather important to estimate short-term uncertainty and not long-term effects, which is why we opted against this additional complexity and only randomize the number of features that are arriving and the bug introduction rates. 
   \item Related to the above, we also do not increase development costs for larger systems, e.g., as a factor of features already implemented. This simplification makes the estimation of cost parameters easier, but means that we have to assume an average cost over time, which might underestimate costs for larger systems over time. However, assuming that this affects human costs and agent costs similarly, this should only have a small effect on our results. 
   \item Our simplification that human effort is debt-independent simplifies the model greatly, because otherwise we would also have to model test generation and technical debt reduction for human developers, including a possibly complex model of how human developers allocate their time between these activities and the development activities feature implementation and bug fixes. We believe that this simplification is reasonable, because the human effort estimates that we use already include the work of coping with the complexity of an existing code base. However, this does not paint a fully realistic picture of how technical debt also slows down human developers over time. 
+  \item We implicitly assume that the re-inspection of the code during a feature freeze is independent of the inspections conducted when the features were implemented, i.e., bugs missed by the code review or security audit before have the same chance of being detected during the freeze as newly injected bugs. This is an optimistic assumption, since a reviewer that missed a bug once is likely to miss it again. However, given the stochastic nature of LLMs and the possibility to use different LLMs for different inspection phases, this assumption is not completely unreasonable. Furthermore, the alternative would be to estimate how much the detection probability is reduced with repeated reviews, for which - to the best of our knowledge - no data is available.
 \end{itemize}
 
 
@@ -1216,25 +1241,21 @@ An important baseline to understand the impact of agents on software development
 
 However, we need to slightly modify the simulation model to facilitate this, since we modeled the debt removal and bug detection as purely agentic tasks. We use a simplified model without debt dynamics for the human-only case, built on the assumption that some debt-removal and architecture updates are performed as part of the normal development process by the human developers. To facilitate bug detection, we reserve $f_\mathrm{qa} \in [0,1)$ of the developers' net capacity for quality assurance:
 \begin{equation}
-  H_\mathrm{after\_qa}(t) =
-  \begin{cases}
-    (1 - f_\mathrm{qa})\,H_\mathrm{net} & \text{development sprints},\\[2pt]
-    H_\mathrm{net}                      & \text{feature-freeze sprints}.
-  \end{cases}
+  H_\mathrm{after\_qa}(t) = (1 - f_\mathrm{qa})\,H_\mathrm{net}.
   \label{eq:hafter_qa}
 \end{equation}
-The time $H_\mathrm{after\_qa}(t)$ is then used in place of $H_\mathrm{after\_esc}(t)$ in the implementation and bug-fixing equations. Feature-freeze sprints are exempt from the reservation because no features are implemented in them, so there is nothing to review. From a modeling perspective, this means that the developers rather spend time on quality assurance, instead of supervising agents.
+The time $H_\mathrm{after\_qa}(t)$ is then used in place of $H_\mathrm{after\_esc}(t)$ in the implementation and bug-fixing equations. From a modeling perspective, this means that the developers rather spend time on quality assurance, instead of supervising agents.
 
-The detection itself is implemented as a variant of the agent-driven detection which replaces the bug detection in Step~5. We match the reserved capacity $f_\mathrm{qa}\,N\,H_\mathrm{net}$ against the review effort the sprint demands, i.e., $h_\mathrm{qa}$ hours for each of the $\mathrm{impl}(t)$ features implemented in it (Eq.~\eqref{eq:impl}). This gives us the review coverage
+The detection itself is implemented as a variant of the agent-driven detection which replaces the bug detection in Step~5. We match the reserved capacity $f_\mathrm{qa}\,N\,H_\mathrm{net}$ against the review effort the sprint demands, i.e., $h_\mathrm{qa}$ hours for each of the $v(t)$ features under inspection (Eq.~\eqref{eq:inspected}), i.e., the features implemented in a development sprint and all features of the current release cycle in a feature-freeze sprint. This gives us the review coverage
 \begin{equation}
   \mathrm{cov\_qa}(t) = \min\!\Bigl(1,\;
     \frac{f_\mathrm{qa}\,N\,H_\mathrm{net}}
-         {h_\mathrm{qa}\,\max(1,\,\mathrm{impl}(t))}\Bigr),
+         {h_\mathrm{qa}\,\max(1,\,v(t))}\Bigr),
   \label{eq:cov_qa}
 \end{equation}
-i.e., the fraction of the implemented features that can be reviewed in full, which is similar to the volume factor $\Phi$ we use for agentic review in Eq.~\eqref{eq:volume_factor}. With a human bug detection capability factor $d_\mathrm{qa}$, the rate of bug detection is then
+i.e., the fraction of the inspected features that can be reviewed in full, which is similar to the volume factor $\Phi$ we use for agentic review in Eq.~\eqref{eq:volume_factor}. With a human bug detection capability factor $d_\mathrm{qa}$, the rate of bug detection is then
 \begin{equation}
-  \mathrm{QA}_x(t) \sim \mathrm{Binomial}\!\bigl(B_x(t),\; \mathrm{cov\_qa}(t)\,d_\mathrm{qa}\bigr),
+  \mathrm{QA}_x(t) \sim \mathrm{Binomial}\!\bigl(P_x(t),\; \mathrm{cov\_qa}(t)\,d_\mathrm{qa}\bigr),
     x \in \{\mathrm{min,maj,sec}\}.
   \label{eq:qa_human}
 \end{equation}

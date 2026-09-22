@@ -1,4 +1,4 @@
-"""The 21-dimensional system state carried from sprint to sprint."""
+"""The 22-dimensional system state carried from sprint to sprint."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ class SystemState:
 
     F_backlog: int = 0
     F_completed: int = 0
+    F_cycle: int = 0
     B_hid_min: int = 0    # injected but undetected, by severity
     B_hid_maj: int = 0
     B_hid_sec: int = 0

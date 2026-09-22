@@ -822,8 +822,68 @@ class TestHumanBugInjectionIsFixedRate:
 # The human-only baseline
 # ---------------------------------------------------------------------------
 
+class TestFreezeReinspection:
+    """A freeze sprint re-inspects the hidden bugs of the current release cycle."""
+
+    @staticmethod
+    def _freeze(base_params, A_qa, state, **overrides):
+        # R=4, F_freeze=2: t=2 is frozen and no release fires.  delta_min = 1 pins
+        # delta_D at 1, and h_fix / r_fix keep every detected bug in B_kno.
+        p = dataclasses.replace(base_params, delta_min=1.0, h_fix=1e9, r_fix=0.0,
+                                **overrides)
+        A_dev = _A(k1=1) if any(A_qa) else _NO_QA
+        cfg = TeamConfiguration(N=2, A_dev=A_dev, A_qa=A_qa, R=4, F_freeze=2)
+        step_sprint(2, state, cfg, p, np.random.default_rng(31))
+        return state
+
+    @staticmethod
+    def _hidden_cycle(F_cycle=10):
+        return SystemState(F_completed=F_cycle, F_cycle=F_cycle,
+                           B_hid_min=50, B_hid_maj=30, B_hid_sec=20)
+
+    def test_code_review_moves_hidden_bugs_to_known(self, base_params):
+        found = self._freeze(base_params, _A(k5=1), self._hidden_cycle(),
+                             d_CR=1.0, alpha_size=0.0)
+        assert _B_hid(found) == 0
+        assert _B_kno(found) == 100
+
+        unreviewed = self._freeze(base_params, _A(k3=1), self._hidden_cycle(),
+                                  d_CR=1.0, alpha_size=0.0)
+        assert _B_hid(unreviewed) == 100
+        assert _B_kno(unreviewed) == 0
+
+    def test_review_volume_is_the_whole_cycle(self, base_params):
+        # Phi(F_cycle, 1) = max(0, 1 - alpha log(F_cycle + 1)) is 0 for a large cycle.
+        large = self._freeze(base_params, _A(k5=1), self._hidden_cycle(F_cycle=1_000),
+                             d_CR=1.0, alpha_size=0.5)
+        assert _B_kno(large) == 0
+        empty = self._freeze(base_params, _A(k5=1), self._hidden_cycle(F_cycle=0),
+                             d_CR=1.0, alpha_size=0.5)
+        assert _B_kno(empty) == 100
+
+    def test_the_test_suite_is_not_rerun(self, base_params):
+        state = self._hidden_cycle()
+        state.N_test = 10.0
+        state = self._freeze(base_params, _A(k3=1), state, d_test=1.0, c_test_ceil=1.0)
+        assert _B_hid(state) == 100
+
+    def test_human_only_review_covers_the_cycle(self, base_params):
+        state = self._freeze(base_params, _NO_QA, self._hidden_cycle(),
+                             f_qa=0.5, d_qa=1.0, h_qa=0.01)
+        assert _B_hid(state) == 0
+        assert _B_kno(state) == 100
+
+    def test_cycle_counts_implemented_features_until_the_release(self, base_params):
+        cfg = TeamConfiguration(N=2, A_dev=_A(k1=2), A_qa=_NO_QA, R=2, F_freeze=0)
+        state = SystemState(F_backlog=100)
+        step_sprint(0, state, cfg, base_params, np.random.default_rng(32))
+        assert state.F_cycle == state.F_completed > 0
+        step_sprint(1, state, cfg, base_params, np.random.default_rng(33))
+        assert state.F_cycle == 0
+
+
 class TestHumanOnlyCapacityReservation:
-    """f_qa of net capacity is reserved, in dev sprints only."""
+    """f_qa of net capacity is reserved, in every sprint."""
 
     @staticmethod
     def _cfg(F_freeze, N=4):
@@ -843,12 +903,16 @@ class TestHumanOnlyCapacityReservation:
         assert reserved == pytest.approx(full * 0.75, abs=1.0)
         assert reserved < full
 
-    def test_freeze_sprint_reserves_nothing(self, base_params):
-        # R=4, F_freeze=2 -> sprints 2 and 3 of each cycle are frozen.  A freeze sprint
-        # implements nothing and redirects everything to fixing, so f_qa must not bite.
-        free = self._impl_at(base_params, 0.0, t=2, F_freeze=2).fixes_human
-        reserved = self._impl_at(base_params, 0.4, t=2, F_freeze=2).fixes_human
-        assert reserved == free
+    def test_freeze_sprint_also_reserves_f_qa(self, base_params):
+        # R=4, F_freeze=2 -> sprints 2 and 3 of each cycle are frozen.  The freeze review
+        # of the cycle's features is paid out of the fixing budget.
+        def fixes(f_qa):
+            state = SystemState(B_kno_min=5_000)
+            return step_sprint(2, state, self._cfg(2),
+                               dataclasses.replace(base_params, f_qa=f_qa),
+                               np.random.default_rng(5)).fixes_human
+
+        assert fixes(0.4) < fixes(0.0)
 
     def test_dev_sprint_bug_fixing_is_also_reduced(self, base_params):
         # H_after_qa feeds *both* the implementation and the bug-fixing

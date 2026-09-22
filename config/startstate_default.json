@@ -1,6 +1,7 @@
 {
   "F_backlog": 0,
   "F_completed": 0,
+  "F_cycle": 0,
   "B_hid_min": 0,
   "B_hid_maj": 0,
   "B_hid_sec": 0,

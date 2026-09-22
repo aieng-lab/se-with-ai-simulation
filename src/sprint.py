@@ -172,11 +172,10 @@ def step_sprint(
     esc_done = min(math.floor(H_after_rev * config.N / params.H_escalation_time), state.Q_esc)
     H_after_esc = max(0.0, H_after_rev - esc_done * params.H_escalation_time / config.N)
 
-    # A team with no agents reserves f_qa of what is left to review its own work.  Freeze
-    # sprints implement nothing, so there is nothing to review and nothing is reserved.
+    # A team with no agents reserves f_qa of what is left to review its own work.
     human_only = is_human_only(config)
     H_after_qa = H_after_esc
-    if human_only and not is_frozen:
+    if human_only:
         H_after_qa = (1.0 - params.f_qa) * H_after_esc
 
     # f_fix of the remainder goes to bug fixing, the rest to coding; a freeze sprint
@@ -205,6 +204,7 @@ def step_sprint(
     impl = impl_agents + impl_human
     state.F_backlog = max(0, state.F_backlog + arrivals - impl)
     state.F_completed += impl
+    state.F_cycle += impl
 
     # --- Test suite growth, before detection so new tests count now ----------
     # Past the coverage ceiling a further test buys nothing, so the agent (k=7) writes
@@ -229,12 +229,19 @@ def step_sprint(
     bugs_maj = _detect(rng, remaining, theta_maj_cond)
     bugs_min = remaining - bugs_maj
 
+    volume = state.F_cycle if is_frozen else impl
+    if is_frozen:
+        bugs_min += state.B_hid_min
+        bugs_maj += state.B_hid_maj
+        bugs_sec += state.B_hid_sec
+        state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
+
     if human_only:
         # A single human review stage, replacing the three agentic ones below.  cov_qa
         # is the share of features the reserved capacity can review in full, and the
         # same detection probability applies to all three severities.
         cov_qa = min(1.0, params.f_qa * config.N * H_net
-                          / (params.h_qa * max(1, impl)))
+                          / (params.h_qa * max(1, volume)))
         p_qa = cov_qa * params.d_qa
         det_min = _detect(rng, bugs_min, p_qa)
         det_maj = _detect(rng, bugs_maj, p_qa)
@@ -242,7 +249,7 @@ def step_sprint(
     else:
         # Stage 1 — the test suite, acting on all three severities.
         cov_test = min(params.c_test_ceil, state.N_test / max(1, state.F_completed))
-        p_test = min(1.0, params.d_test * cov_test)
+        p_test = 0.0 if is_frozen else min(1.0, params.d_test * cov_test)
         test_det_min = _detect(rng, bugs_min, p_test)
         test_det_maj = _detect(rng, bugs_maj, p_test)
         test_det_sec = _detect(rng, bugs_sec, p_test)
@@ -254,7 +261,7 @@ def step_sprint(
         # Stage 2 — code review, acting on every survivor.  Zero agents means no review
         # happens at all; more agents share the change volume and each degrade less.
         a_CR = A_active[4]   # Code Review Agent (k=5, index 4)
-        d_CR_eff = params.d_CR * delta_D * _volume_factor(impl, a_CR, params.alpha_size)
+        d_CR_eff = params.d_CR * delta_D * _volume_factor(volume, a_CR, params.alpha_size)
         CR_det_min = _detect(rng, surv_min_t, d_CR_eff)
         CR_det_maj = _detect(rng, surv_maj_t, d_CR_eff)
         CR_det_sec = _detect(rng, surv_sec_t, d_CR_eff)
@@ -263,15 +270,14 @@ def step_sprint(
 
         # Stage 3 — security audit, on the security bugs that survived stages 1 and 2.
         a_SA = A_active[5]   # Security Audit Agent (k=6, index 5)
-        d_SA_eff = params.d_SA * delta_D * _volume_factor(impl, a_SA, params.alpha_size)
+        d_SA_eff = params.d_SA * delta_D * _volume_factor(volume, a_SA, params.alpha_size)
         SA_det_sec = _detect(rng, surv_sec_cr, d_SA_eff)
 
         det_min = test_det_min + CR_det_min
         det_maj = test_det_maj + CR_det_maj
         det_sec = test_det_sec + CR_det_sec + SA_det_sec
 
-    # Detected bugs join the known queues, the rest the hidden ones.  The draws above
-    # ran over this sprint's injections only, not over the standing hidden queue.
+    # Detected bugs join the known queues, the rest the hidden ones.
     state.B_kno_min += det_min
     state.B_kno_maj += det_maj
     state.B_kno_sec += det_sec
@@ -333,6 +339,7 @@ def step_sprint(
         state.B_rel_sec += escaped_sec
         state.B_hid_min = state.B_hid_maj = state.B_hid_sec = 0
         state.B_kno_min = state.B_kno_maj = state.B_kno_sec = 0
+        state.F_cycle = 0
 
     # --- Billable work completed this sprint, by role ---------------------------
     # Roles 1-3 and 7-8 bill for what they produced, so one that no work reached bills
