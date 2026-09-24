@@ -2,8 +2,8 @@
 
 `src.campaign` answers what an optimum costs; this module answers what it is made of.  It
 reduces the campaign to a mean and a standard deviation of every control variable — the
-staffing level `N`, the release process `(R, F_freeze)` and the two 8-element composition
-vectors — within each cell of the `CELL_GROUPS` tier grid.  The scenario groups outside
+staffing level `N`, the release process `(R, F_freeze)`, the bug-fixing share `f_fix` and
+the two 8-element composition vectors — within each cell of the `CELL_GROUPS` tier grid.  The scenario groups outside
 that grid are free within a cell and become its spread.  Teams with no agents are excluded
 throughout: they have no composition to describe.
 
@@ -61,9 +61,9 @@ CELL_GROUPS: tuple[str, str] = ("project", "bugimpact")
 #: The scenario group the role statistics are additionally split by.
 ROLE_SPLIT_GROUP: str = "agent"
 
-#: The control variables in four blocks: the process triple, the two composition vectors
+#: The control variables in four blocks: the process controls, the two composition vectors
 #: one column per role, and the totals derived here.
-PROCESS_PARAMETERS: tuple[str, ...] = ("N", "R", "F_freeze")
+PROCESS_PARAMETERS: tuple[str, ...] = ("N", "R", "F_freeze", "f_fix")
 TOTAL_PARAMETERS: tuple[str, ...] = (
     "n_agents_dev", "n_agents_qa", "n_sup_dev", "n_sup_qa")
 
@@ -429,16 +429,21 @@ def process_usage(optima: pd.DataFrame) -> pd.DataFrame:
          "share": float((optima["R"] == cadence).mean()), "n": n}
         for cadence in sorted(optima["R"].unique())
     ]
+    rows.extend(
+        {"quantity": "f_fix", "value": share,
+         "share": float((optima["f_fix"] == share).mean()), "n": n}
+        for share in sorted(optima["f_fix"].unique())
+    )
     rows.append({"quantity": "F_freeze", "value": 0,
                  "share": float((optima["F_freeze"] == 0).mean()), "n": n})
     return pd.DataFrame(rows)
 
 
 def istar_process_diversity(istar: pd.DataFrame) -> pd.DataFrame:
-    """Per search, how many distinct `(N, R, F_freeze)` triples its `I*` spans.
+    """Per search, how many distinct `(N, R, F_freeze, f_fix)` tuples its `I*` spans.
 
     A reported optimum is one member of a statistical tie, so `R` or `N` being unique across
-    the set means the tie agrees on it, and the triple count says how much of the process grid
+    the set means the tie agrees on it, and the tuple count says how much of the process grid
     it covers.
     """
     if istar.empty:
@@ -539,10 +544,12 @@ def process_summary(table: pd.DataFrame) -> str:
     process = table[table["section"] == "process"]
     if not process.empty:
         lines.append("")
-        lines.append("  The release process")
+        lines.append("  The release process and the bug-fixing share")
         for _, row in process.iterrows():
             if row["quantity"] == "R":
                 lines.append(f"    R = {int(row['value']):<24}{row['share']:>7.1%}")
+            elif row["quantity"] == "f_fix":
+                lines.append(f"    f_fix = {row['value']:<20.1f}{row['share']:>7.1%}")
             else:
                 lines.append(f"    {'no feature freeze':<28}{row['share']:>7.1%}")
 
@@ -551,7 +558,7 @@ def process_summary(table: pd.DataFrame) -> str:
         stats = istar.set_index("quantity")
         lines.append("")
         lines.append(f"  Process spread within I* ({int(istar['n'].iloc[0])} searches)")
-        lines.append(f"    {'distinct (N, R, F) triples':<28}"
+        lines.append(f"    {'distinct (N, R, F, f_fix)':<28}"
                      f"{stats.loc['n_triples_median', 'value']:>7.0f} (median)")
         lines.append(f"    {'R unique across the set':<28}"
                      f"{stats.loc['R_unique', 'share']:>7.1%}")

@@ -1062,13 +1062,14 @@ class _Quantity(NamedTuple):
     formatter: Callable[[float, int | None], str] | None = None
 
 
-#: The quantities the driver figure summarises, one panel each: the three process
+#: The quantities the driver figure summarises, one panel each: the four process
 #: controls, the two agent counts per arriving feature, and the detection split.  Every
 #: panel is linear, including the two that spread over decades.
 _TEAM_QUANTITIES: tuple[_Quantity, ...] = (
     _Quantity("N", "human staffing $N$\n(FTE)"),
     _Quantity("R", "release cycle $R$\n(sprints)"),
     _Quantity("F_freeze", "feature freeze $F_{freeze}$\n(sprints)"),
+    _Quantity("f_fix", "bug-fixing share\n$f_{fix}$", _percent_tick),
     _Quantity("sup_agents_per_feature", "supervised agents\nper arriving feature"),
     _Quantity("aut_agents_per_feature", "autonomous agents\nper arriving feature"),
     _Quantity("security_share", "Security's share of\nthe detection pair", _percent_tick),

@@ -276,9 +276,9 @@ class TestLoadSearchConfig:
         assert cfg.F_freeze_values == (0, 1, 2)
         assert cfg.sigma == 2.0
         assert cfg.epsilon == 0.02
-        assert cfg.budget == 10_000
-        assert cfg.n_samples_initial == 1_000
-        assert cfg.n_generations * cfg.n_offspring == 9_000
+        assert cfg.budget == 20_000
+        assert cfg.n_samples_initial == 2_000
+        assert cfg.n_generations * cfg.n_offspring == 18_000
         assert cfg.n_samples_initial + cfg.n_generations * cfg.n_offspring == cfg.budget
         assert cfg.n_elite == 100
         assert cfg.samples == "best"

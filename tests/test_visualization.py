@@ -665,10 +665,11 @@ def _summary_optima(modes: tuple[str, ...] = ("search",)) -> pd.DataFrame:
     df["a_dev_1"] = 1
     df["N"] = df["tier_agent"].map(
         {"low": 6.0, "medium": 1.0, "high": 0.5, "pessimistic": 7.0})
-    # The two process controls the driver figure reports beside `N`.  `F_freeze` reaches 0,
+    # The three process controls the driver figure reports beside `N`.  `F_freeze` reaches 0,
     # as it does in 69 % of the real optima, so its panel must stay off a log axis.
     df["R"] = df["tier_debt"].map({"low": 1, "medium": 4, "high": 13})
     df["F_freeze"] = df["tier_human"].map({"low": 0, "medium": 1, "high": 2})
+    df["f_fix"] = df["tier_bugimpact"].map({"low": 0.2, "medium": 0.5, "high": 0.9})
     df["r_arrival"] = df["tier_project"].map(
         {"low": 3.0, "medium": 12.0, "high": 75.0, "veryhigh": 1000.0})
     df["value_mean"] = df["r_arrival"] * 0.99

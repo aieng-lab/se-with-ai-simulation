@@ -173,7 +173,7 @@ def _member_frame(records: list[dict]) -> pd.DataFrame:
     for i, record in enumerate(records):
         row = {"scenario_id": record.get("scenario_id", _SID),
                "mode": "search", "config_key": f"k{i}", "is_best": i == 0,
-               "N": 1.0, "R": 4, "F_freeze": 1,
+               "N": 1.0, "R": 4, "F_freeze": 1, "f_fix": 0.5,
                "tier_human": "medium", "tier_project": "medium", "tier_debt": "medium",
                "tier_agent": "medium", "tier_bugimpact": "medium"}
         for k in range(AGENT_ROLE_COUNT):
@@ -423,6 +423,7 @@ def _usage_optima(n: int = 12) -> pd.DataFrame:
             "scenario_id": f"{_SID}_{i}", "mode": "search", "config_key": f"c{i}",
             "n_indistinguishable": 3, "feasible_throughput": True,
             "N": 1.0, "R": 1 if i % 2 == 0 else 13, "F_freeze": 0 if i % 3 else 1,
+            "f_fix": 0.2 if i % 4 else 0.8,
             "cost_agent_mean": 100.0, "cost_human_mean": 50.0,
             "tier_agent": "medium",
         }
@@ -493,6 +494,13 @@ class TestProcessUsage:
         assert cadences["share"].sum() == pytest.approx(1.0)
         assert set(cadences["value"]) == {1, 13}
 
+    def test_the_fix_shares_sum_to_one_over_the_values_used(self):
+        from src.constellation import process_usage
+        process = process_usage(_usage_optima())
+        shares = process[process["quantity"] == "f_fix"]
+        assert shares["share"].sum() == pytest.approx(1.0)
+        assert set(shares["value"]) == {0.2, 0.8}
+
     def test_the_freeze_share_counts_the_optima_without_one(self):
         from src.constellation import process_usage
         optima = _usage_optima(n=12)
@@ -505,22 +513,25 @@ class TestIstarProcessDiversity:
     def test_counts_the_distinct_triples_of_each_set(self):
         from src.constellation import istar_process_diversity
         istar = pd.DataFrame([
-            {"scenario_id": "s1", "mode": "search", "N": 1.0, "R": 1, "F_freeze": 0},
-            {"scenario_id": "s1", "mode": "search", "N": 1.0, "R": 1, "F_freeze": 0},
-            {"scenario_id": "s1", "mode": "search", "N": 2.0, "R": 1, "F_freeze": 0},
-            {"scenario_id": "s2", "mode": "search", "N": 1.0, "R": 4, "F_freeze": 0},
+            {"scenario_id": "s1", "mode": "search", "N": 1.0, "R": 1, "F_freeze": 0, "f_fix": 0.5},
+            {"scenario_id": "s1", "mode": "search", "N": 1.0, "R": 1, "F_freeze": 0, "f_fix": 0.5},
+            {"scenario_id": "s1", "mode": "search", "N": 2.0, "R": 1, "F_freeze": 0, "f_fix": 0.5},
+            {"scenario_id": "s2", "mode": "search", "N": 1.0, "R": 4, "F_freeze": 0, "f_fix": 0.5},
+            {"scenario_id": "s3", "mode": "search", "N": 1.0, "R": 4, "F_freeze": 0, "f_fix": 0.5},
+            {"scenario_id": "s3", "mode": "search", "N": 1.0, "R": 4, "F_freeze": 0, "f_fix": 0.6},
         ])
         diversity = istar_process_diversity(istar).set_index("scenario_id")
         assert diversity.loc["s1", "n_triples"] == 2
         assert diversity.loc["s1", "R_unique"]        # R agrees across the tie
         assert not diversity.loc["s1", "N_unique"]    # N does not
         assert diversity.loc["s2", "n_triples"] == 1
+        assert diversity.loc["s3", "n_triples"] == 2  # f_fix alone separates them
 
     def test_the_human_only_baseline_is_excluded(self):
         from src.constellation import istar_process_diversity
         istar = pd.DataFrame([
             {"scenario_id": "s1", "mode": HUMAN_ONLY_MODE, "N": 1.0, "R": 1,
-             "F_freeze": 0},
+             "F_freeze": 0, "f_fix": 0.5},
         ])
         assert istar_process_diversity(istar).empty
 
@@ -530,7 +541,7 @@ class TestBuildProcessSummary:
         from src.constellation import build_process_summary
         istar = pd.DataFrame([
             {"scenario_id": f"{_SID}_0", "mode": "search", "N": 1.0, "R": 1,
-             "F_freeze": 0},
+             "F_freeze": 0, "f_fix": 0.5},
         ])
         table = build_process_summary(_usage_optima(), istar)
         assert set(table["section"]) == {"role", "process", "istar"}

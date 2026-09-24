@@ -148,7 +148,7 @@ they were the only readers of `config/team_default.json` and `io.load_team_confi
 three deleted).  A bare `python -m src.main` prints the usage and exits 2.  To inspect one
 persisted configuration, read a search's `samples/<key>.json` with `results.load_result`.
 
-**Run a configuration search** (the §4.2 budget of E = 10,000 evaluations at
+**Run a configuration search** (the §4.2 budget of E = 20,000 evaluations at
 `K_search = 100` replications, followed by the re-simulation of the preliminary `I*` at
 `K_final = 1000`, which is outside that budget):
 ```bash
@@ -222,7 +222,8 @@ existed to validate input that only ever took one value.  `--no-figures` is its 
 convergence summary, draw nothing.
 `baseline_uplift.csv` appears whenever the tree holds §4.1 baselines: one row per
 campaign scenario that has a baseline at the same `human`/`project`/
-`bugimpact` tiers, with `cost_ratio = cost_mean(baseline) / cost_mean(c*)`. The join is on
+`bugimpact` tiers, with `cost_ratio = cost_mean(baseline) / cost_mean(c*)` and the baseline's
+process and effort split (`baseline_N/R/F_freeze/f_fix/f_qa`). The join is on
 three groups, not five, because the baseline is inert in `debt` and `agent` — so one
 baseline row is the reference for all 12 of their combinations. It nevertheless carries
 **all five** `tier_*` columns and an `admissible` / `baseline_admissible` pair, because
@@ -242,7 +243,7 @@ the re-simulation and the second tie-break.
 
 `convergence.csv` and `elite_turnover.csv` are the §5.1 reporting, both read from the
 per-search `convergence.json` (a small file beside `manifest.json`, deliberately separate so
-the campaign does not have to parse the manifest's 10,000-entry `configs` block for four
+the campaign does not have to parse the manifest's 20,000-entry `configs` block for four
 scalars). `convergence.csv` is one row per (scenario, mode): `tau_first` / `tau_last` /
 `tau_mean_last_10` and `incumbent_turnover`, the size of `I*` at all four stages
 (`n_prelim` → `n_resimulated` → `n_after_resim` → `n_final`) with `n_discarded_throughput`,
@@ -316,8 +317,8 @@ runs with a non-empty `I*`, of which 21,596 are `search` — and
 `campaign.search_rows` does the mode filtering the cell tables need, so the file
 stays a raw reading of the campaign.
 `constellation_cells.csv` is long — one row per (population, cell, parameter) with `mean`,
-`sd`, `n_scenarios`, `n_members` — over the 23 `CONSTELLATION_PARAMETERS`: the process
-triple, both 8-element composition vectors, and four derived totals. **`sd` is the spread
+`sd`, `n_scenarios`, `n_members` — over the 24 `CONSTELLATION_PARAMETERS`: the four
+process controls `(N, R, F_freeze, f_fix)`, both 8-element composition vectors, and four derived totals. **`sd` is the spread
 across the free scenario groups within the cell, not Monte Carlo error.**
 `constellation_summary.txt` renders the same numbers wide as `mean ± sd`, the way
 `convergence_summary.txt` renders `convergence.csv`.
@@ -333,9 +334,9 @@ which is what empties that whole row of the `A_qa` block to rounding.
 *shares* rather than read off the cell grid: `constellation.build_process_summary` over the
 same 431 admissible search optima. Three sections in one long table — `role` (per role: how
 often it is staffed, and its share of the head count and of the bill, overall and split by
-agent tier), `process` (the share of optima at each `R`, and the share with no feature
-freeze), and `istar` (per search, how many distinct `(N, R, F_freeze)` triples its `I*`
-spans, and how often `R` / `N` is unique across the tie). **Every share is formed within a
+agent tier), `process` (the share of optima at each `R`, at each `f_fix`, and the share with no
+feature freeze), and `istar` (per search, how many distinct `(N, R, F_freeze, f_fix)`
+tuples its `I*` spans — the column is still named `n_triples` — and how often `R` / `N` is unique across the tie). **Every share is formed within a
 scenario before being averaged** — `role_usage` does this deliberately, since the optimal
 team size spans four decades and a ratio of aggregates would report the largest scenario's
 composition rather than the typical one; a test pins that a 1000x scenario does not move the
@@ -480,9 +481,9 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   reported `cost_agent_mean`, which is why the `team` weighting uses those and not
   `bill_k / F_completed`.
 - `team_drivers.png` (`plot_team_drivers`, titled *Impact of scenario on team
-  composition*): one row per (scenario group, tier) on a shared y axis, **six panels**, one
-  per structural quantity in `_TEAM_QUANTITIES` — the three process controls (`N`, `R`,
-  `F_freeze`), the supervised and autonomous agent counts per arriving feature, and
+  composition*): one row per (scenario group, tier) on a shared y axis, **seven panels**, one
+  per structural quantity in `_TEAM_QUANTITIES` — the four process controls (`N`, `R`,
+  `F_freeze`, `f_fix`), the supervised and autonomous agent counts per arriving feature, and
   Security's share of the detection pair. Each row is a median with an interquartile bar.
   A group whose rows sit on top of each other does not move that quantity; one whose rows
   march across it does. The marginal medians are honest **because the campaign is a full
@@ -490,7 +491,7 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   groups, which is what lets five groups share one axis instead of a facet grid apiece.
   Order statistics rather than mean/sd because several of these quantities pile on a search
   boundary — a third of the optima sit at `N`'s floor and a fifth at its ceiling, and
-  `F_freeze` is 0 in 68 % of them. There is **no campaign-median rule**: across six panels
+  `F_freeze` is 0 in 68 % of them. There is **no campaign-median rule**: across seven panels
   it was six more lines of ink for a reference the axis already carries.
   **The agent count is split into supervised and autonomous on purpose** (§3.3): the two
   halves are bounded by different things — the supervised roles by Eq. (feas_monitoring)
@@ -732,7 +733,7 @@ its configuration space is 10,890 points (99 `(N, R, F_freeze)` × 11 `f_fix` ×
 result-tree directory names, the `mode` column of the campaign CSVs and
 `manifest["mode"]` all range over.
 
-- **The search** (§3.11.4) — `n_samples_initial` random draws, then `n_generations` × `n_offspring` mutations. Parents come 80 % from the **elite** (`rank`'s first `n_elite` entries) and 20 % from the remainder; the `seen` set means no configuration is ever charged twice, and the loop stops once `budget` evaluations are spent. §4.2: `budget = 10,000`, 1,000 / 90 / 100 / `n_elite = 100`.
+- **The search** (§3.11.4) — `n_samples_initial` random draws, then `n_generations` × `n_offspring` mutations. Parents come 80 % from the **elite** (`rank`'s first `n_elite` entries) and 20 % from the remainder; the `seen` set means no configuration is ever charged twice, and the loop stops once `budget` evaluations are spent. §4.2: `budget = 20,000`, 2,000 / 180 / 100 / `n_elite = 100`.
 
 `_mutate` perturbs exactly one of `{N, F_freeze, A_dev, A_qa}` (`R` is never mutated), and
 `_mutate_composition` applies one of four elementary operations: add / remove / transfer over

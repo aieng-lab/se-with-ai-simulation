@@ -407,7 +407,8 @@ class TestBaselineUplift:
                 "tier_human": "medium", "tier_project": "medium",
                 "tier_bugimpact": "medium", "tier_debt": "unused",
                 "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
-                "F_freeze": 1, "value_mean": 12.0, "n_indistinguishable": 5}
+                "F_freeze": 1, "f_fix": 0.3, "f_qa": 0.4, "value_mean": 12.0,
+                "n_indistinguishable": 5}
         rows = [base]
         for debt in ("low", "medium", "high"):
             for agent in ("low", "medium", "high", "pessimistic"):
@@ -431,7 +432,8 @@ class TestBaselineUplift:
                 "tier_human": "medium", "tier_project": "medium",
                 "tier_bugimpact": "medium", "tier_debt": "unused",
                 "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
-                "F_freeze": 1, "value_mean": 12.0, "n_indistinguishable": 5}
+                "F_freeze": 1, "f_fix": 0.3, "f_qa": 0.4, "value_mean": 12.0,
+                "n_indistinguishable": 5}
         search = {**base, "mode": "search", "scenario_id": "h-m_p-m_d-h_a-p_b-m",
                   "tier_debt": "high", "tier_agent": "pessimistic",
                   "cost_mean": 200.0, "n_indistinguishable": 3}
@@ -439,6 +441,21 @@ class TestBaselineUplift:
         row = uplift.iloc[0]
         assert row["tier_agent"] == "pessimistic" and row["tier_debt"] == "high"
         assert bool(row["admissible"]) and bool(row["baseline_admissible"])
+
+    def test_it_carries_the_baseline_effort_split(self):
+        import pandas as pd
+
+        base = {"mode": "human_only", "scenario_id": _BASELINE_SID,
+                "tier_human": "medium", "tier_project": "medium",
+                "tier_bugimpact": "medium", "tier_debt": "unused",
+                "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
+                "F_freeze": 1, "f_fix": 0.3, "f_qa": 0.4, "value_mean": 12.0,
+                "n_indistinguishable": 5}
+        search = {**base, "mode": "search", "scenario_id": "h-m_p-m_d-h_a-p_b-m",
+                  "tier_debt": "high", "tier_agent": "pessimistic",
+                  "f_fix": 0.7, "f_qa": 0.0}
+        row = baseline_uplift(pd.DataFrame([base, search])).iloc[0]
+        assert row["baseline_f_fix"] == 0.3 and row["baseline_f_qa"] == 0.4
 
     def test_an_inadmissible_side_is_flagged_but_kept(self):
         """An empty I* marks the run inadmissible, but the row still lands.
@@ -452,7 +469,8 @@ class TestBaselineUplift:
                 "tier_human": "medium", "tier_project": "medium",
                 "tier_bugimpact": "medium", "tier_debt": "unused",
                 "tier_agent": "unused", "cost_mean": 800.0, "N": 2.0, "R": 4,
-                "F_freeze": 1, "value_mean": 3.0, "n_indistinguishable": 0}
+                "F_freeze": 1, "f_fix": 0.3, "f_qa": 0.4, "value_mean": 3.0,
+                "n_indistinguishable": 0}
         search = {**base, "mode": "search", "scenario_id": "h-m_p-m_d-h_a-p_b-m",
                   "tier_debt": "high", "tier_agent": "pessimistic",
                   "cost_mean": 200.0, "n_indistinguishable": 3}

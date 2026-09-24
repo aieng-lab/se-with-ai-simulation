@@ -366,7 +366,8 @@ def baseline_uplift(optima: pd.DataFrame) -> pd.DataFrame:
 
     join = [tier_column(g) for g in BASELINE_VARYING_GROUPS]
     tiers = [tier_column(g) for g in SCENARIO_GROUPS]
-    keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "value_mean",
+    keep = join + ["scenario_id", "cost_mean", "N", "R", "F_freeze", "f_fix", "f_qa",
+                   "value_mean",
                    "n_indistinguishable"]
 
     merged = search.merge(
@@ -381,7 +382,8 @@ def baseline_uplift(optima: pd.DataFrame) -> pd.DataFrame:
     cols = (["scenario_id", "mode"] + tiers
             + ["cost_mean", "baseline_cost_mean", "cost_ratio",
                "admissible", "baseline_admissible", "baseline_scenario_id",
-               "baseline_N", "baseline_R", "baseline_F_freeze", "baseline_value_mean"])
+               "baseline_N", "baseline_R", "baseline_F_freeze",
+               "baseline_f_fix", "baseline_f_qa", "baseline_value_mean"])
     return merged[cols].sort_values(
         ["scenario_id", "mode"]).reset_index(drop=True)
 
