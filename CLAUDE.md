@@ -81,17 +81,17 @@ scripts/
 run_experiments.sh      campaign driver: 432 searches in parallel, resumable (§4.2);
                         MODE=human_only runs the 36 §4.1 baselines instead
 
-tests/                  pytest suite (571 tests, ~75 s — the campaign figures dominate)
+tests/                  pytest suite (576 tests, ~2 min — the campaign figures dominate)
 results/                persisted search and campaign results (not committed)
-    experiments/        the campaign re-run of 2026-08-20: 432 `search` +
-                        36 `human_only` scenario dirs, current as of that date.
+    experiments/        the E = 20,000 campaign finished 2026-09-25: 432 `search` +
+                        36 `human_only` scenario dirs.
                         `index.tsv` per job
     analysis/           the consolidation of it — the CSVs and figures below
 ```
 
-**Stale since 2026-09-22:** the freeze re-inspection (see Key Design Decisions) changed the model after the campaign ran, so `results/`, §5 and every campaign number quoted below predate it until the campaign is rerun. **The §4.2 campaign is complete and §5 is drafted from it in full** (§5.1 convergence,
-§5.2 cost trade-offs, §5.3 composition); §6 Discussion and §7 Conclusion are still empty,
-as is §2. §5 therefore pins the deliverable exactly: **seven figures and two tables**, and
+**The §4.2 campaign is complete and §5 is drafted from it in full** (§5.1 convergence,
+§5.2 cost trade-offs, §5.3 composition); §2 Related Work is drafted; the abstract,
+§6 Discussion and §7 Conclusion are still empty. §5 therefore pins the deliverable exactly: **seven figures and two tables**, and
 nothing else. The seven are `elite_turnover`, `human_agent_matrix`,
 `quality_development_matrix`, `agent_human_ratio_matrix`, `team_drivers`,
 `composition_agent_bill` and `composition_team_bill`; the two tables are the `I*` stage
@@ -181,7 +181,7 @@ Results land in `results/experiments/<scenario_id>/human_only/`, beside `search/
 and `python -m src.main campaign` picks them up automatically.
 
 **Run the full §4.2 campaign** (432 scenarios, one search each; the
-2026-08-20 run took 233 core-hours for the searches plus 55 for the §3.10 re-simulation).
+2026-09-25 run took 440 core-hours for the searches plus 79 for the §3.10 re-simulation).
 The tree on disk is that run; a fresh campaign needs `FORCE=1` (or a cleared
 `results/experiments`) rather than a resume:
 ```bash
@@ -227,10 +227,10 @@ process and effort split (`baseline_N/R/F_freeze/f_fix/f_qa`). The join is on
 three groups, not five, because the baseline is inert in `debt` and `agent` — so one
 baseline row is the reference for all 12 of their combinations. It nevertheless carries
 **all five** `tier_*` columns and an `admissible` / `baseline_admissible` pair, because
-§5.2 reads the comparison *by agent tier* (5.19 / 2.77 / 1.09 / 0.96) and *by debt tier*
-(1.98 → 1.06) over the 227 pairs where both sides are admissible — and those two groups
-are exactly the ones the join keys cannot supply. Without them the file gave 71.3 % /
-1.81 where §5.2 reports 74 % / 1.76 and neither ladder was computable from it at all.
+§5.2 reads the comparison *by agent tier* (6.13 / 3.35 / 1.11 / 0.93) and *by debt tier*
+(3.81 → 1.12) over the 324 pairs where both sides are admissible — and those two groups
+are exactly the ones the join keys cannot supply. Without them the file gives 78.7 % /
+3.81 where §5.2 reports 72 % / 1.93 and neither ladder is computable from it at all.
 `optima.csv` is one row per (scenario, mode) describing `c*` — the `mode` column holds
 `search` or `human_only`: the five control variables, both composition vectors, cost with
 CI, the three drivers in dollars *and* as shares of the total
@@ -257,15 +257,15 @@ early runs fewer than `G` generations, so a wide table would need padding.
 means, since §5.1 expects those distributions to be strongly skewed. It reports the two
 result modes in **separate blocks** and takes the four `I*` stage sizes over the
 `best_admissible` rows only, which is what makes the text file Table (results:topset)
-rather than an approximation of it: pooled over all 468 runs it printed 990 / 180 / 50 /
-34.5 where §5.1 reports 1,068 / 194 / 53 / 37, and 426/468 (91.0 %) where §5.1 reports
-410/431 (95.1 %). The reduction-step totals below the stage sizes stay over *all* runs of
+rather than an approximation of it: pooled over all 468 runs it prints 802 / 299.5 / 69 /
+55 where §5.1 reports 904 / 324 / 75.5 / 62, and 421/468 (90.0 %) where §5.1 reports
+410/432 (94.9 %). The reduction-step totals below the stage sizes stay over *all* runs of
 the mode — an inadmissible search still spends re-simulation effort — except the `c*`
 move rate, whose denominator is the admissible count, since an inadmissible run
 re-simulates a single candidate whose `c*` cannot move.
 
 `multipliers.csv` + `multipliers_summary.txt` are §5.2's Table (results:multipliers):
-`campaign.cost_multipliers` fits an additive model on `log10(cost_mean)` over the **431
+`campaign.cost_multipliers` fits an additive model on `log10(cost_mean)` over the **432
 admissible search optima** (`campaign.admissible_optima` — an inadmissible search has an
 empty `I*`, so `n_indistinguishable == 0` is the marker) with one dummy per tier and no
 interactions. A coefficient exponentiates to a multiplier, so the five groups read as
@@ -273,7 +273,7 @@ independent multipliers on the cost per feature, each relative to the **cheapest
 its own group** — which is why `multiplier` is 1.0 exactly on the reference row and never
 below it. `eta_squared` is the R² of the *single-group* model, i.e. what that group
 explains on its own, and is what orders the summary's rows. On the current campaign the fit
-is R² = 0.983 at a residual sd of 0.14 decades, and it reproduces the paper's table exactly.
+is R² = 0.938 at a residual sd of 0.24 decades, and it reproduces the paper's table exactly.
 
 **Analyse the team constellation** (`src/constellation.py`) — what the optimal teams are
 *made of*, cut along two scenario groups; `campaign` answers what they cost:
@@ -291,7 +291,7 @@ cell table on it alone, so there is nothing to choose.
 **`I*` is `search_summary.json`'s `indistinguishable` key list, *not* its
 `final_objectives` block.** `final_objectives` is the **preliminary** set re-simulated at
 `K_final`, before the stage-2 throughput filter and the second parsimony tie-break of
-§3.10 — in `h-m_p-m_d-m_a-m_b-m` it holds 115 entries against the final 29. The
+§3.10 — in `h-m_p-m_d-m_a-m_b-m` it holds 641 entries against the final 143. The
 members' objective dicts are then *looked up* in
 `final_objectives`. `campaign.optimum_row` already counts the right one into
 `n_indistinguishable`, and `tests/test_constellation.py` pins that the two agree; reading
@@ -300,20 +300,20 @@ rule rejected.
 
 Four tables and three figures land in `results/analysis/`. **Two populations are reported
 separately**: `c_star`, the reported `c*` of each scenario, and `i_star`, the whole
-indistinguishable set — `|I*|` has median 36 and reaches 338, so a `c*`-only table partly
+indistinguishable set — `|I*|` has median 62 and reaches 345, so a `c*`-only table partly
 tabulates an arbitrary pick inside a statistical tie, and the `i_star` table is what says
 whether the pattern survives it (on the current campaign it does, closely). The `i_star`
 statistics are **scenario-balanced**: `scenario_means` reduces each scenario's `I*` to one
 mean vector *first*, so both populations share a unit of observation and an `n` and their
 two `sd` columns are comparable; pooling members instead would let a scenario with
-`|I*| = 338` outweigh one with `|I*| = 7` by 48×. `n_members` keeps the pooled size
+`|I*| = 345` outweigh one with `|I*| = 1` by 345×. `n_members` keeps the pooled size
 visible. The human-only baseline is excluded from both — a zero-agent team has no
 composition to describe — which is also why these figures take no `baseline` overlay.
 
 `indistinguishable.csv` is one row per `I*` member, using `optima.csv`'s column names so
 the two join on `(scenario_id, mode, config_key)`; `is_best` flags `c*`. It is written
-for **every** mode in the tree — 21,946 rows on the current campaign, over the 450 of 468
-runs with a non-empty `I*`, of which 21,596 are `search` — and
+for **every** mode in the tree — 30,661 rows on the current campaign, over the 459 of 468
+runs with a non-empty `I*`, of which 30,421 are `search` — and
 `campaign.search_rows` does the mode filtering the cell tables need, so the file
 stays a raw reading of the campaign.
 `constellation_cells.csv` is long — one row per (population, cell, parameter) with `mean`,
@@ -327,12 +327,12 @@ Two structural zeros the tables cannot distinguish from a choice, and the summar
 says so: `a_qa_1` and `a_qa_2` are 0 by construction (§3.3), and the **whole `A_qa` vector
 is 0 wherever `F_freeze == 0`**, since `TeamConfiguration.__post_init__` canonicalises it
 there — so a zero `A_qa` cell means "no feature freeze", not "a freeze with no agents".
-On the current campaign `F_freeze == 0` in 68 % of optima and in all but one `p-v` one,
-which is what empties that whole row of the `A_qa` block to rounding.
+On the current campaign no optimum has `F_freeze == 0` (428 of 432 use 2), so this zero
+does not occur in the `c*` tables.
 
 `process_summary.csv` + `process_summary.txt` are the §5.3 statistics that are quoted as
 *shares* rather than read off the cell grid: `constellation.build_process_summary` over the
-same 431 admissible search optima. Three sections in one long table — `role` (per role: how
+same 432 admissible search optima. Three sections in one long table — `role` (per role: how
 often it is staffed, and its share of the head count and of the bill, overall and split by
 agent tier), `process` (the share of optima at each `R`, at each `f_fix`, and the share with no
 feature freeze), and `istar` (per search, how many distinct `(N, R, F_freeze, f_fix)`
@@ -341,10 +341,10 @@ scenario before being averaged** — `role_usage` does this deliberately, since 
 team size spans four decades and a ratio of aggregates would report the largest scenario's
 composition rather than the typical one; a test pins that a 1000x scenario does not move the
 means. The head-count and bill shares disagree sharply and that disagreement *is* the result
-(Code Review 69 % of the team, 20 % of the bill; Security 22 % → 46 %; Feature
-Implementation 2 % → 21 %), and is the only place that disagreement is reported — the
+(Code Review 74 % of the team, 24 % of the bill; Security 13 % → 33 %; Feature
+Implementation 4 % → 28 %), and is the only place that disagreement is reported — the
 head-count composition figure that used to draw it has been deleted. The table reproduces every §5.3 percentage
-exactly, including the architecture agent's 52/61/22/21 % staffing split by agent tier.
+exactly, including the architecture agent's 36/48/36/23 % staffing split by agent tier.
 
 The cell table has **no figures of its own.** `plot_constellation_profile` and
 `plot_constellation_heatmap` used to draw it — a per-cell bar chart over the eight roles and
@@ -380,7 +380,7 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   row**, so the same reading extends to a third group. The agent tier earns a panel
   because `team_drivers.png` puts it among the settings that move the team, and because
   pooling it averages teams the model prices an order of magnitude apart —
-  `cost_agent_mean` has median $13.83 at `a-l` and $221.39 at `a-p`. Two to a row rather
+  `cost_agent_mean` has median $10.49 at `a-l` and $196.01 at `a-p`. Two to a row rather
   than four abreast: four is a 19-inch strip, and stacking them keeps the left column's
   rows aligned with the right column's, which is what the panels are read against each
   other on. Every panel carries the same rows — that is what makes them comparable — so
@@ -397,9 +397,9 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   team's choices cost elsewhere. Folding it in would turn a team description into a cost
   breakdown; leaving it out entirely, as the figure did at first, leaves the reader
   without the one number that says whether the bill beside it matters, and usually it does
-  not: the bug column runs **$83 to $517 k per feature** across the cells while the team
-  column stays inside $12 – $3,777. It is therefore rendered by `_compact_dollars`
-  (`$83`, `$851`, `$26.2k`, `$517k`) — five characters, three decades, since the
+  not: the bug column runs **$17 to $86 k per feature** across the cells while the team
+  column stays inside $11 – $2,043. It is therefore rendered by `_compact_dollars`
+  (`$17`, `$851`, `$26k`, `$86k`) — at most five characters, since the
   annotation says which decade the bugs cost in and the bar carries the composition. The
   column appears only where `optima.csv` has `cost_quality_mean`; nothing else needs it.
   `_ANNOTATION_OFFSETS` places both columns in **points** off the bar's end, and the
@@ -422,9 +422,9 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   A share of the head count systematically overstates the three *autonomous* roles: they
   are flat-rate (`r_k = 1`, so `u_k = a_k`), they consume no monitoring capacity, and
   nothing but their own saturation bounds them, so the search stacks them freely. The two
-  views disagree sharply — Code Review is **69 % of the mean optimal team but 20 % of its
-  bill**, Security Audit **22 % → 46 %** (its `c_token` is 10× Review's), and Feature
-  Implementation **2 % → 21 %**, invisible by head count and a fifth of the budget. The
+  views disagree sharply — Code Review is **74 % of the mean optimal team but 24 % of its
+  bill**, Security Audit **13 % → 33 %** (its `c_token` is 10× Review's), and Feature
+  Implementation **4 % → 28 %**, nearly invisible by head count and over a quarter of the budget. The
   bill is what Eq. (cost_rep) actually charges for, so it is the honest unit for "what is
   this team mostly doing", and it is the only one drawn.
   Two head-count renderings are **gone**, and neither should come back. The companion
@@ -434,16 +434,16 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   panels. The `count` weighting itself (`composition_head_count.png`) followed it: no
   subcommand could reach it, it appears in no §5 figure, and the disagreement it drew is
   already **stated numerically** by `constellation.role_usage` in `process_summary.csv`,
-  whose `head count` and `bill` columns are where §5.3's 69/20, 22/46 and 2/21 come from.
+  whose `head count` and `bill` columns are where §5.3's 74/24, 13/33 and 4/28 come from.
 
   What the cost view then states: **Security Audit takes the bill and `bugimpact` is what
-  sets how much of it** — 48 → 69 → 75 % across the `bugimpact` ladder at `a-l`, and
-  12 → 37 → 52 % at `a-h` — paid for out of Feature Implementation and Code Review, with
+  sets how much of it** — 35 → 50 → 60 % across the `bugimpact` ladder at `a-l`, and
+  6 → 23 → 37 % at `a-h` — paid for out of Feature Implementation and Code Review, with
   the ladder repeating near-identically in all four project blocks of every panel. The
   panels are what separate the two effects: the *ladder* is `bugimpact`'s, its *level* is
   the agent tier's, and pooling them (the figure before the panels) reported only their
-  product. Feature Implementation moves the other way, 9 % of the agent bill at `a-l` to
-  33 % at `a-h`: cheaper, better implementers are worth pointing at the work. The
+  product. Feature Implementation moves the other way, 15 % of the agent bill at `a-l` to
+  42 % at `a-h`: cheaper, better implementers are worth pointing at the work. The
   right-hand annotation is `cost_agent_mean` — the reported dollars per feature — not the
   summed bill, so it is in the unit §5 quotes.
 
@@ -460,14 +460,14 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
 
   What it states, now that the agent tier is a panel rather than something averaged over:
   the developer share of the team bill falls **down** the project tiers and **across** the
-  agent tiers, monotonically in both, from 97 % at (`p-l`, `a-l`) to 9 % at (`p-v`, `a-p`)
-  — 97/93/89/79 at `p-l`, 96/81/73/70 at `p-m`, 87/62/48/53 at `p-h`, 56/19/13/9 at `p-v`.
+  agent tiers, monotonically in both, from 97 % at (`p-l`, `a-l`) to 7 % at (`p-v`, `a-p`)
+  — 97/95/91/74 at `p-l`, 95/88/82/64 at `p-m`, 81/59/52/43 at `p-h`, 44/26/14/7 at `p-v`.
   At realistic velocities the optimal team's bill is overwhelmingly salary and only the
   extreme-velocity stress tier flips it to the agents, but *how* overwhelmingly is the
   agent tier's doing: better agents buy headcount down. `a-p` is not a return to `a-l`,
   and the pooled figure made it look like one — those agents have the `a-l` capability at
   10× the price, so they take a *larger* share of the bill than the `a-h` ones do at every
-  project tier but `p-h`. Team cost per feature falls the other way across the project
+  project tier. Team cost per feature falls the other way across the project
   tiers, since `N` is an overhead spread over more features.
 
   The bill columns come from **`constellation.role_bill`**, which the *caller* must apply
@@ -490,13 +490,13 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   factorial**: the scenarios at any one tier are perfectly balanced over the other four
   groups, which is what lets five groups share one axis instead of a facet grid apiece.
   Order statistics rather than mean/sd because several of these quantities pile on a search
-  boundary — a third of the optima sit at `N`'s floor and a fifth at its ceiling, and
-  `F_freeze` is 0 in 68 % of them. There is **no campaign-median rule**: across seven panels
+  boundary — two fifths of the optima sit at `N`'s floor and a seventh at its ceiling, and
+  `F_freeze` is 2 in 428 of 432. There is **no campaign-median rule**: across seven panels
   it was six more lines of ink for a reference the axis already carries.
   **The agent count is split into supervised and autonomous on purpose** (§3.3): the two
   halves are bounded by different things — the supervised roles by Eq. (feas_monitoring)
   and the saturation bounds, an autonomous one by nothing but its own saturation — and they
-  differ by ~40×, so a single "agents per feature" panel is the autonomous count with a
+  differ by ~27×, so a single "agents per feature" panel is the autonomous count with a
   rounding error and says nothing about the constraint. The two panels keep **separate x
   ranges** even though they share a unit: a shared range was tried and puts every
   autonomous row on one tick, destroying the only thing that panel is for. Reading the
@@ -539,7 +539,7 @@ the panel, at the bottom right, because on the top row a title would share its l
 the centred facet heading and `agent = pessimistic` reaches both ends of a narrow panel.
 Stacking two titles is not an option — matplotlib repositions every title on each draw, and
 `pad` is an axes-level offset that moves all of them together. That corner is empty for the
-same reason the 1:1 diagonal is worth drawing: nearly every optimum sits above it. The
+same reason the 1:1 diagonal is worth drawing: most optima sit above it, and none reaches that corner. The
 ratio figure's x label is kept short (`percentile rank of the ratio`) for the same reason —
 at `_MATRIX_FONT["axis"]` the long form ran into the next panel's.
 
@@ -556,14 +556,14 @@ Colour separates the quantities, line style the statistics.  The drop is taken i
 deliberately: relative, since the optima span four decades and a pooled dollar drop would
 picture the scenario grid instead of the search; unsigned and per-generation, so it is a
 rate like `tau_g`.  It still needs **its own log axis** — on the current campaign it runs
-1.0 % → 0.03 %, one to two decades below `tau_g`, and on a shared linear axis it is a flat
+about 2 % → 0.04 %, one to two decades below `tau_g`, and on a shared linear axis it is a flat
 line on zero (that layout was tried and rejected, as was a CI band).  Reading the curves
 together is the point: `tau_g` has a noise floor — candidates indistinguishable at `K'` swap
 ranks inside the elite without any improvement happening — so turnover that persists after
 the drop curve has decayed is exactly that churn.  **The drop has no median curve**, and the
 log axis is why: that median is exactly 0 in every generation of the current campaign, since
-an incumbent moves in a handful of generations and stands still in the rest (44 % of
-searches move at `g = 2`, 7 % at `g = 90`), and a zero has no place on a log axis.  The
+an incumbent moves in a handful of generations and stands still in the rest (33 % of
+searches move at `g = 2`, 8 % at `g = 180`), and a zero has no place on a log axis.  The
 `_drop_label` guard remains for the degenerate search whose incumbent never moves at all: it
 appends "zero throughout — not drawable on a log axis" to the legend entry rather than
 letting matplotlib omit the curve silently.  The title is deliberately plain (`Elite turnover and c* drop per generation`) — the search count is
@@ -573,9 +573,9 @@ figure no longer draws it.
 - `human_agent_matrix.png` (`plot_human_agent_matrix`): the two cost drivers the
   team composition actually controls against each other — x = agent cost, y = developer
   cost, both $ per feature, both log. The two are the same unit, so **both axes carry the
-  same range** (`_common_log_limits` over both columns, $0.62 – $10 k for the current campaign)
+  same range** (`_common_log_limits` over both columns, $0.65 – $6.2 k for the current campaign)
   at an equal aspect, with the 1:1 diagonal drawn: which side of it a point falls on is
-  which driver its optimum spends more on, and almost every optimum sits above it. The
+  which driver its optimum spends more on, and most optima (65 %) sit above it. The
   price is that the agent axis is no longer scaled to its own spread — one decade within a
   column against the four the developer cost spans — so within-column agent differences
   read small, which is their true size. `_draw_matrix`'s `shared_limits` is what does this;
@@ -592,21 +592,21 @@ figure no longer draws it.
   cost_agent_mean`, derived as `cost_team_mean` on a copy inside the plot function —
   the same name and quantity `constellation.role_bill` writes, but **not** in a raw
   `optima.csv`) against the one the composition only influences (y = `cost_quality_mean`).
-  Same unit again, so same treatment as `human_agent_matrix`: shared log range ($5.90 –
-  $1.5 M for the current campaign), equal aspect, 1:1 diagonal. Above the line the escaped
-  bugs cost more than the whole team that built the features, where 93 % of optima sit —
+  Same unit again, so same treatment as `human_agent_matrix`: shared log range ($1.30 –
+  $4.5 M for the current campaign), equal aspect, 1:1 diagonal. Above the line the escaped
+  bugs cost more than the whole team that built the features, where 75 % of optima sit —
   the reason the total-cost picture is mostly a picture of the quality term.
 - `agent_human_ratio_matrix.png` (`plot_agent_human_ratio_matrix`): the
   human/agent trade-off collapsed to one number, y = `cost_agent_mean / cost_human_mean`
-  (log, five decades: 0.003 – 193), against x = **that ratio's percentile rank within the
+  (log, five decades: 0.0045 – 224), against x = **that ratio's percentile rank within the
   frame handed in**, i.e. within the 432 scenarios of one mode, on a linear axis. The panels
   therefore share one empirical distribution and each is a fragment of it: a panel's
   horizontal position says where its scenarios sit campaign-wide, so the reading is which
   part of the axis a panel occupies and how far it spreads vertically — *not* the slope,
   which every ECDF has by construction. Filtering the frame before calling re-ranks what is
-  left, so do not pre-slice it. The dashed line at y = 1 is parity; 31 % of optima are
-  above it, and they are concentrated in the two dearest agent columns (median ratio 0.52 at
-  `a-p` and 0.50 at `a-h`, against 0.035 / 0.228 at the `low` / `medium` agent tiers).
+  left, so do not pre-slice it. The dashed line at y = 1 is parity; 35 % of optima are
+  above it, and they are concentrated in the two dearest agent columns (median ratio 0.73 at
+  `a-p` and 0.30 at `a-h`, against 0.053 / 0.225 at the `low` / `medium` agent tiers).
 
 **Run tests:**
 ```bash
@@ -683,7 +683,7 @@ maximum attainable value and ε absorbs the Poisson arrival noise.
 - **Configuration has 6 control variables**: `(N, A_dev, A_qa, R, F_freeze, f_fix)`, plus `f_qa` for the human-only baseline. `N` = human staffing level, `R` = sprints per release, `F_freeze` = length of feature-freeze period before each release, `f_fix` = share of the developers' coding time spent on bug fixing (the rest implements features). `f_fix` and `f_qa` used to be scenario constants; both are now searched in 10 % steps (`f_fix_values` / `f_qa_values` in the search config, `_mutate` moves `f_fix` to an adjacent value). `f_qa` is read only by a zero-agent team, so `TeamConfiguration` normalises it to 0 whenever `A_dev` is non-zero — the same reasoning as the `A_qa` canonicalisation. There is **no span-of-control variable `M`** — it was removed from the model; how many supervised agents a staffing level can carry follows from the human-capacity condition of §3.6 Eq. (feas_monitoring), not from a separate budget.
 - **`N` is a staffing level in FTE, not a headcount** (paper §3.1): `N ∈ ℝ_{>0}` and may be fractional — `N = 0.25` is one developer investing a day a week, the §4.2 range is `{0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00}` (quarter-FTE up to a two-pizza team; *not* uniform steps). `net_capacity(H_capacity, c_comm, N) = H_capacity − c_comm·⌈N−1⌉` in `src/config.py` is the per-FTE budget after communication — the peer count follows the *headcount* `⌈N⌉`, since a half-time developer is still one person. `H_capacity` and `c_salary` are both per FTE. The float `N` is folded into `rng.config_hash` at 1/100 FTE resolution.
 - **Two 8-element composition vectors**: `A_dev` for development sprints and `A_qa` for feature-freeze (QA) sprints. Neither carries a structural cap on `n_sup` — `TeamConfiguration` deliberately does not check one, because the only collective limit needs the scenario parameters and therefore lives in `src/feasibility.py`. `A_dev` requires `a_dev,1 ≥ 1` (at least one Feature Implementation Agent). `A_qa` requires `a_qa,1 = a_qa,2 = 0` (no Feature Implementation or Architecture agents during freeze).
-- **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`. A freeze sprint injects nothing; Code Review and Security Audit instead re-inspect the standing hidden queues with the volume `Φ(F_cycle, a)`, the test suite is not re-run, and the re-inspection is assumed independent of the first one (a §3.12 limitation marked REVIEW REQUIRED). The human-only baseline reserves `f_qa` in every sprint and matches `cov_qa` against `F_cycle` in a freeze; mixed-team humans do no QA. Development sprints draw exactly as before, so `F_freeze = 0` configurations are bit-identical to the pre-freeze-review model.
+- **Release cycle and feature freeze**: A release fires at sprints R, 2R, 3R, …, escaping all unfixed bugs. The last `F_freeze` sprints of each cycle use `A_qa`; remaining sprints use `A_dev`. A freeze sprint injects nothing; Code Review and Security Audit instead re-inspect the standing hidden queues with the volume `Φ(F_cycle, a)`, the test suite is not re-run, and the re-inspection is assumed independent of the first one (an optimistic assumption, stated as a §3.12 limitation). The human-only baseline reserves `f_qa` in every sprint and matches `cov_qa` against `F_cycle` in a freeze; mixed-team humans do no QA. Development sprints draw exactly as before, so `F_freeze = 0` configurations are bit-identical to the pre-freeze-review model.
 - **Roles split into supervised and autonomous** (paper §3.3): `K_sup = {1,2,3,7,8}` (`SUPERVISED_ROLE_INDICES = (0,1,2,6,7)`) and `K_aut = {4,5,6}` (`AUTONOMOUS_ROLE_INDICES = (3,4,5)`). Only `K_sup` enters `n_sup` and therefore Eq. (feas_monitoring); the two detection services and, since the paper made refactoring unsupervised, the **Refactoring Agent** consume no monitoring capacity at all. A team can carry any number of role-4 agents without ever failing the feasibility gate.
 - **Supervised roles are additionally capped by throughput saturation** (§3.11.1): `search.saturation_bounds(params, sigma)` returns `ā_k = ⌈σ·λ_k/η_k⌉` per supervised role, where `λ_k` is the steady-state work that reaches the role (all of it derived from `r_arrival`) and `η_k` the throughput one agent sustains, with the debt amplifier at its floor `delta_min`. `σ` (`SearchConfiguration.sigma`, default and §4.2 value 2) is the headroom for Poisson arrival peaks. Beyond `ā_k` an agent simply has no work, so the search does not spend budget there. Eq. (sat_bound) ranges over `K_sup` only, so **there is no key 3 in the returned dict** — see the refactoring bullet for what bounds role 4 instead.
 - **The three autonomous roles are bounded outside `saturation_bounds`, and differently from each other.** `review_sample_max(params) = ⌊r_arrival⌋` is a *sampling range* for k=5,6 only: nothing caps those two, and `_mutate` may take them past it (this is what makes exhaustive search impossible, §3.11). `refactoring_bound(params) = ⌊r_arrival/2⌋` is `ā_4`, a genuine cap honoured by the sampler **and** by the mutation operator (§3.11.2 step 6, §3.11.4). It is *not* scaled by `σ`, and at the four project tiers it is 1 / 6 / 37 / 500.
