@@ -24,6 +24,7 @@ htmlcov/
 .ruff_cache/
 
 # Simulation results
+results.tar.gz
 results/
 
 # Jupyter
