@@ -58,7 +58,7 @@ TODO: write abstract.
 \label{sec:introduction}
 
 \begin{quote}
-  \textit{If that \$500000 engineer did not consume at least \$250000 worth of tokens, I am going to be deeply alarmed} --- Jensen Huang, CEO of Nvidia (March, 2026).
+  \textit{If that \$500{,}000 engineer did not consume at least \$250{,}000 worth of tokens, I am going to be deeply alarmed} --- Jensen Huang, CEO of Nvidia (March, 2026).
 \end{quote}
 
 Agentic AI systems based on Large Language Models (LLMs) -- hereafter referred to as agents -- have been shown to have strong capabilities in software engineering tasks, including code generation~\citep{TODO}, code review~\citep{TODO}, bug fixing~\citep{TODO}, and test generation~\citep{TODO}. This led to a rapid adoption of these agents in software development teams~\citep{TODO}. Recently, the uncritical adoption and unrestricted use of these agents is being rolled back, not least due to the spiraling costs~\citep{TODO}. Such problems are not unexpected with new technology, where we are still trying to understand all implications of AI-native software development~\citep{hassan2026ainative}. Nevertheless, this raises the question whether Jensen Huang's general estimate that developers should consume at least half of their salary in agent tokens is reasonable, or whether there are better ways to compose human and agent workforces. This is the central research question of this work:
@@ -67,7 +67,7 @@ Agentic AI systems based on Large Language Models (LLMs) -- hereafter referred t
   \item[RQ] How should software development teams compose their human and agent workforce to deliver the work a project demands at the lowest total cost, counting the cost of the developers, the cost of the agents, and the cost of the defects that reach production?
 \end{description}
 
-To answer this question, we develop a simulation model of mixed AI-human software development teams. The core assumption of our process is that the human developers still own the code, take responsibility for the quality, and guide the key design decisions. Agents support the human developers by implementing features, fixing bugs, and providing quality assurance. At the same time, the agents also drain resources from the human developers because they require supervision, need feedback on design decisions, or help resolving issues where they fail autonomously. 
+To answer this question, we develop a simulation model of mixed AI-human software development teams. The core assumption of our process is that the human developers still own the code, take responsibility for the quality, and guide the key design decisions. Agents support the human developers by implementing features, fixing bugs, and providing quality assurance. At the same time, the agents also drain resources from the human developers because they require supervision, need feedback on design decisions, or help resolve issues where they fail autonomously. 
 
 We simulate the development of a software product represented as a stochastic process that evolves over multiple sprints, where each sprint represents a fixed-duration development iteration. Within each sprint, human developers and agents implement features, inadvertently introduce bugs, as well as fix known bugs. Bugs can be detected by code reviews, more expensive audits for security issues, and generated tests. Implementing features can also require changes to the architecture, which are more expensive to implement and require the sign-off by the human developers. Lack of architecture maintenance, code documentation, and refactoring accumulates debt, which can be reduced by agents investing effort in these activities to prevent a slow-down of the development. 
 
@@ -128,7 +128,7 @@ Our simulations show that the cost landscape of agentic software development is 
 %     defects (they let fewer defects escape than low/pessimistic agent teams).
 
 % ============================================================
-\section{Related Work}
+\section{Related work}
 \label{sec:related}
 % ============================================================
 
@@ -138,13 +138,13 @@ To the best of our knowledge, there is no directly related work, i.e., attempts 
 Simulation is a common experimental method to explore how situations evolve, given a model of the underlying system --- in our case the dynamics of software development. \cite{abdelhamid1991dynamics} built the first such model for system dynamics and showed that a simulation based on staffing, schedule pressure, productivity, and defect generation can reproduce the behavior of a real-world project. \cite{kellner1999simulation} clarify that the simulation models serve a specific purpose. For software engineering, discrete-event simulations are the most common approach \citep{zhang2008reflections,garciagarcia2020simulation}, i.e., software is typically considered to be made up of artifacts that are evolved through time-discrete changes instead of through a continuous model, e.g., to simulate agile development~\citep{cao2010agile}. 
 
 Agent-based simulation methods use a similar modeling approach to us. In such methods, agents act on and observe a simulation environment, typically with the goal to achieve some reward. The simulation then defines the types of agents and their behavior, e.g., to model human software developers as agents~\citep{smith2006agentbased}. We note that this usage of the term \textit{agent} differs from the AI agents for software development that we consider here. To avoid confusion, we hereafter rather write actor-based simulation and speak of actors instead, when referring to aspects of agent-based simulation. 
-Actor-based simulation was further explored in the literature, e.g., to simulate developer decisions~\citep{agarwal2010flexible}, or to estimate effort and time required for projects~\citep{spasic2012avl}. \cite{honsel2015mining} suggest to use repository mining to model the behavior of human agents, and demonstrate that parameters estimated with repository mining can lead to accurate simulations of the evolution of open source projects~\citep{honsel2021investigation}. 
+Actor-based simulation was further explored in the literature, e.g., to simulate developer decisions~\citep{agarwal2010flexible}, or to estimate effort and time required for projects~\citep{spasic2012avl}. \cite{honsel2015mining} suggest using repository mining to model the behavior of human actors, and demonstrate that parameters estimated with repository mining can lead to accurate simulations of the evolution of open source projects~\citep{honsel2021investigation}. 
 
 The simulation model we develop is similar to the above, i.e., we have distinct actors with different behavior that drive the evolution of a software system through time-discrete steps and we estimate the behavior of human actors using results from repository mining research. However, none of the above takes AI agents into account, due to which none of the simulation models is directly comparable to our work. This is the gap that our research addresses, i.e., a simulation framework that allows us to model how human developers and AI agents co-evolve software. 
 
 
 % ============================================================
-\section{Model Description}
+\section{Model description}
 \label{sec:model}
 % ============================================================
 
@@ -181,7 +181,7 @@ H_\mathrm{capacity}$ hours per sprint.
 We have eight specialist AI agent roles, indexed $k = 1,\ldots,8$. All agents of the
 same type are assumed to be statistically identical. We further distinguish between agents that
 require supervision and agents that run fully autonomously. The supervised agents consume monitoring capacity from
-the human developers but are otherwise assumed to execute tasks autonomously. Table~\ref{tab:roles} summarizes each AI agent role's primary function. We note that different roles do not mean that there must be different AI systems or agentic frameworks. This separation is rather introduced to enable the simulation to have distinct estimation for the agentic costs and capabilities for different aspects of software development and also to allow the allocation of these costs to optimize quality while minimizing costs. 
+the human developers but are otherwise assumed to execute tasks autonomously. Table~\ref{tab:roles} summarizes each AI agent role's primary function. We note that different roles do not mean that there must be different AI systems or agentic frameworks. This separation is rather introduced to enable the simulation to have distinct estimates for the agentic costs and capabilities for different aspects of software development and also to allow the allocation of these costs to optimize quality while minimizing costs. 
 
 The eight roles fall into three functional groups. The production roles
 ($k = 1,\ldots,4$) all directly contribute to the production code. 
@@ -226,13 +226,13 @@ $k$ & Role & Primary Function \\
 7 & Test Development
   & Writes automated tests and grows test coverage for a continuous integration system to detect bugs \\[2pt]
 8 & Developer Documentation
-  & Produces documentation (e.g., API references, architecture guides, and contributor docs) to aid human developers. \\
+  & Produces documentation (e.g., API references, architecture guides, and contributor docs) to aid human developers \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
 % ---- 3.2 ----
-\subsection{Release Cycle and Feature Freezes}
+\subsection{Release cycle and feature freezes}
 \label{sec:model:cycle}
 
 A release occurs exactly at sprint indices $R, 2R, 3R, \ldots$ where $R \in \mathbb{N}_{\geq 1}$
@@ -276,7 +276,7 @@ For $F_\mathrm{freeze} \geq 1$, $\mathbf{A}_\mathrm{qa}$ is required to have $a_
 
 
 % ---- 3.4 ----
-\subsection{State Space}
+\subsection{State space}
 \label{sec:model:state}
 
 $S(t)$ denotes the 22-component system state produced by sprint $t$ (for $t \geq 1$); $S(0)$ is the fixed initial state. The components fall into four
@@ -293,7 +293,7 @@ Our simulation model distinguishes between three mutually exclusive bug types: \
 kind maintains one counter per type, giving twelve bug state variables in total.
 
 $B_\mathrm{hid,x}(t)$ (for $x \in \{\mathrm{min, maj, sec}\}$) counts type-$x$ bugs
-that have been injected in the current release cycle but not been detected yet.
+that have been injected in the current release cycle but have not been detected yet.
 $B_\mathrm{kno,x}(t)$ counts type-$x$ bugs that have been detected and are queued for
 repair. The separation between hidden and known is load-bearing: fixing capacity is
 consumed only by detected bugs, while hidden bugs silently degrade quality. $B_\mathrm{esc,x}(t) \in \mathbb{N}_{\geq 0}$ is the
@@ -316,7 +316,7 @@ bugs. The status of this test suite is tracked by $N_\mathrm{test}(t)$, which is
 Development Agent. New tests are added every sprint to increase the \emph{test coverage} $\mathrm{cov\_test}$, which is derived from the test count and the number of implemented features as
 \begin{equation}
   \mathrm{cov\_test}(t) = \min\!\left(c_\mathrm{test,ceil},\;
-    \frac{N_\mathrm{test}(t)}{\max\!\bigl(1,\,F_\mathrm{completed}(t)\bigr)}\right),
+    \frac{N_\mathrm{test}(t)}{\max\!\bigl(1,\,F_\mathrm{completed}(t)\bigr)}\right).
   \label{eq:coverage}
 \end{equation}
 Higher coverage increases the likelihood that introduced defects are detected to move bugs from the hidden to the known queues. 
@@ -374,7 +374,7 @@ $N_\mathrm{doc}(t)$         & Cumulative documentation items written; non-decrea
 
 
 % ---- 3.5 ----
-\subsection{Configuration Parameters}
+\subsection{Configuration parameters}
 \label{sec:model:parameters}
 
 The behavior of the agents and the simulation model in each sprint
@@ -443,8 +443,8 @@ $\theta_\mathrm{sec}$           & Share of security bugs among all injected bugs
 \toprule
 Symbol & Description & Domain & Step \\
 \midrule
-$d_\mathrm{CR}$                 & Base Binomial detection probability for Code Review                                    & $[0,1]$               & 5 \\[2pt]
-$d_\mathrm{SA}$                 & Base Binomial detection probability for Security Audit                                 & $[0,1]$               & 5 \\[2pt]
+$d_\mathrm{CR}$                 & Base binomial detection probability for Code Review                                    & $[0,1]$               & 5 \\[2pt]
+$d_\mathrm{SA}$                 & Base binomial detection probability for Security Audit                                 & $[0,1]$               & 5 \\[2pt]
 $d_\mathrm{test}$               & Maximum test detection probability at full coverage                     & $[0,1]$               & 5 \\[2pt]
 $c_\mathrm{test,ceil}$          & Upper bound on test coverage                                                           & $(0,1]$               & 4 \\[2pt]
 $\alpha_\mathrm{size}$          & Detection degradation based on change volume per review/audit agent & $\mathbb{R}_{\geq 0}$ & 5 \\[2pt]
@@ -490,7 +490,7 @@ $\omega_\mathrm{sec}$           & Expected cost of one escaped security bug     
 \end{table}
 
 % ---- 3.6 ----
-\subsection{Sprint Transition Function}
+\subsection{Sprint transition function}
 \label{sec:model:transition}
 
 The sprint transition $\mathcal{T}: S(t-1) \to S(t)$ executes ten steps in
@@ -498,7 +498,7 @@ fixed dependency order.
 
 % TODO: Figure 3 -- data-flow diagram of the 10-step transition
 
-\subsubsection*{Step 1 --- Human Capacity Allocation}
+\subsubsection*{Step 1 --- Human capacity allocation}
 
 The priority-ordered time budget of the developers is
 resolved as a five-stage cascade, each stage consuming time that is remaining from the previous stage. First, communication overhead between the developers reduces capacity to
@@ -582,10 +582,10 @@ Configurations for which this is unavoidable cannot perform any productive human
 This check ensures that the developers have sufficient capacity for the communication between
 themselves and for the monitoring of agents under the best-case assumption of perfect documentation coverage. The criterion is a necessary condition rather than a sufficient one: since the documentation coverage starts below its ceiling, the effective monitoring overhead early in a simulation run can still temporarily exceed the available capacity. We do not specify similar constraints for architecture review and escalation time, as not handling these only increases the debt penalties we discuss next, meaning that implementation is still possible, though less efficient.
 
-\subsubsection*{Step 2 --- Debt Penalties}
+\subsubsection*{Step 2 --- Debt penalties}
 
 Technical debt $D_\mathrm{tech}$, as well as unresolved work in the architecture
-and escalation pipelines contribute to productivity degradation.
+and escalation pipelines, contribute to productivity degradation.
 Architecture work is considered unresolved as long as it remains anywhere in
 the pipeline: as an unprocessed change request ($Q_\mathrm{arch}$), as a design
 proposal awaiting human review ($Q_\mathrm{rev}$), or as an approved proposal
@@ -625,8 +625,8 @@ $\delta_\mathrm{min} \in (0,1)$ that describes the highest negative impact the d
 It equals~1 at zero combined debt and decays to $\delta_\mathrm{min}$ at
 $D_\mathrm{eff} = 1$. This debt multiplier will be used in subsequent steps to reduce feature implementation speed, increase bug injection, reduce code review quality, slow bug fixing, and increase the rate at which agents require escalations.
 
-\subsubsection*{Step 3 --- Feature Arrival and Implementation}
-In every sprint, new features arrive to the backlog according to
+\subsubsection*{Step 3 --- Feature arrival and implementation}
+In every sprint, new features arrive in the backlog according to
 \begin{equation}
   \mathrm{arrivals}(t) \sim \mathrm{Poisson}(r_\mathrm{arrival}),
   \label{eq:arrivals}
@@ -672,7 +672,7 @@ and the state variables are updated as:
     \label{eq:cycle_update}
 \end{align}
 
-\subsubsection*{Step 4 --- Test Suite Update}
+\subsubsection*{Step 4 --- Test suite update}
 The Test Development Agent grows the
 cumulative test count before bug detection runs, up to the coverage ceiling of
 Eq.~\eqref{eq:coverage}, beyond which further tests no longer raise
@@ -688,7 +688,7 @@ $\mathrm{cov\_test}$. Investment in testing therefore
 pays off in the sprint it occurs, creating a direct incentive to allocate
 agents to the Test Development role.
 
-\subsubsection*{Step 5 --- Bug Injection and Detection}
+\subsubsection*{Step 5 --- Bug injection and detection}
 Agents inject defects at an effective per-feature bug introduction rate
 \begin{equation}
   r_\mathrm{bugs,eff}(t) = r_\mathrm{bugs}\,(2 - \delta_D),
@@ -800,7 +800,7 @@ The known and hidden queues are incremented accordingly:
 \end{align}
 Note that $B_\mathrm{kno,x}(t)$ is an intermediate value at this step, which will be decreased by the bug fixing conducted in Step~7. 
 
-\subsubsection*{Step 6 --- Architecture Queues}
+\subsubsection*{Step 6 --- Architecture queues}
 This step propagates architecture work through three queues $Q_\mathrm{arch}$, $Q_\mathrm{rev}$, and $Q_\mathrm{arch,impl}$ in causal order. First, we determine how many new architecture change requests are generated by the features implemented this sprint.
 Architecture change requests are generated at rate $f_\mathrm{arch,chg}$ per
 feature implemented this sprint,
@@ -826,14 +826,14 @@ review queue $Q_\mathrm{rev}$, which is at the same time reduced by the human re
 \end{align}
 
 Finally, the $\mathrm{rev\_done}(t)$ proposals reviewed and approved this sprint are placed
-into the \emph{architecture implementation queue} $Q_\mathrm{arch,impl}$, enabling their implementation in the next sprint by the Implementation Agents in Step~3:
+into the \emph{architecture implementation queue} $Q_\mathrm{arch,impl}$, enabling their implementation in the next sprint by the Feature Implementation Agents in Step~3:
 \begin{equation}
   Q_\mathrm{arch,impl}(t) = \max\!\bigl(0,\;
     Q_\mathrm{arch,impl}(t-1) + \mathrm{rev\_done}(t) - \mathrm{arch\_impl}(t)\bigr).
   \label{eq:Q_arch_impl}
 \end{equation}
 
-\subsubsection*{Step 7 --- Bug Fixing}
+\subsubsection*{Step 7 --- Bug fixing}
 Bug fixing proceeds in two phases using the same six priority tiers
 ($B_\mathrm{rel,sec} \to B_\mathrm{kno,sec} \to B_\mathrm{rel,maj} \to
 B_\mathrm{kno,maj} \to B_\mathrm{rel,min} \to B_\mathrm{kno,min}$):
@@ -884,7 +884,7 @@ queues are not written by any earlier step in this sprint.  The $B_\mathrm{kno,x
 rows use index $t$ as a reminder that their right-hand side values
 were already updated by Step~5.
 
-\subsubsection*{Step 8 --- Escalation Queue}
+\subsubsection*{Step 8 --- Escalation queue}
 Agents raise human escalations per completed work item at rate $\rho_\mathrm{esc}$.
 The work the supervised implementation agents completed this sprint is
 \begin{equation}
@@ -907,7 +907,7 @@ the capacity for human escalation resolution $\mathrm{esc\_done}(t)$ into accoun
   \label{eq:qesc}
 \end{equation}
 
-\subsubsection*{Step 9 --- General Maintenance}
+\subsubsection*{Step 9 --- General maintenance}
 Subsequent to the feature implementation, testing, and bug fixing steps, the general maintenance
 agents perform their work. They do not provide direct utilitarian value in the form of features delivered or bugs fixed, but instead provide indirect value by slowing the accumulation of technical debt and by improving the documentation, which reduces the cognitive load of the human developers when supervising agents.
 
@@ -926,7 +926,7 @@ bug fixing each \emph{increase} debt, while refactoring conducted by the Refacto
 \end{equation}
 where $\mathrm{fixes\_total}(t) = \sum_{i=1}^{6} n_i(t)$ is the total number of bugs fixed across all priority tiers in Step~7.
 
-The second activity is documentation written by the Developer Documentation Agent which grows the cumulative
+The second activity is documentation written by the Developer Documentation Agent, which grows the cumulative
 document count, up to one document per completed feature, i.e., the point at which
 Eq.~\eqref{eq:doc_cov} is capped:
 \begin{equation}
@@ -937,7 +937,7 @@ Eq.~\eqref{eq:doc_cov} is capped:
 This increases the documentation coverage $\mathrm{doc\_cov}$ in the next
 sprint (see Eq.~\eqref{eq:doc_cov}).
 
-\subsubsection*{Step 10 --- Release Event}
+\subsubsection*{Step 10 --- Release event}
 If $t \bmod R = 0$, a release fires: all bugs remaining in the hidden and known queues
 escape to production: bugs that were never detected as well as bugs that were detected but not fixed before the release deadline.
 These bugs are added to the cumulative escaped counter
@@ -960,7 +960,7 @@ similarly $B_\mathrm{kno,x}(t)$ on the right is the post-fixing value from
 Steps~5 and~7. When $t \bmod R \neq 0$ no release fires and all updates are skipped.
 
 % ---- 3.7 ----
-\subsection{Objective Functions}
+\subsection{Objective functions}
 \label{sec:model:objectives}
 
 The model evaluates a configuration through four quantities that are computed from the terminal state $S(T)$ and from the per-sprint record of the work the agents completed, and therefore aggregate performance across the entire development cycle: the \emph{value} delivered by implementing features, and the three cost drivers of the development process, namely the cost of the bugs that escape to production, the cost of the human developers, and the cost of the agents. 
@@ -1044,7 +1044,7 @@ $k$ & Role & $u_k(t)$ \\
 \end{table}
 
 % ---- 3.8 ----
-\subsection{Monte Carlo Protocol}
+\subsection{Monte Carlo protocol}
 \label{sec:model:mc}
 
 A feasible configuration $\mathbf{c}$ (cf.\ Section~\ref{sec:model:sosp}) is evaluated by running $K'$
@@ -1053,7 +1053,7 @@ These values define the state of the project when the first agentic development 
 starts. They are fixed experiment constants that are
 specified as part of the experiment design (see Section~\ref{sec:setup}). The
 sprint transition $\mathcal{T}$ is then applied $T$ times, yielding terminal state
-$S(T)$. The outcome of each simulation run is randomized by the actions within the sprint transition, which are driven by the stochastic processes, e.g., the Poisson feature arrivals and the Binomial bug detection draws.
+$S(T)$. The outcome of each simulation run is randomized by the actions within the sprint transition, which are driven by the stochastic processes, e.g., the Poisson feature arrivals and the binomial bug detection draws.
 The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$, $C_\mathrm{human}$, and $C_{\mathrm{agents},k}$ for each replication $k=1,\ldots,K'$ are then computed from $S(T)$ and from the per-sprint work record. We combine the cost drivers into the per-replication cost per feature
 \begin{equation}
   C_k = \frac{C_{\mathrm{quality},k} + C_\mathrm{human} + C_{\mathrm{agents},k}}
@@ -1064,7 +1064,7 @@ The value $\mathit{value}_k$ and the three cost drivers $C_{\mathrm{quality},k}$
 quantified with 95\% percentile bootstrap confidence intervals (CIs).
 
 % ---- 3.9 ---- Search Problem
-\subsection{Search Problem}
+\subsection{Search problem}
 \label{sec:model:sosp}
 
 We first define the feasible set $\mathcal{X}$ as the set of all configurations
@@ -1091,20 +1091,20 @@ Using the feasible configurations that satisfy the throughput constraint, we def
 
 Every configuration the search evaluates is scored by a mean over $K'$ Monte Carlo replications. The objective above only considers the mean, but not yet the confidence of the estimates. We therefore do not report the minimizer alone. Let $\mathbf{c}^\star$ be the configuration with the lowest mean costs that optimizes our constrained search problem with confidence interval $[C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}]$. A second configuration $\mathbf{c}$ that satisfies the throughput constraint and whose confidence interval $[C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}]$ overlaps that of $\mathbf{c}^\star$ is not statistically significantly different at the 95\% confidence level. If no evaluated configuration satisfies the throughput constraint, no such $\mathbf{c}^\star$ exists and $\mathcal{I}^\star$ is empty. In that case we report the configuration with the highest value and mark the result as inadmissible. Otherwise, we define the \emph{indistinguishable set} as
 \begin{equation}
-  \mathcal{I}^\star = \bigl\{\mathbf{c} \;:\; \bar{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
+  \mathcal{I}^\star = \bigl\{\mathbf{c} \;:\; \overline{\mathit{value}}_{\mathbf{c}} \geq (1-\epsilon)\,r_\mathrm{arrival}
     \;\wedge\; [C^-_{\mathbf{c}},\,C^+_{\mathbf{c}}] \cap [C^-_{\mathbf{c}^\star},\,C^+_{\mathbf{c}^\star}] \neq \emptyset \bigr\}.
   \label{eq:topset}
 \end{equation}
 
 Two configurations in $\mathcal{I}^\star$ are statistically indistinguishable by construction, and it can happen that one of them uses no more agents than the other in any role. Reporting the larger of the two would be misleading, since the additional agents buy nothing that we can measure. We therefore add a parsimony tie-break within $\mathcal{I}^\star$: we say that $\mathbf{c}$ \emph{parsimony-dominates} $\mathbf{c}'$ iff both lie in $\mathcal{I}^\star$, the two share the same $(N, R, F_\mathrm{freeze}, f_\mathrm{fix})$, $a_{\mathrm{dev},k} \leq a'_{\mathrm{dev},k}$ and $a_{\mathrm{qa},k} \leq a'_{\mathrm{qa},k}$ hold for all $k$ with at least one strict inequality, and the mean cost of $\mathbf{c}$ is strictly lower than that of $\mathbf{c}'$, i.e., $C_\mathbf{c} < C_{\mathbf{c}'}$. Parsimony-dominated configurations are removed from $\mathcal{I}^\star$ before it is reported. The cost condition means that we only drop the larger team in favor of a smaller one that also measured better, so that the best measured performance is never under-reported. In particular, $\mathbf{c}^\star$ has the lowest mean cost within $\mathcal{I}^\star$ by definition and can therefore not be parsimony-dominated by any configuration, i.e., $\mathbf{c}^\star$ is always retained without requiring an exception to the rule.
 
-Both $\mathbf{c}^\star$ and $\mathcal{I}^\star$ are preliminary at this point, because the width of the confidence intervals that Eq.~\eqref{eq:topset} compares is governed by the number of replications $K'$ that the search uses. We re-simulate every configuration in the preliminary $\mathcal{I}^\star$ with $K > K'$ replications to get better estimates of $\mathbf{c}^\star$ and reduce the confidence intervals. Since the tie-break has already removed the parsimony-dominated configurations, only the parsimonious members have to be re-simulated, which reduces the effort of this step. We then apply the selection a second time and expect that $\mathcal{I}^\star$ shrinks, since there should be fewer overlapping confidence intervals. While unlikely that there are changes to the throughput, the constraint is checked as well and violating configurations are discarded. Similarly, we also apply the parsimony tie-break a second time, but do not expect major changes.
+Both $\mathbf{c}^\star$ and $\mathcal{I}^\star$ are preliminary at this point, because the width of the confidence intervals that Eq.~\eqref{eq:topset} compares is governed by the number of replications $K'$ that the search uses. We re-simulate every configuration in the preliminary $\mathcal{I}^\star$ with $K > K'$ replications to get better estimates of $\mathbf{c}^\star$ and reduce the confidence intervals. Since the tie-break has already removed the parsimony-dominated configurations, only the parsimonious members have to be re-simulated, which reduces the effort of this step. We then apply the selection a second time and expect that $\mathcal{I}^\star$ shrinks, since there should be fewer overlapping confidence intervals. While it is unlikely that the throughput changes, the constraint is checked as well and violating configurations are discarded. Similarly, we also apply the parsimony tie-break a second time, but do not expect major changes.
 
 
 
 
 % ---- 3.11 ----
-\subsection{Search Strategy}
+\subsection{Search strategy}
 \label{sec:model:search}
 
 Exhaustive search of the configuration space for the optimal process and team configuration is impossible, because the counts of the two background services are unbounded (Section~\ref{sec:model:team}). Even under an arbitrary cap of 99 agents per service, the four background counts $a_{\mathrm{dev},5}$, $a_{\mathrm{dev},6}$, $a_{\mathrm{qa},5}$, and $a_{\mathrm{qa},6}$ alone already give $100^4 = 10^8$ combinations, which the human staffing level, the release cadence, the feature-freeze length, and the supervised parts of both compositions multiply further.
@@ -1164,7 +1164,7 @@ where $\sigma \geq 1$ is a headroom factor that allows the search to explore con
 
 The search needs a way to produce valid initial configurations. We sample these configurations as follows:
 \begin{enumerate}
-  \item Draw $N$, $R$, and $f_\mathrm{fix}$ uniformly from $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{fix}$ respectively.
+  \item Draw $N$, $R$, and $f_\mathrm{fix}$ uniformly from $\mathcal{N}$, $\mathcal{R}$, and $\mathcal{F}_\mathrm{fix}$, respectively.
   \item Draw $F_\mathrm{freeze}$ uniformly from the admissible values
         $\{f \in \mathcal{F}_\mathrm{freeze} : 0 \leq f \leq R-1\}$.
   \item Draw the supervised part of $\mathbf{A}_\mathrm{dev}$ role by role, independently and
@@ -1204,7 +1204,7 @@ The advantage of not discarding solutions that violate the throughput constraint
 \end{itemize}
 Thus, the search first looks for admissible configurations, and then among those for the cheapest one. We use the notation $\mathbf{c} \prec \mathbf{c}'$ to denote that configuration $\mathbf{c}$ is preferred to configuration $\mathbf{c}'$ according to the above rules.
 
-\subsubsection{Evolutionary Search}
+\subsubsection{Evolutionary search}
 \label{sec:model:search:evo}
 
 As a type of metaheuristic search, evolutionary search is designed to efficiently explore large, complex search spaces by iteratively generating and evaluating candidate solutions. By maintaining a population of candidate configurations and applying selection pressure toward better-performing configurations, evolutionary search can effectively navigate toward the optimum. In our case, we use a simple mutation-based algorithm that creates new solutions by modifying existing ones.
@@ -1255,8 +1255,8 @@ returned unchanged.
 \begin{enumerate}
   \item Rank the previously generated population $\mathcal{P}_{g-1}$ by the preference relation $\prec$ and let the elite $\mathcal{E}_{g-1}$ be its $n_\mathrm{elite}$ best configurations.
   \item Sample $n_\mathrm{off}$ parent configurations. 80\% of the parents are drawn uniformly from $\mathcal{E}_{g-1}$ to search for improvements near the best configurations found so far. 20\% of the parents are drawn uniformly from $\mathcal{P}_{g-1} \setminus \mathcal{E}_{g-1}$ to enable exploration of the search space in other regions.
-  \item Apply the mutation operator to each parent, creating the child population $\mathcal{P}_{g,child}$.
-  \item Create the new population $\mathcal{P}_g$ as the union of the child population and the current population: $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,child}$.
+  \item Apply the mutation operator to each parent, creating the child population $\mathcal{P}_{g,\mathrm{child}}$.
+  \item Create the new population $\mathcal{P}_g$ as the union of the child population and the current population: $\mathcal{P}_g = \mathcal{P}_{g-1} \cup \mathcal{P}_{g,\mathrm{child}}$.
 \end{enumerate}
 
 The mixture of drawing most mutations from the elite and some from the rest of the population is designed to balance exploitation and exploration: the former focuses the search on improving the best-known configurations, while the latter allows for discovering new regions of the search space that may contain better configurations.
@@ -1267,25 +1267,25 @@ At the conclusion of the generation loop, $\mathbf{c}^\star$ and the indistingui
 \subsection{Limitations of the simulation's scope}
 \label{sec:model:limitations}
 
-The simulation model is built with the intent to be able to analyze cost tradeoffs and understand team compositions. The aspects that we simulate were added because we believe they are key factors to understand these tradeoffs. However, our model is only an abstraction and makes simplifying assumptions about software development:
+The simulation model is built with the intent to be able to analyze cost trade-offs and understand team compositions. The aspects that we simulate were added because we believe they are key factors to understand these trade-offs. However, our model is only an abstraction and makes simplifying assumptions about software development:
 \begin{itemize}
   \item We use fixed efforts and costs for all features and bugs. An alternative would be to sample required efforts and costs, similar to how we sample feature arrival rates. However, the expected rates should converge to the average that we use, if simulations run sufficiently long. Thus, this is rather important to estimate short-term uncertainty and not long-term effects, which is why we opted against this additional complexity and only randomize the number of features that are arriving and the bug introduction rates. 
   \item Related to the above, we also do not increase development costs for larger systems, e.g., as a factor of features already implemented. This simplification makes the estimation of cost parameters easier, but means that we have to assume an average cost over time, which might underestimate costs for larger systems over time. However, assuming that this affects human costs and agent costs similarly, this should only have a small effect on our results. 
   \item Our simplification that human effort is debt-independent simplifies the model greatly, because otherwise we would also have to model test generation and technical debt reduction for human developers, including a possibly complex model of how human developers allocate their time between these activities and the development activities feature implementation and bug fixes. We believe that this simplification is reasonable, because the human effort estimates that we use already include the work of coping with the complexity of an existing code base. However, this does not paint a fully realistic picture of how technical debt also slows down human developers over time. 
-  \item We implicitly assume that the re-inspection of the code during a feature freeze is independent of the inspections conducted when the features were implemented, i.e., bugs missed by the code review or security audit before have the same chance of being detected during the freeze as newly injected bugs. This is an optimistic assumption, since a reviewer that missed a bug once is likely to miss it again. However, given the stochastic nature of LLMs and the possibility to use different LLMs for different inspection phases, this assumption is not completely unreasonable. Furthermore, the alternative would be to estimate how much the detection probability is reduced with repeated reviews, for which - to the best of our knowledge - no data is available.
+  \item We implicitly assume that the re-inspection of the code during a feature freeze is independent of the inspections conducted when the features were implemented, i.e., bugs missed by the code review or security audit before have the same chance of being detected during the freeze as newly injected bugs. This is an optimistic assumption, since a reviewer that missed a bug once is likely to miss it again. However, given the stochastic nature of LLMs and the possibility to use different LLMs for different inspection phases, this assumption is not completely unreasonable. Furthermore, the alternative would be to estimate how much the detection probability is reduced with repeated reviews, for which---to the best of our knowledge---no data is available.
 \end{itemize}
 
 
 % ============================================================
-\section{Experimental Setup}
+\section{Experimental setup}
 \label{sec:setup}
 % ============================================================
 
 % ---- 4.1 ----
-\subsection{Human-only Baseline}
+\subsection{Human-only baseline}
 \label{sec:setup:baseline}
 
-An important baseline to understand the impact of agents on software development is to compare mixed teams against a baseline with only human developers. For this, we set all agent counts to zero, i.e., $\mathbf{A}_\mathrm{dev} = \mathbf{A}_\mathrm{qa} = \mathbf{0}$, and let the human developers implement all features and fix all bugs themselves. The other model parameters are still optimized, i.e., the number of FTE equivalent developers $N$, release cadence $R$, feature-freeze length $F_\mathrm{freeze}$, and bug-fixing share $f_\mathrm{fix}$ are still decision variables. The costs remain the same, except that the agent costs are always zero. 
+An important baseline to understand the impact of agents on software development is to compare mixed teams against a baseline with only human developers. For this, we set all agent counts to zero, i.e., $\mathbf{A}_\mathrm{dev} = \mathbf{A}_\mathrm{qa} = \mathbf{0}$, and let the human developers implement all features and fix all bugs themselves. The other model parameters are still optimized, i.e., the number of FTE developers $N$, release cadence $R$, feature-freeze length $F_\mathrm{freeze}$, and bug-fixing share $f_\mathrm{fix}$ are still decision variables. The costs remain the same, except that the agent costs are always zero. 
 
 However, we need to slightly modify the simulation model to facilitate this, since we modeled the debt removal and bug detection as purely agentic tasks. We use a simplified model without debt dynamics for the human-only case, built on the assumption that some debt-removal and architecture updates are performed as part of the normal development process by the human developers. To facilitate bug detection, we reserve a share $f_\mathrm{qa} \in [0,1)$ of the developers' net capacity for quality assurance, which the baseline optimizes as an additional decision variable:
 \begin{equation}
@@ -1304,7 +1304,7 @@ The detection itself is implemented as a variant of the agent-driven detection w
 i.e., the fraction of the inspected features that can be reviewed in full, which is similar to the volume factor $\Phi$ we use for agentic review in Eq.~\eqref{eq:volume_factor}. With a human bug detection capability factor $d_\mathrm{qa}$, the rate of bug detection is then
 \begin{equation}
   \mathrm{QA}_x(t) \sim \mathrm{Binomial}\!\bigl(P_x(t),\; \mathrm{cov\_qa}(t)\,d_\mathrm{qa}\bigr),
-    x \in \{\mathrm{min,maj,sec}\}.
+    \qquad x \in \{\mathrm{min,maj,sec}\}.
   \label{eq:qa_human}
 \end{equation}
 The detected bugs are then removed from the hidden queues and moved to the known queues, analogous to the agentic detection. 
@@ -1313,7 +1313,7 @@ The detected bugs are then removed from the hidden queues and moved to the known
 \subsection{Scenarios}
 \label{sec:setup:scenarios}
 
-There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting, and additionally two levels that stress the simulation beyond the observed data: a very high level for the project dynamics and a pessimistic level for the agent costs and throughput. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level developers, or seniors resulting in different capabilities and salaries. 
+There are five orthogonal aspects that influence our simulation, each governed by a distinct group of scenario parameters that we define in the following subsections: human developers, project dynamics, debt dynamics, agent costs and throughput, and bug impact. Each group contains multiple parameters that govern different facets of that aspect. For each of these aspects, we define three levels of parameters, corresponding to a low, medium, and high setting, and additionally two levels that stress the simulation beyond the observed data: a very high level for the project dynamics and a pessimistic level for the agent costs and throughput. For example, agent capabilities can be lower or higher, varying the correctness and costs of agentic actions. Orthogonally, developers may be junior, mid-level, or senior, resulting in different capabilities and salaries. 
 Since the groups are orthogonal, we can freely combine all five groups into a diverse set of scenarios. 
 
 \subsubsection{Human developer parameters}
@@ -1321,7 +1321,7 @@ Since the groups are orthogonal, we can freely combine all five groups into a di
 The scenario parameters for human developers are summarized in Table~\ref{tab:scenario:human}.
 We assume that a full-time developer works a 40-hour week, i.e., $H_\mathrm{capacity}$ is stated per FTE and a staffing level of $N=0.25$ corresponds to a ten-hour week. We assume that the communication overhead is one hour per team member. The salaries are estimated based on average salaries reported by Indeed~\citep{indeed2026salaries}. We round low, average and high salaries to the next \$50k, to account for the employer overhead costs.
 
-While there is no data yet on how much time developers require to monitor agents, early results indicate that there is a fairly low interruption frequency~\citep{baumann2026swechat}, so we set the monitoring overhead at a modest 2.5 hours per week, i.e., 30 minutes per day. The work capacity $H_\mathrm{capacity}$, the communication overhead $c_\mathrm{comm}$, and the monitoring overhead $H_\mathrm{mon,overhead}$ are independent of developer skill and are therefore the same across all three tiers. There are also no estimates yet how much time developers require to resolve an agent escalation. It is reasonable to assume that these are non-trivial problems that require developers to get involved with the code base, so we assume that the time required is similar to that required to implement a feature (estimate see below).
+While there is no data yet on how much time developers require to monitor agents, early results indicate that there is a fairly low interruption frequency~\citep{baumann2026swechat}, so we set the monitoring overhead at a modest 2.5 hours per week, i.e., 30 minutes per day. The work capacity $H_\mathrm{capacity}$, the communication overhead $c_\mathrm{comm}$, and the monitoring overhead $H_\mathrm{mon,overhead}$ are independent of developer skill and are therefore the same across all three tiers. There are also no estimates yet of how much time developers require to resolve an agent escalation. It is reasonable to assume that these are non-trivial problems that require developers to get involved with the code base, so we assume that the time required is similar to that required to implement a feature (estimate see below).
 
 We use the review of architectural decision records (ADRs) to ground the architecture-review time within our model. Amazon estimates 10--15 minutes to read the document~\citep{amazonArchitecturalDecision}. The process is assumed to be iterative and done by multiple developers. Assuming that updating the ADR based on comments requires 45 minutes, one iteration would require 1 hour. With 4 iterations, this would require a total of 4 hours, which we use for the medium tier. We assume that less capable developers require twice as long and highly capable developers are twice as fast, resulting in 8 hours for the low tier, and 2 hours for the high tier.
 
@@ -1329,7 +1329,7 @@ To have a comparable baseline for human effort, we assume the time required to s
 
 To have comparable bug introduction rates between humans and the agents we later define, we ground the bug introduction rate of humans in research by \cite{coderabbit2025aicode}, who report that AI introduces issues at 1.7 times the rate of humans. Since this number is one year old at the time of writing, we assume that this reflects the capability of the low agentic tier, which translates into a bug introduction rate of 0.12 for humans. Since junior developers are often compared to AI, we use the same bug introduction rate as the AI, i.e., 0.20 for the low tier. For the more capable high tier developers, we use a rate of 0.08, using the same ratio of performance differences as before. 
 
-Finally, we need to estimate the human quality assurance capability for the human-only baseline. We use a range of values based on a large study on code-review effectiveness by \cite{cohen2006best}: they found that the review of 200--400 lines requires 60 to 90 minutes and leads to a discovery of 70--90\% of defects. Since we assume that a feature has 107 lines (Section~\ref{sec:scenario:agentcosts}), the review time for a feature is between 32 and 48 minutes. For the time per review $h_\mathrm{qa}$, we use the fastest time 32 minutes to ground the values for the high developer tier, the slowest time of 48 minutes for the low tier and 37 minutes for the medium tier. For the detection rates $d_\mathrm{qa}$, we use the midpoint from \cite{cohen2006best} for all tiers, i.e., 0.8, since we already encode the difference between tiers in the time required. 
+Finally, we need to estimate the human quality assurance capability for the human-only baseline. We use a range of values based on a large study on code-review effectiveness by \cite{cohen2006best}: they found that the review of 200--400 lines requires 60 to 90 minutes and leads to a discovery of 70--90\% of defects. Since we assume that a feature has 107 lines (Section~\ref{sec:scenario:agentcosts}), the review time for a feature is between 32 and 48 minutes. For the time per review $h_\mathrm{qa}$, we use the fastest time of 32 minutes to ground the values for the high developer tier, the slowest time of 48 minutes for the low tier and 37 minutes for the medium tier. For the detection rates $d_\mathrm{qa}$, we use the midpoint from \cite{cohen2006best} for all tiers, i.e., 0.8, since we already encode the difference between tiers in the time required. 
 
 
 
@@ -1358,7 +1358,7 @@ $c_\mathrm{salary}$ & 100{,}000 & 150{,}000 & 250{,}000 & \cite{indeed2026salari
 
 \subsubsection{Project dynamics parameters}
 
-To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. Moreover, since a quarter FTE supported by agents can already deliver the throughput of the high tier, this does not stress the simulation to assess extreme-velocity scenarios. Therefore, we add a very high tier as well, that has 1000 issues per week. While this might be unrealistically high, this will show if and how such extreme scales could be managed by a single team. We note that this tier also stresses the architecture pipeline beyond what human review can absorb: at $f_\mathrm{arch,chg} = 0.13$ it generates around 130 change requests per sprint, which only the fastest reviewers of the high human tier can keep up with even at the largest staffing level we consider. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
+To understand the project dynamics, we first collected data from all projects with at least 100 issues and at least 10 stars using SEART's GitHub Search tool~\citep{dabic2021data}. We then filtered these projects such that they have an average activity of at least 10 commits per week, i.e., consistently active commit activity during their lifetime. From the resulting projects, we considered the 1{,}000 projects with the most stars, i.e., that are popular and actively engaged by the community. We then compute the number of issues per week and use the 5th percentile for the low tier, the 50th percentile for the medium tier, and the 95th percentile for the high tier for the number of issues per week. We note that these estimates are only valid for open source projects and may not be representative of closed-source projects. Moreover, since a quarter FTE supported by agents can already deliver the throughput of the high tier, this does not stress the simulation to assess extreme-velocity scenarios. Therefore, we add a very high tier as well, which has 1{,}000 issues per week. While this might be unrealistically high, this will show if and how such extreme scales could be managed by a single team. We note that this tier also stresses the architecture pipeline beyond what human review can absorb: at $f_\mathrm{arch,chg} = 0.13$ it generates around 130 change requests per sprint, which only the fastest reviewers of the high human tier can keep up with even at the largest staffing level we consider. The resulting parameters are summarized in Table~\ref{tab:scenario:project}.
 
 To understand how often issues affect architecture, we use data from \cite{shahbazian2018toward}, who used automated methods to determine whether the change triggered by an issue caused architectural changes. Depending on the method used, the proportion ranged from 13\% of issues to 26\% of issues. Since the automated approach possibly overestimates the proportion by counting purely structural changes, we use the lower bound of 13\%. We derive the data for the distribution of the severity of bugs from data collected by \cite{ohira2015highimpact}. They distinguish between critical, blocker, and major issues (which we map to major bugs), and minor and trivial issues (which we map to minor bugs). Orthogonally, they determine which of these bugs are security related, which we use to infer the ratio of security bugs. We exclude one of the collected projects (Ambari) for the estimation of the ratio of major bugs, since it did not mark issues as minor.
 These numbers are independent of the number of issues per week and therefore the same across all four tiers.
@@ -1371,7 +1371,7 @@ These numbers are independent of the number of issues per week and therefore the
 \toprule
 Symbol & Low & Medium & High & Very High & Source \\
 \midrule
-$r_\mathrm{arrival}$  & 3  & 12  & 75  & 1000 & Collected data. \\[2pt]
+$r_\mathrm{arrival}$  & 3  & 12  & 75  & 1{,}000 & Collected data. \\[2pt]
 $f_\mathrm{arch,chg}$  & 0.13  & 0.13  & 0.13  & 0.13 & \cite{shahbazian2018toward}. \\[2pt]
 $\theta_\mathrm{maj}$ & 0.44 & 0.44 & 0.44 & 0.44 & \cite{ohira2015highimpact}. \\[2pt]
 $\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact}. \\
@@ -1383,10 +1383,10 @@ $\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact}. 
 
 The debt dynamics parameters are summarized in Table~\ref{tab:scenario:debt}. There is a limited amount of literature on the impact of documentation and the studies are typically conducted with small sets of developers, limiting their ability to find significant effects. \cite{dzidek2008uml} found an increase in maintenance time of 40\% when no UML documentation was made available based on a group of 20 developers. In a recent eye tracking experiment using 12 (mostly junior) developers, \cite{abdelsalam2026comments} found an increase in program comprehension time of up to 34\% based on code comments, but this effect depended on the complexity of the code and comprehension time was even reduced for simpler code snippets. Based on these studies, we set the low tier to 40\% (the effect found by \cite{dzidek2008uml}), the medium tier to 34\% (the maximum effect found by \cite{abdelsalam2026comments}), and the high tier to 0\% (no effect, due to the lack of significance of the results).
 
-We estimate the addition of technical debt based on data from \cite{he2026cursordebt}, who found that AI-assisted coding increases code complexity and static analysis warnings. We note that this is particular to AI-assisted development as the technical debt otherwise seems to be decreasing over time~\citep{trautsch2020longitudinal}. Since the average treatment effect found that AI-assisted development leads to 28\% more lines, but 30\% more static analysis warnings, we assume that the debt increases by at least 2\% for every feature added. Since \cite{he2026cursordebt} also found that the complexity increases by 41\% due to the use of AI, we assume that the upper bound for the debt-increase is 13\% per feature added. We therefore set the low tier to 2\%, the medium tier to 6\% and the high tier to 13\% per feature added. Since \cite{trautsch2023automated} found that there is no detectable difference between the static analysis warnings added by bug fixing commits and other commits, we use the same values for the debt increase due to bug fixing. 
+We estimate the addition of technical debt based on data from \cite{he2026cursordebt}, who found that AI-assisted coding increases code complexity and static analysis warnings. We note that this is particular to AI-assisted development as the technical debt otherwise seems to be decreasing over time~\citep{trautsch2020longitudinal}. Since the average treatment effect found that AI-assisted development leads to 28\% more lines, but 30\% more static analysis warnings, we assume that the debt increases by at least 2\% for every feature added. Since \cite{he2026cursordebt} also found that the complexity increases by 41\% due to the use of AI, we assume that the upper bound for the debt increase is 13\% per feature added. We therefore set the low tier to 2\%, the medium tier to 6\% and the high tier to 13\% per feature added. Since \cite{trautsch2023automated} found that there is no detectable difference between the static analysis warnings added by bug fixing commits and other commits, we use the same values for the debt increase due to bug fixing. 
 % We note that at the refactoring throughput $r_\mathrm{refactor}$ of Table~\ref{tab:scenario:agents} a single Refactoring Agent removes more debt per sprint than any of our scenarios accumulates, so $a_{\cdot,4} \geq 1$ holds $D_\mathrm{tech}$ at zero and $\delta_\mathrm{impl}$ and $\delta_\mathrm{fix}$ only bind while the role is unstaffed.
 
-We set the values for the debt amplifier floor $\delta_\mathrm{min}$, i.e., the fraction of the nominal throughput that is retained at maximal debt, based on a developer survey from \cite{besker2018technical}. They found that developers spend on average 23\% of their time dealing with technical debt with a standard deviation of 17\%. We interpret this share $s$ of lost time as the slow-down at maximal debt and hence set $\delta_\mathrm{min} = 1 - s$. We therefore set the low value at $0.94$ (i.e., a slow-down of 6\%, one standard deviation below the average), the medium value at $0.77$ (a slow-down of 23\%, the average), and the high value at $0.60$ (i.e., a slow-down of 40\%, one standard deviation above the average). The work \cite{martini2027interest} found that technical debt can be contagious, which supports a non-linear effect of the technical debt. Since there is no data on how strong this non-linearity is, we assume a slightly super-linear effect with $\delta_\mathrm{exp} = 1.5$ across all scenarios.
+We set the values for the debt amplifier floor $\delta_\mathrm{min}$, i.e., the fraction of the nominal throughput that is retained at maximal debt, based on a developer survey from \cite{besker2018technical}. They found that developers spend on average 23\% of their time dealing with technical debt with a standard deviation of 17\%. We interpret this share $s$ of lost time as the slow-down at maximal debt and hence set $\delta_\mathrm{min} = 1 - s$. We therefore set the low value at $0.94$ (i.e., a slow-down of 6\%, one standard deviation below the average), the medium value at $0.77$ (a slow-down of 23\%, the average), and the high value at $0.60$ (i.e., a slow-down of 40\%, one standard deviation above the average). \cite{martini2017interest} found that technical debt can be contagious, which supports a non-linear effect of the technical debt. Since there is no data on how strong this non-linearity is, we assume a slightly super-linear effect with $\delta_\mathrm{exp} = 1.5$ across all scenarios.
 
 \begin{table}[t]
 \caption{Debt dynamics parameters across scenarios. Note that $\delta_\mathrm{min}$ is the throughput fraction \emph{retained} at maximal debt, i.e., lower values indicate a stronger debt penalty.}
@@ -1399,7 +1399,7 @@ Symbol & Low & Medium & High & Source \\
 $\delta_\mathrm{impl}$ & 0.02 & 0.06 & 0.13 & \cite{he2026cursordebt}. \\[2pt]
 $\delta_\mathrm{fix}$  & 0.02 & 0.06 & 0.13 & \cite{he2026cursordebt}. \\[2pt]
 $\delta_\mathrm{min}$  & 0.94  & 0.77  & 0.60  & \cite{besker2018technical}. \\[2pt]
-$\delta_\mathrm{exp}$  & 1.5   & 1.5   & 1.5   & Assumed based on contagiousness of debt~\citep{martini2027interest}. \\[2pt]
+$\delta_\mathrm{exp}$  & 1.5   & 1.5   & 1.5   & Assumed based on contagiousness of debt~\citep{martini2017interest}. \\[2pt]
 $\Gamma_\mathrm{doc}$  & 0.40  & 0.34  & 0.0  & \cite{dzidek2008uml, abdelsalam2026comments}. \\
 \bottomrule
 \end{tabularx}
@@ -1419,7 +1419,7 @@ We further ground the pricing based on the API pricing of Claude Sonnet~5, Opus~
 
 We model the agent throughput on the latency of the models, i.e., the time to solve a task. Since a concrete latency is hard to define as this depends not only on model size, but also on the current load of cloud providers, we do not estimate this on single latency values that are reported. As for the other tasks, we ground this in SWE-bench, where the reference solutions require 107 lines of code on average~\citep{scaleSWEBenchPublic}. Based on data from \cite{baumann2026swechat}, autonomous coding required 12.6 minutes on average per 100 commit lines. Assuming that agents only run during work hours, this would result in 178 features per sprint. This measurement characterizes agentic coding in general rather than any particular model. We therefore use a single throughput value across all tiers and derive the rates of the remaining roles from it with the same ratios in every tier, as reported in Table~\ref{tab:scenario:agents}.
 
-We estimate the agentic bug introduction rate based on the SWE-bench Verified benchmark score, assuming that each failure in the benchmark results in a bug in the code base. We collect the data for Claude Sonnet~5, Opus~5, and Fable~5 analogously to the cost estimations. The values are taken from the vals.ai leaderboard~\citep{valsai2026swebench}, i.e., we do not use Anthropic's estimates but those of independent benchmark executions.\footnote{On the leaderboard, Opus~5 has a minimally higher score than Fable~5. We attribute this to a measurement artifact and use the best-performing value for the high-tier and the second-best for the medium tier for internal consistency.} While we are aware that these results likely overestimate the actual benchmark performance~\citep{liang2026swe}, we nevertheless use this as an (optimistic) estimate for the capabilities of the agents.
+We estimate the agentic bug introduction rate based on the SWE-bench Verified benchmark score, assuming that each failure in the benchmark results in a bug in the code base. We collect the data for Claude Sonnet~5, Opus~5, and Fable~5 analogously to the cost estimations. The values are taken from the vals.ai leaderboard~\citep{valsai2026swebench}, i.e., we do not use Anthropic's estimates but those of independent benchmark executions.\footnote{On the leaderboard, Opus~5 has a minimally higher score than Fable~5. We attribute this to a measurement artifact and use the best-performing value for the high tier and the second-best for the medium tier for internal consistency.} While we are aware that these results likely overestimate the actual benchmark performance~\citep{liang2026swe}, we nevertheless use this as an (optimistic) estimate for the capabilities of the agents.
 
 We use CyberBench~\citep{liu2024cyberbench} to estimate the security bug detection rate. While the benchmark is not a perfect fit, since it also includes the correction of the bug, it still gives us a good baseline for the detection rate. For other benchmarks, like SEC-Bench Pro, we could not find data for recent models that are not self-reported by the model providers. Due to the model guardrails, we also cannot use the performance of the Claude~5 models here and instead use the GPT-5.6 models (Luna, Sol) and the scores reported by vals.ai~\citep{valsai2026swebench} for the medium and high tiers. Data for GPT-5.6 Terra is also not available; we therefore estimate that the difference between Terra and Luna is the same as between Luna and Sol. We estimate the capability to generate tests based on data from \cite{huang2025benchmarking}, who developed a benchmark with unit tests for functions that were not part of the training. They found that test generation capability strongly correlates with coding ability, but models scored lower on the test generation benchmark, with differences of at least 0.2. Since no similar benchmark exists for the latest models, we assume that the trend holds and use the same difference here, i.e., the SWE-bench scores reduced by 0.2.
 
@@ -1441,7 +1441,7 @@ Role & Parameter & Low & Medium & High & Pess. & Source \\
 \midrule
 \multirow{3}{2.2cm}{1 -- Feature Impl.}
   & $c_\mathrm{token}$     & 2.28 & 3.80 & 7.60 & 76.00 & \cite{morph2026aicodingcosts} \\
-  & $r_F$                  & 178  & 178  & 178  & 178   & Based on 12.6\,min per 100 lines of code \cite{baumann2026swechat,scaleSWEBenchPublic} \\
+  & $r_F$                  & 178  & 178  & 178  & 178   & Based on 12.6\,min per 100 lines of code~\citep{baumann2026swechat,scaleSWEBenchPublic} \\
   & $r_\mathrm{bugs}$      & 0.20 & 0.05 & 0.03 & 0.20  & \cite{valsai2026swebench} \\
 \midrule
 \multirow{2}{2.2cm}{2 -- Architecture \& Design}
@@ -1486,7 +1486,7 @@ All roles & $\rho_\mathrm{esc}$ & 0.03 & 0.02 & 0.01 & 0.03 & \cite{baumann2026s
 
 The weights $\omega_\mathrm{min}$, $\omega_\mathrm{maj}$, and $\omega_\mathrm{sec}$ are the expected cost in dollars that a minor, major, or security bug causes once it escapes to production and affects real users. We ground them in real-world estimates of such costs, distinguishing three system contexts that match our low, medium, and high tiers: a simple web application (e.g., a small SaaS product), an enterprise system with a large user base and a formal incident-response process, and a safety-critical system such as a medical device. 
 
-We estimate the cost of a minor bug as the direct engineering cost of repairing it after release, which we assume to be comparable to implementing a feature, i.e., two hours of developer time. We compute this using a fully-loaded hourly rate typical for the respective system context (assuming a 2080-hour work year), giving \$100, \$150, and \$250 for the low, medium, and high tier, respectively. Notably, this also means that such bugs have no direct external incident costs, i.e., because they are just nuisance bugs that do not affect functionality.
+We estimate the cost of a minor bug as the direct engineering cost of repairing it after release, which we assume to be comparable to implementing a feature, i.e., two hours of developer time. We compute this using a fully-loaded hourly rate typical for the respective system context (assuming a 2{,}080-hour work year), giving \$100, \$150, and \$250 for the low, medium, and high tier, respectively. Notably, this also means that such bugs have no direct external incident costs, because they are just nuisance bugs that do not affect functionality.
 
 For major bugs, i.e., defects that break or degrade a feature in production for a non-trivial period, we ground our estimate in reported downtime costs. For the low tier, ITIC's 2024 downtime survey reports that small and mid-sized businesses commonly estimate the cost of an hour of downtime at around \$25{,}000~\citep{itic2026downtime}. For the medium tier, industry estimates put the cost of an hour of downtime for a critical enterprise application at over \$300{,}000~\citep{cloudqa2026bugcost}, which is consistent with ITIC's finding that 97\% of large enterprises report hourly downtime costs exceeding \$100{,}000~\citep{itic2026downtime}. In both cases, we use these numbers directly, i.e., we assume a prompt response mitigating the issue within one hour. For the high tier, we ground the estimate in the medical device industry: McKinsey estimates that significant quality events (recalls, FDA enforcement actions, and litigation) cost the global medical device industry \$7--8.5 billion annually~\citep{mckinsey2026medtech}, and software defects caused an estimated 8.2\% of the 1{,}059 US medical device recall events recorded in 2024, i.e., about 87 events~\citep{meddeviceguide2026recalls}. Distributing the midpoint of McKinsey's estimate (\$7.75 billion) proportionally over the 1{,}059 recall events gives an average cost of about \$7 million per event, which we use as our high-tier estimate.
 
@@ -1512,7 +1512,7 @@ $\omega_\mathrm{sec}$ & 48{,}000 & 1{,}000{,}000 & 120{,}000{,}000 & Breach/inci
 
 
 % ---- 4.3 ----
-\subsection{Experiment Configurations}
+\subsection{Experiment configurations}
 \label{sec:setup:sweep}
 
 \paragraph{Scenario grid.}
@@ -1525,7 +1525,7 @@ The human-capacity condition of Eq.~\eqref{eq:feas_monitoring} caps how many sup
 
 The release cadences $\mathcal{R} = \{1, 2, 4, 13\}$ cover continuous delivery (a release after every sprint), a biweekly, a monthly, and a quarterly release train, and the feature-freeze lengths $\mathcal{F}_\mathrm{freeze} = \{0, 1, 2\}$ cover no freeze, a one-week, and a two-week freeze. Both are combined subject to $F_\mathrm{freeze} \leq R - 1$ as described in Section~\ref{sec:model:search}, so $R = 1$ admits only $F_\mathrm{freeze} = 0$. The developers' bug-fixing share $f_\mathrm{fix}$ ranges from pure feature work to pure bug fixing in steps of 10\%. We set the tolerance of the throughput constraint of Eq.~\eqref{eq:throughput_constraint} to $\epsilon = 0.02$, i.e., require delivery of at least 98\% of the arriving features. 
 
-The evolutionary search receives a budget of $E = 20\,000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 2\,000$, $G = 180$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. The re-simulation of the indistinguishable set with $K$ replications is not part of this budget and happens afterwards.
+The evolutionary search receives a budget of $E = 20{,}000$ candidate evaluations per scenario, of which we spend 10\% on the initial pool and 90\% on the generation loop, i.e., $n_\mathrm{init} = 2{,}000$, $G = 180$ generations, and $n_\mathrm{off} = 100$ offspring per generation, with an elite of $n_\mathrm{elite} = 100$ configurations. The re-simulation of the indistinguishable set with $K$ replications is not part of this budget and happens afterwards.
 
 \begin{table}[t]
 \caption{Experiment constants and search range.}
@@ -1572,10 +1572,10 @@ For the simulation of the human baseline, we only need to consider $(N, R, F_\ma
 We now present the results of the experiments. We first analyze whether the searches converged and how precise the reported costs are (Section~\ref{sec:results:convergence}). Then, we analyze how the scenario groups affect the total costs of the optimal teams and how these costs are distributed between the three cost drivers (Section~\ref{sec:results:tradeoffs}). Finally, we analyze the composition of the optimal results, i.e., the staffing level and the agent composition, as well as the release process (Section~\ref{sec:results:composition}).
 
 % ---- 5.1 ----
-\subsection{Search Convergence}
+\subsection{Search convergence}
 \label{sec:results:convergence}
 
-All 432 searches ended admissible, i.e., found at least one configuration that satisfies the throughput constraint. For the human-only baseline, 9 of the 36 enumerations end inadmissible, which are the scenarios at the very high velocity tier. This is not surprising, since the desired throughput of 1000 issues per sprint is unrealistic with a single team and would require a complex multi-team approach within a human-only setting: the best human-only team of only senior developers manages to deliver 310 features per sprint.
+All 432 searches ended admissible, i.e., found at least one configuration that satisfies the throughput constraint. For the human-only baseline, 9 of the 36 enumerations end inadmissible, which are the scenarios at the very high velocity tier. This is not surprising, since the desired throughput of 1{,}000 issues per sprint is unrealistic with a single team and would require a complex multi-team approach within a human-only setting: the best human-only team of only senior developers manages to deliver 310 features per sprint.
 
 Figure~\ref{fig:results:turnover} shows the convergence behavior of the evolutionary search. The figure shows two aspects of the search. The blue line shows the \emph{elite turnover} defined as
 \begin{equation}
@@ -1599,7 +1599,7 @@ The turnover decreases steeply over the first twenty generations and continues t
   \label{fig:results:turnover}
 \end{figure}
 
-The second important aspect of the search convergence follows from our decision to determine the indistinguishable set $\mathcal{I}^\star$, i.e., not only the best solution $c^\star$, but also all project configurations whose CI overlaps with this optimum. Table~\ref{tab:results:topset} shows how this indistinguishable set shrinks over the four stages of the selection process described in Section~\ref{sec:model:selection}. Initially, we have a very large indistinguishable set with a median of 904 project configurations. This is not surprising, since our initial number of $K'=100$ replications is relatively small, which means the CIs are wide. Once we keep only configurations that have strictly smaller teams, the indistinguishable set shrinks to a median of 324 configurations. The re-simulation with $K=1{,}000$ replications further reduces the indistinguishable set to a median of 75.5 configurations by shrinking the CIs. Finally, the second tie-break reduces the indistinguishable set to a median of 62 configurations, i.e., there is no single best team configuration but rather a space of options that are optimal when accounting for the inherent uncertainty of the development process. For the human-only baseline, there are far fewer indistinguishable configurations, with a median of 3 configurations after the first tie-break and 2 configurations after the resimulation at $K$. This is expected, because the human-only baseline has far fewer degrees of freedom than the agentic teams, e.g., it is not possible to trade off different agent types for quality assurance against each other. 
+The second important aspect of the search convergence follows from our decision to determine the indistinguishable set $\mathcal{I}^\star$, i.e., not only the best solution $\mathbf{c}^\star$, but also all project configurations whose CI overlaps with this optimum. Table~\ref{tab:results:topset} shows how this indistinguishable set shrinks over the four stages of the selection process described in Section~\ref{sec:model:selection}. Initially, we have a very large indistinguishable set with a median of 904 project configurations. This is not surprising, since our initial number of $K'=100$ replications is relatively small, which means the CIs are wide. Once we keep only configurations that have strictly smaller teams, the indistinguishable set shrinks to a median of 324 configurations. The re-simulation with $K=1{,}000$ replications further reduces the indistinguishable set to a median of 75.5 configurations by shrinking the CIs. Finally, the second tie-break reduces the indistinguishable set to a median of 62 configurations, i.e., there is no single best team configuration but rather a space of options that are optimal when accounting for the inherent uncertainty of the development process. For the human-only baseline, there are far fewer indistinguishable configurations, with a median of 3 configurations after the first tie-break and 2 configurations after the re-simulation at $K$. This is expected, because the human-only baseline has far fewer degrees of freedom than the agentic teams, e.g., it is not possible to trade off different agent types for quality assurance against each other. 
 
 \begin{table}[t]
 \caption{Size of the indistinguishable set $\mathcal{I}^\star$ at the four stages of Section~\ref{sec:model:selection}, as median [interquartile range] and maximum over the searches that ended admissible.}
@@ -1631,17 +1631,17 @@ has a median of 1.6\% $[0.8\%, 4.6\%]$. Thus, the reported costs are precise to 
 The evolutionary search converged in all 432 scenarios, with the elite turnover falling to 5\% and the incumbent cost changing by only 0.04\% per generation at the end of the search, and the reported costs are precise to about two percent.
 \end{summarybox}
 
-\subsection{Cost Drivers}
+\subsection{Cost drivers}
 \label{sec:results:tradeoffs}
 
 Before we look at the structure of the optimal teams, we further validate our simulation model empirically by analyzing the costs of the optimal configurations $\mathbf{c}^\star$ and how they are affected by the scenario groups: if we observed unexpected patterns (e.g., more expensive bugs leading to lower total costs), this would indicate a problem with the model. 
 
 We use a simple linear regression model on the logarithmic costs with a one-hot encoding of the scenario groups to quantify the effect of each group on the total costs, i.e.,
 \begin{equation}
-  \log_{10} C_\mathbf{c} \;=\; \beta_0 + \sum_{g=1}^{5} \sum_{t=1}^{T_g} \beta_{g,t} \, I_{g,t},
+  \log_{10} C_\mathbf{c} \;=\; \beta_0 + \sum_{g=1}^{5} \sum_{\ell \neq \ell^0_g} \beta_{g,\ell} \, I_{g,\ell},
   \label{eq:linreg}
 \end{equation}
-where $g$ indexes the five scenario groups, $t$ indexes the tiers of each group, $T_g$ is the number of tiers in group $g$, and $I_{g,t}$ are the one-hot encoded variables for each tier. This model achieves a very good fit with an $R^2 = 0.938$, i.e., the scenario groups explain 93.8\% of the variance of the log cost across the grid. This shows that the impact of the scenario groups on the costs is largely independent, which is expected since the groups are orthogonal by design. This allows us to analyze the effect of each group in isolation.
+where $g$ indexes the five scenario groups, $\ell$ the tiers of group $g$, $\ell^0_g$ is its cheapest tier, which serves as the reference, and $I_{g,\ell}$ is the indicator of tier $\ell$ of group $g$. This model achieves a very good fit with an $R^2 = 0.938$, i.e., the scenario groups explain 93.8\% of the variance of the log cost across the grid. This shows that the impact of the scenario groups on the costs is largely independent, which is expected since the groups are orthogonal by design. This allows us to analyze the effect of each group in isolation.
 
 The coefficients of the model are shown in Table~\ref{tab:results:multipliers} relative to the cheapest tier of each group, e.g., the high bug impact tier is 72.6 times more expensive than the low bug impact tier. This is also the biggest driver that impacts the total costs, i.e., projects for which escaped bugs are expensive are also most expensive overall. This is further highlighted by Figure~\ref{fig:results:qualitydev} that shows that the larger markers for the more expensive bug tiers shift the costs to the upper-left side of the plot. Even at the low tier the costs for the escaped bugs are close to the diagonal, i.e., still about equal to the costs of the team for the feature implementation. 
 
@@ -1654,7 +1654,7 @@ The project dynamics have a smaller effect, with a factor of 2.0 between the low
 Finally, Figure~\ref{fig:results:qualitydev} also shows that the impact on the costs for the human-only baseline follows the same patterns as for the agentic teams.
 
 \begin{summarybox}
-The scenario groups affect simulated costs in expected ways which validates the simulation model, with the cost of escaped bugs as the dominant driver for the total costs. The simulation shows that high capability can lead to lower overall costs, even if tokens and salaries are more expensive, due to the higher quality of the outputs.
+The scenario groups affect simulated costs in expected ways, which validates the simulation model, with the cost of escaped bugs as the dominant driver for the total costs. The simulation shows that high capability can lead to lower overall costs, even if tokens and salaries are more expensive, due to the higher quality of the outputs.
 \end{summarybox}
 
 \begin{table}[t]
@@ -1682,19 +1682,19 @@ Human developers   & 1.1 & 1.0 & 1.0            & --- \\
 \end{figure}
 
 % ---- 5.3 ----
-\subsection{Composition of Costs}
+\subsection{Composition of costs}
 \label{sec:results:composition}
 
-Finally, we analyze the structure of the costs of the optimal results. We first consider the release process, since this affects how regularly bugs may escape to production and if there is a dedicated freeze period to prevent this. Then, we analyze how costs split between investment in human developer capacity and tokens for agents. Finally, we look at the composition of the agentic teams, i.e., how token budgets are distributed between different agent roles. For simplicity, we only report the results for the single best solution $\mathbf{c}^\star$. Our online materials contain additional results with the mean over the indistinguishable set and show that these deviate only by a median of 2\% and at most 14\% with respect to staffing level, which implies that the results of $\mathbf{c}^\star$ are representative for the overall cost allocation. 
+Finally, we analyze the structure of the costs of the optimal results. We first consider the release process, since this affects how regularly bugs may escape to production and if there is a dedicated freeze period to prevent this. Then, we analyze how costs split between investment in human developer capacity and tokens for agents. Finally, we look at the composition of the agentic teams, i.e., how token budgets are distributed between different agent roles. For simplicity, we only report the results for the single best solution $\mathbf{c}^\star$. Our online materials contain additional results with the mean over the indistinguishable set and show that these deviate only by a median of 2\% and at most 14\% with respect to staffing level, which implies that the results of $\mathbf{c}^\star$ are representative of the overall cost allocation. 
 
 The data for the release cycles is clear (Figure~\ref{fig:results:drivers}): 88.9\% of the optimal results use $R=4$ and 99.1\% use $F_\mathrm{freeze} = 2$, i.e., the longest freeze that is possible in the shortest release cycle that permits it. Interestingly, this is similar to fast release cycles in practice, as, e.g., publicly reported by GitLab~\citep{TODO}. The likely reason for this within our simulation model is to prevent the high costs of bugs escaping to production. The two-sprint freeze is a good buffer to find and fix previously missed bugs. 
 
 
-Figure~\ref{fig:results:humanagent} shows the developer costs against the agent costs and Figure~\ref{fig:results:teambill} shows a more fine-grained picture that includes how the costs are distributed between different agent roles. The developer costs are higher for 65\% of the optimal teams, with a median ratio of agent to developer costs of $0.32$. The project velocity has the largest effect on this ratio: more speed shifts efforts from humans towards agents to be able to handle the demand. Figure~\ref{fig:results:drivers} shows that while the staffing level does increase with project velocity, this increase is modest. Indeed, the more important drivers to increase staffing are the agent quality (minimal staffing for the medium and high-quality tiers), bug impact (higher staffing to prevent expensive bugs), and debt dynamics (make the project more robust against the negative effects of debt).
+Figure~\ref{fig:results:humanagent} shows the developer costs against the agent costs and Figure~\ref{fig:results:teambill} shows a more fine-grained picture that includes how the costs are distributed between different agent roles. The developer costs are higher for 65\% of the optimal teams, with a median ratio of agent to developer costs of $0.32$. The project velocity has the largest effect on this ratio: more speed shifts efforts from humans towards agents to be able to handle the demand. Figure~\ref{fig:results:drivers} shows that while the staffing level does increase with project velocity, this increase is modest. Indeed, the more important drivers to increase staffing are the agent quality (minimal staffing for the medium and high-quality tiers), bug impact (higher staffing to prevent expensive bugs), and debt dynamics (to make the project more robust against the negative effects of debt).
 
-Generally, the costs of agents mainly exceed the costs of human developers at the high and very high project tiers and even there not consistently as this also depends on the second most important driver: the agent tier. As we already observed in Section~\ref{sec:results:tradeoffs}, the high-tier agents are generally cheaper overall than other tiers, which leads to a higher investment in agents, in comparison to the low and medium tier. The pessimistic agents are expensive, but still used nevertheless and shift costs towards spending for agents. The simulation shows that how much is shifted towards pessimistic agents depends on the human tiers: for the low capability humans, it is still worth --- and from a speed perspective somewhat required --- to rely on agents, including heavy reliance with sometimes over 100 times the spending on agents than for humans for the very high velocity. For the high capability humans, this is reduced and spending for pessimistic agents is only above spending for human developers for the very high velocity and even there it only reaches a factor of 37 times the costs for human developers. 
+Generally, the costs of agents mainly exceed the costs of human developers at the high and very high project tiers and even there not consistently as this also depends on the second most important driver: the agent tier. As we already observed in Section~\ref{sec:results:tradeoffs}, the high-tier agents are generally cheaper overall than other tiers, which leads to a higher investment in agents, in comparison to the low and medium tier. The pessimistic agents are expensive, but are nevertheless used and shift costs towards spending for agents. The simulation shows that how much is shifted towards pessimistic agents depends on the human tiers: for the low capability humans, it is still worth --- and from a speed perspective somewhat required --- to rely on agents, including heavy reliance with sometimes over 100 times the spending on agents as on humans for the very high velocity. For the high capability humans, this is reduced and spending for pessimistic agents is only above spending for human developers for the very high velocity and even there it only reaches a factor of 37 times the costs for human developers. 
 
-How the developers split their coding time between implementing features and fixing bugs depends almost exclusively on the agent capability (panel $f_\mathrm{fix}$ in Figure~\ref{fig:results:drivers}). With the medium and high agent tiers, the developers spend a median of 75\% and 80\% of their coding time in the development sprints on bug fixing, with the low and pessimistic tiers 0\%. These numbers need to be considered together with the release duration of four sprints of which two are feature freezes, during which all time is invested in bug fixing. Thus, for the medium and high agent tiers, developers typically spend a total of 88-90\% of their coding time on bug fixing, whereas they split their time equally for the low and pessimistic agent tiers with investing 50\% of effort into implementing features (100\% during development sprints) and 50\% into bug fixing (100\% during freeze sprints). 
+How the developers split their coding time between implementing features and fixing bugs depends almost exclusively on the agent capability (panel $f_\mathrm{fix}$ in Figure~\ref{fig:results:drivers}). With the medium and high agent tiers, the developers spend a median of 75\% and 80\% of their coding time in the development sprints on bug fixing, with the low and pessimistic tiers 0\%. These numbers need to be considered together with the release cycle of four sprints of which two are feature freezes, during which all time is invested in bug fixing. Thus, for the medium and high agent tiers, developers typically spend a total of 88--90\% of their coding time on bug fixing, whereas they split their time equally for the low and pessimistic agent tiers, investing 50\% of effort into implementing features (100\% during development sprints) and 50\% into bug fixing (100\% during freeze sprints). 
 
 Figure~\ref{fig:results:agentbill} shows how the agent costs are distributed between the eight roles. Most of the agent budget goes to quality assurance: on average, 61\% of the agent costs are spent on the Security Audit (33\%), Code Review (24\%), and Test Development Agents (4\%). The share of the Security Audit Agents is determined by the bug impact and the agent tier, i.e., the more expensive bugs are and the less capable agents are at finding them, the more spending is allocated to prevent the most critical bugs. The second largest share goes to the Feature Implementation Agents (28\%). The concrete values vary strongly and low capability agents have a smaller implementation share than high-capability agents, which indicates that the model rather relies on the less bug-prone human development, which aligns well with the human effort split between feature implementation and bug fixing. The share of implementation agents on the overall costs for agents does not seem to depend on the project dynamics, i.e., even for the very high project tier, the agentic feature implementation generally behaves the same as for projects with only few features per sprint. 
 
