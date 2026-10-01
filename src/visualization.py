@@ -1114,6 +1114,7 @@ def _tier_rows(frame: pd.DataFrame, groups: tuple[str, ...]) -> list:
 def plot_team_drivers(
     optima: pd.DataFrame,
     title: str = "",
+    violins: bool = False,
 ) -> Figure:
     """Which scenario setting moves which part of the team, on one shared row axis.
 
@@ -1124,6 +1125,9 @@ def plot_team_drivers(
 
     Putting all five groups on one axis requires the campaign to be a full factorial, or a row
     is confounded by the four groups it pools over.
+
+    With `violins`, each row instead shows the whole distribution over its scenarios as a
+    violin with the median marked, on rows tall enough to read the shape.
     """
     frame = _team_quantities(optima)
     rows = _tier_rows(frame, SCENARIO_GROUPS)
@@ -1138,7 +1142,8 @@ def plot_team_drivers(
     with plt.style.context(_STYLE):
         fig, axes = plt.subplots(
             1, len(_TEAM_QUANTITIES),
-            figsize=(2.5 * len(_TEAM_QUANTITIES) + 1.4, 0.25 * height + 1.9),
+            figsize=(2.5 * len(_TEAM_QUANTITIES) + 1.4,
+                     (0.5 if violins else 0.25) * height + 1.9),
             sharey=True, squeeze=False,
         )
         fig.suptitle(title, fontsize=12, y=0.985)
@@ -1152,9 +1157,20 @@ def plot_team_drivers(
                     continue
                 q1, median, q3 = values.quantile([0.25, 0.5, 0.75])
                 color = _TIER_STYLES[tier].color
-                ax.plot([q1, q3], [y, y], color=color, linewidth=2.4, alpha=0.45,
-                        solid_capstyle="butt", zorder=2)
-                ax.plot([median], [y], marker="o", markersize=6, color=color, zorder=3)
+                if not violins:
+                    ax.plot([q1, q3], [y, y], color=color, linewidth=2.4, alpha=0.45,
+                            solid_capstyle="butt", zorder=2)
+                elif values.nunique() > 1:
+                    # A constant row has no density to estimate (`F_freeze` is 2 almost
+                    # everywhere); it keeps only its median marker.
+                    body = ax.violinplot(values, positions=[y], orientation="horizontal",
+                                         widths=0.9, showextrema=False)["bodies"][0]
+                    body.set_facecolor(color)
+                    body.set_edgecolor(color)
+                    body.set_alpha(0.45)
+                    body.set_zorder(2)
+                ax.plot([median], [y], marker="o", markersize=6 if not violins else 4.5,
+                        color=color if not violins else "black", zorder=3)
             ax.margins(x=0.06)
             if quantity.formatter is not None:
                 ax.xaxis.set_major_formatter(FuncFormatter(quantity.formatter))
@@ -1185,8 +1201,12 @@ def plot_team_drivers(
             legend.append(Line2D([], [], linestyle="none", marker="o", markersize=6,
                                  color=_TIER_STYLES[fourth[0]].color,
                                  label=" / ".join(fourth)))
-        legend.append(Line2D([], [], color="0.45", linewidth=2.4, alpha=0.6,
-                             label="median with interquartile range"))
+        if violins:
+            legend.append(Line2D([], [], linestyle="none", marker="o", markersize=4.5,
+                                 color="black", label="median"))
+        else:
+            legend.append(Line2D([], [], color="0.45", linewidth=2.4, alpha=0.6,
+                                 label="median with interquartile range"))
         fig.legend(handles=legend, loc="lower center", ncol=len(legend), fontsize=8,
                    frameon=True, columnspacing=1.2, handlelength=1.6)
         # Reserving only what the suptitle and the legend strip occupy; `tight_layout`
@@ -1203,7 +1223,8 @@ def visualize_team_summary(
 
     `optima` must carry the per-role bill of `constellation.role_bill`, which the caller
     applies because the prices come from the scenario configs this module does not read.
-    Writes one composition figure per entry of `_SHARE_WEIGHTS`, plus the driver figure.
+    Writes one composition figure per entry of `_SHARE_WEIGHTS`, plus the driver figure
+    in both its interquartile and its violin form.
     """
     searched = search_rows(optima)
     if searched.empty:
@@ -1221,6 +1242,13 @@ def visualize_team_summary(
         title="Impact of scenario on team composition",
     )
     save_figure(fig, out_dir, "team_drivers")
+
+    fig = plot_team_drivers(
+        searched,
+        title="Impact of scenario on team composition",
+        violins=True,
+    )
+    save_figure(fig, out_dir, "team_drivers_violin")
 
 
 # ---------------------------------------------------------------------------

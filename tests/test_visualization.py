@@ -29,6 +29,7 @@ from src.config import (
     scenario_id,
     scenario_tier_combinations,
     scenario_tiers,
+    tier_column,
     tiers_present,
 )
 from src.constellation import BILL_PARAMETERS, role_bill
@@ -945,6 +946,17 @@ class TestTeamDrivers:
         assert "veryhigh" not in labels and "pessimistic" not in labels
         plt.close(fig)
 
+    def test_the_violin_form_draws_one_violin_per_non_constant_row(self):
+        fig = plot_team_drivers(_summary_optima(), violins=True)
+        frame = _team_quantities(_summary_optima())
+        column = _TEAM_QUANTITIES[0].column
+        expected = sum(frame.loc[frame[tier_column(g)] == t, column].nunique() > 1
+                       for g in SCENARIO_GROUPS for t in scenario_tiers(g))
+        assert len(fig.axes[0].collections) == expected
+        labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
+        assert "median" in labels
+        plt.close(fig)
+
     def test_a_team_with_no_detection_service_reports_no_split(self):
         """0/0 is not a Security share of zero; it drops out of the order statistics."""
         df = _summary_optima()
@@ -958,7 +970,7 @@ class TestVisualizeTeamSummary:
         visualize_team_summary(_summary_optima(), tmp_path)
         assert sorted(p.name for p in tmp_path.glob("*.png")) == [
             "composition_agent_bill.png", "composition_team_bill.png",
-            "team_drivers.png",
+            "team_drivers.png", "team_drivers_violin.png",
         ]
 
     def test_the_human_only_baseline_is_excluded(self, tmp_path):

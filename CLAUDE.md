@@ -93,7 +93,7 @@ results/                persisted search and campaign results (not committed)
 §5.2 cost trade-offs, §5.3 composition); §2 Related Work is drafted; the abstract,
 §6 Discussion and §7 Conclusion are still empty. §5 therefore pins the deliverable exactly: **seven figures and two tables**, and
 nothing else. The seven are `elite_turnover`, `human_agent_matrix`,
-`quality_development_matrix`, `agent_human_ratio_matrix`, `team_drivers`,
+`quality_development_matrix`, `agent_human_ratio_matrix`, `team_drivers_violin`,
 `composition_agent_bill` and `composition_team_bill`; the two tables are the `I*` stage
 sizes (from `convergence.csv`) and the cost multipliers (`multipliers.csv`).
 `paper/figures/` holds a copy of each under exactly the name the code emits — keep the two
@@ -485,6 +485,10 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   per structural quantity in `_TEAM_QUANTITIES` — the four process controls (`N`, `R`,
   `F_freeze`, `f_fix`), the supervised and autonomous agent counts per arriving feature, and
   Security's share of the detection pair. Each row is a median with an interquartile bar.
+  `plot_team_drivers(..., violins=True)` draws the same layout with one violin per row and
+  the median as a black dot (`team_drivers_violin.png`); **that variant is the one in the
+  paper**, since `N` and `R` are bimodal and a median with quartiles hides it. A row with a
+  single distinct value gets no violin, only its median.
   A group whose rows sit on top of each other does not move that quantity; one whose rows
   march across it does. The marginal medians are honest **because the campaign is a full
   factorial**: the scenarios at any one tier are perfectly balanced over the other four
