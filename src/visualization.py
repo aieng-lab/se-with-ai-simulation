@@ -34,10 +34,8 @@ from matplotlib.ticker import (
 
 from .config import (
     AGENT_ROLE_ABBREV,
-    AUTONOMOUS_ROLE_INDICES,
     EXTREME_TIERS,
     SCENARIO_GROUPS,
-    SUPERVISED_ROLE_INDICES,
     UNUSED_TIER,
     tier_column,
     tiers_present,
@@ -46,7 +44,6 @@ from .campaign import baseline_rows, require_columns, search_rows
 from .constellation import (
     AGENT_COST_PARAMETERS,
     BILL_PARAMETERS,
-    DEV_PARAMETERS,
 )
 
 if TYPE_CHECKING:
@@ -1062,40 +1059,13 @@ class _Quantity(NamedTuple):
     formatter: Callable[[float, int | None], str] | None = None
 
 
-#: The quantities the driver figure summarises, one panel each: the four process
-#: controls, the two agent counts per arriving feature, and the detection split.  Every
-#: panel is linear, including the two that spread over decades.
+#: The quantities the driver figure summarises, one panel each: the four process controls.
 _TEAM_QUANTITIES: tuple[_Quantity, ...] = (
     _Quantity("N", "human staffing $N$\n(FTE)"),
     _Quantity("R", "release cycle $R$\n(sprints)"),
     _Quantity("F_freeze", "feature freeze $F_{freeze}$\n(sprints)"),
     _Quantity("f_fix", "bug-fixing share\n$f_{fix}$", _percent_tick),
-    _Quantity("sup_agents_per_feature", "supervised agents\nper arriving feature"),
-    _Quantity("aut_agents_per_feature", "autonomous agents\nper arriving feature"),
-    _Quantity("security_share", "Security's share of\nthe detection pair", _percent_tick),
 )
-
-
-def _team_quantities(optima: pd.DataFrame) -> pd.DataFrame:
-    """Add the derived structural quantities of `_TEAM_QUANTITIES` to a copy of `optima`.
-
-    Each is formed within a scenario before anything is averaged, so that the figure reports a
-    typical ratio rather than the largest scenario's.
-    """
-    frame = optima.copy()
-    # The supervised and autonomous halves get a column each: they are bounded by
-    # different things and differ by more than an order of magnitude, so a combined column
-    # would be the autonomous count with a rounding error.  Their panels also keep
-    # separate x ranges, or every autonomous row lands on one tick.
-    supervised = frame[[DEV_PARAMETERS[i] for i in SUPERVISED_ROLE_INDICES]].sum(axis=1)
-    autonomous = frame[[DEV_PARAMETERS[i] for i in AUTONOMOUS_ROLE_INDICES]].sum(axis=1)
-    detection = frame["a_dev_5"] + frame["a_dev_6"]
-    frame["sup_agents_per_feature"] = supervised / frame["r_arrival"]
-    frame["aut_agents_per_feature"] = autonomous / frame["r_arrival"]
-    # A team with neither detection service has no split.  NaN drops out of the order
-    # statistics rather than being charged to either service as a zero.
-    frame["security_share"] = frame["a_dev_6"].where(detection > 0) / detection
-    return frame
 
 
 def _tier_rows(frame: pd.DataFrame, groups: tuple[str, ...]) -> list:
@@ -1129,8 +1099,7 @@ def plot_team_drivers(
     With `violins`, each row instead shows the whole distribution over its scenarios as a
     violin with the median marked, on rows tall enough to read the shape.
     """
-    frame = _team_quantities(optima)
-    rows = _tier_rows(frame, SCENARIO_GROUPS)
+    rows = _tier_rows(optima, SCENARIO_GROUPS)
     if not rows:
         raise ValueError("no optima for any tier of the scenario groups")
     height = max(r[2] for r in rows) + 1.0

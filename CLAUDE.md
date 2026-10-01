@@ -481,10 +481,11 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   reported `cost_agent_mean`, which is why the `team` weighting uses those and not
   `bill_k / F_completed`.
 - `team_drivers.png` (`plot_team_drivers`, titled *Impact of scenario on team
-  composition*): one row per (scenario group, tier) on a shared y axis, **seven panels**, one
-  per structural quantity in `_TEAM_QUANTITIES` — the four process controls (`N`, `R`,
-  `F_freeze`, `f_fix`), the supervised and autonomous agent counts per arriving feature, and
-  Security's share of the detection pair. Each row is a median with an interquartile bar.
+  composition*): one row per (scenario group, tier) on a shared y axis, **four panels**, one
+  per process control in `_TEAM_QUANTITIES` (`N`, `R`, `F_freeze`, `f_fix`). The agent
+  panels it once carried (supervised / autonomous agents per arriving feature, Security's
+  share of the detection pair) were removed; the agent side is read off `composition_*.png`.
+  Each row is a median with an interquartile bar.
   `plot_team_drivers(..., violins=True)` draws the same layout with one violin per row and
   the median as a black dot (`team_drivers_violin.png`); **that variant is the one in the
   paper**, since `N` and `R` are bimodal and a median with quartiles hides it. A row with a
@@ -495,18 +496,11 @@ and with them `_ShareWeight.xlabel` and `config.require_distinct_groups`.
   groups, which is what lets five groups share one axis instead of a facet grid apiece.
   Order statistics rather than mean/sd because several of these quantities pile on a search
   boundary — two fifths of the optima sit at `N`'s floor and a seventh at its ceiling, and
-  `F_freeze` is 2 in 428 of 432. There is **no campaign-median rule**: across seven panels
-  it was six more lines of ink for a reference the axis already carries.
-  **The agent count is split into supervised and autonomous on purpose** (§3.3): the two
-  halves are bounded by different things — the supervised roles by Eq. (feas_monitoring)
-  and the saturation bounds, an autonomous one by nothing but its own saturation — and they
-  differ by ~27×, so a single "agents per feature" panel is the autonomous count with a
-  rounding error and says nothing about the constraint. The two panels keep **separate x
-  ranges** even though they share a unit: a shared range was tried and puts every
-  autonomous row on one tick, destroying the only thing that panel is for. Reading the
-  split off the *positions* is what `composition_*.png` is for. **Every panel is linear**,
-  including `N` and the supervised count, which spread over two decades and were on log
-  axes at one point.
+  `F_freeze` is 2 in 428 of 432. There is **no campaign-median rule**: across the panels
+  it was four more lines of ink for a reference the axis already carries.
+  **Every panel is linear**,
+  including `N`, which spreads over two decades and was on a log axis
+  at one point.
   This is the one place `veryhigh` and `pessimistic` appear on the same axis, so its
   legend merges them into a single fourth-tier entry; the shared `_TIER_STYLES` fourth slot is
   otherwise safe only because no *group* holds both.

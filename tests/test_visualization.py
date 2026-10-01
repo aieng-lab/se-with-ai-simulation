@@ -51,7 +51,6 @@ from src.visualization import (
     plot_elite_turnover,
     _SHARE_WEIGHTS,
     _TEAM_QUANTITIES,
-    _team_quantities,
     plot_team_drivers,
     plot_team_shape,
     plot_quality_development_matrix,
@@ -897,7 +896,7 @@ class TestTeamDrivers:
         plt.close(fig)
 
     def test_the_groups_are_separated_by_a_rule_in_every_panel(self):
-        """Six panels wide, the eye has to carry a block boundary across the figure."""
+        """Several panels wide, the eye has to carry a block boundary across the figure."""
         fig = plot_team_drivers(_summary_optima())
         rules = {tuple(line.get_ydata()) for line in fig.axes[0].lines
                  if len(set(line.get_ydata())) == 1 and len(line.get_ydata()) == 2
@@ -911,25 +910,6 @@ class TestTeamDrivers:
         fig = plot_team_drivers(_summary_optima())
         labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
         assert "median with interquartile range" in labels
-        plt.close(fig)
-
-    def test_the_two_halves_of_the_team_get_a_panel_each(self):
-        """Supervised and autonomous counts are bounded by different things."""
-        frame = _team_quantities(_summary_optima())
-        supervised = frame[[f"a_dev_{k}" for k in (1, 2, 3, 7, 8)]].sum(axis=1)
-        autonomous = frame[[f"a_dev_{k}" for k in (4, 5, 6)]].sum(axis=1)
-        assert np.allclose(frame["sup_agents_per_feature"],
-                           supervised / frame["r_arrival"])
-        assert np.allclose(frame["aut_agents_per_feature"],
-                           autonomous / frame["r_arrival"])
-
-    def test_the_two_agent_panels_are_not_forced_onto_one_range(self):
-        """A shared range puts every autonomous row on one tick; see `_TEAM_QUANTITIES`."""
-        fig = plot_team_drivers(_summary_optima())
-        columns = [q.column for q in _TEAM_QUANTITIES]
-        sup = fig.axes[columns.index("sup_agents_per_feature")]
-        aut = fig.axes[columns.index("aut_agents_per_feature")]
-        assert sup.get_xlim() != aut.get_xlim()
         plt.close(fig)
 
     def test_every_panel_is_linear(self):
@@ -948,7 +928,7 @@ class TestTeamDrivers:
 
     def test_the_violin_form_draws_one_violin_per_non_constant_row(self):
         fig = plot_team_drivers(_summary_optima(), violins=True)
-        frame = _team_quantities(_summary_optima())
+        frame = _summary_optima()
         column = _TEAM_QUANTITIES[0].column
         expected = sum(frame.loc[frame[tier_column(g)] == t, column].nunique() > 1
                        for g in SCENARIO_GROUPS for t in scenario_tiers(g))
@@ -956,14 +936,6 @@ class TestTeamDrivers:
         labels = [t.get_text() for legend in fig.legends for t in legend.get_texts()]
         assert "median" in labels
         plt.close(fig)
-
-    def test_a_team_with_no_detection_service_reports_no_split(self):
-        """0/0 is not a Security share of zero; it drops out of the order statistics."""
-        df = _summary_optima()
-        df.loc[:, "a_dev_5"] = 0
-        df.loc[:, "a_dev_6"] = 0
-        assert _team_quantities(df)["security_share"].isna().all()
-
 
 class TestVisualizeTeamSummary:
     def test_both_figures_are_written(self, tmp_path):
