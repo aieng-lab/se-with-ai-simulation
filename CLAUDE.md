@@ -91,13 +91,14 @@ results/                persisted search and campaign results (not committed)
 
 **The §4.2 campaign is complete and §5 is drafted from it in full** (§5.1 convergence,
 §5.2 cost trade-offs, §5.3 composition); §2 Related Work is drafted; the abstract,
-§6 Discussion and §7 Conclusion are still empty. §5 therefore pins the deliverable exactly: **seven figures and two tables**, and
-nothing else. The seven are `elite_turnover`, `human_agent_matrix`,
-`quality_development_matrix`, `agent_human_ratio_matrix`, `team_drivers_violin`,
+§6 Discussion and §7 Conclusion are still empty. §5 therefore pins the deliverable exactly: **six figures and two tables**, and
+nothing else. The six are `elite_turnover`, `human_agent_matrix`,
+`quality_development_matrix`, `team_drivers_violin`,
 `composition_agent_bill` and `composition_team_bill`; the two tables are the `I*` stage
 sizes (from `convergence.csv`) and the cost multipliers (`multipliers.csv`).
 `paper/figures/` holds a copy of each under exactly the name the code emits — keep the two
 in sync, the four matrix figures once carried a stale `_evolutionary` suffix.
+`agent_human_ratio_matrix` is still drawn by `campaign` but is no longer used in §5.
 
 Three rounds of analysis code have been deleted; do not resurrect any of them. **(1)** An earlier
 §5 outline went with the three-objective Pareto formulation, taking ~2,200 lines
@@ -118,7 +119,7 @@ the `campaign --x/--y/--color/--marker/--size` and `constellation --rows/--cols`
 `build_constellation` / `constellation_summary`, the five group parameters of the three
 `plot_*_matrix` functions, `visualize_team_summary`'s `block_group` / `bar_group` /
 `panel_group` and its channel-collision pooling path, and the `fmt=` parameters of
-`save_figure` / `visualize_campaign` / `visualize_team_summary`. §5 reads all seven
+`save_figure` / `visualize_campaign` / `visualize_team_summary`. §5 reads all its
 figures off one layout and the cell table off one cut, so every one of these validated an
 input that only ever took a single value. Dropped with them: `AGENT_ROLE_NAMES` (no
 reference anywhere), `SystemState.B_kno` / `B_hid` (tests only — `tests/test_sprint.py`
@@ -594,7 +595,7 @@ figure no longer draws it.
   $4.5 M for the current campaign), equal aspect, 1:1 diagonal. Above the line the escaped
   bugs cost more than the whole team that built the features, where 75 % of optima sit —
   the reason the total-cost picture is mostly a picture of the quality term.
-- `agent_human_ratio_matrix.png` (`plot_agent_human_ratio_matrix`): the
+- `agent_human_ratio_matrix.png` (`plot_agent_human_ratio_matrix`, **not used in §5**): the
   human/agent trade-off collapsed to one number, y = `cost_agent_mean / cost_human_mean`
   (log, five decades: 0.0045 – 224), against x = **that ratio's percentile rank within the
   frame handed in**, i.e. within the 432 scenarios of one mode, on a linear axis. The panels
@@ -641,7 +642,7 @@ cp -r results/analysis /tmp/figcheck && rm -f /tmp/figcheck/*.png
 .venv/bin/python -m src.main constellation --figures-only --out /tmp/figcheck
 for f in paper/figures/*.png; do cmp "$f" "/tmp/figcheck/$(basename $f)"; done
 ```
-All seven are byte-identical today and must stay that way unless §5 changes.
+All of them are byte-identical today and must stay that way unless §5 changes.
 
 ---
 
