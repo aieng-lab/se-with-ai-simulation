@@ -76,56 +76,13 @@ Within our model, we distinguish between eight different agent roles for differe
 Our simulations show that the cost landscape of agentic software development is complex and the optimal team compositions depend on many factors. The key findings are:
 \begin{itemize}
   \item \textbf{Agent capability matters more than agent cost.} High-capability agents require less human supervision reducing personnel costs, while at the same time creating fewer defects, which reduces the number of bugs that escape to production. Consequently, cost differences for tokens matter less than the capability differences. 
-  % REVIEW (2026-09-25 campaign): no change needed. Still supported: the pessimistic tier
-  % (low capability, 33x the low tier's token price) costs only 25% more than the low tier
-  % (Table tab:results:multipliers), while low vs. high capability is a factor 7.6. Capable
-  % agents cut the median staffing from 1.0-1.5 to 0.25 FTE, and against the human-only
-  % baseline they also lower the escaped-defect cost (median factor 9.2 at a-h, 3.0 at a-m).
+  \item \textbf{Capabable agents turn developers into bug fixers}. For the most capabable and cheap agent tiers we tested, developers should spent a median of 88\% of their coding time on bug fixing, while at the the same time, few agents are used to fix bugs. 
   \item \textbf{Agents only pay off if they are good enough.} Development with weaker estimates for agent capability is not cheaper than our human-only baseline. More optimistic estimates of agent capability nevertheless show that significant cost savings are possible. 
-  % REVIEW: no change needed to the claim; median cost ratio vs. the baseline is 1.11 (low)
-  % and 0.93 (pessimistic) against 3.35 (medium) and 6.13 (high). Suggested addition: the debt
-  % tier has almost the same effect (ratio 3.81 at low debt vs. 1.12 at high debt), so
-  % "good enough" also depends on the code base, e.g., "... if they are good enough and the
-  % code base does not amplify their defects."
   \item \textbf{Agents enable velocities that are impossible to achieve with human-only teams.} The throughput of agents can be scaled to extreme development speeds, possibly enabling new classes of products and more rapid development than can be achieved by human developers. 
-  % REVIEW: no change needed, but it now rests on the very high velocity tier alone. In the
-  % new campaign human-only teams of all three developer tiers keep up at the high tier (the
-  % old run had juniors and mid-level developers failing there); at the very high tier they
-  % reach only 7.7-31% of the arrivals. Consider saying "extreme velocities" to be precise.
   \item \textbf{In most of our scenarios, costs for human developers exceed those for agents.} Unless extreme or high velocities force a strong reliance on agents, our simulation still favors paying more for human developers than for agents. 
-  % REVIEW: no change needed. Agent cost exceeds developer cost in 35% of optima (median
-  % ratio 0.32): 97/108 at very high and 48/108 at high velocity, 5 at medium, 2 at low.
-  % Optional addition: expensive tokens also push toward parity (median ratio 0.73 at the
-  % pessimistic tier), i.e., "Unless extreme or high velocities or high token prices ...".
   \item \textbf{Escaped defects, not labor, are the main cost driver.} Since escaped defects are expensive, their prevention is crucial. This drives up team costs to ensure good quality assurance, but escaped (security) defects are still the biggest cost factor. 
-  % REVIEW: suggest softening slightly. Escaped defects are still the largest driver (median
-  % 78% of total cost, 75% of optima above the diagonal), but the dominance is weaker than
-  % before (was 94.5%/93%): at the low bug impact tier they are only 46% of the cost, i.e.,
-  % about as large as the team costs. E.g., add "unless defects are cheap" or "in most
-  % scenarios". The human-only baseline is the clearest counter-example: by reserving a
-  % median of 40% of capacity for QA it brings the defect share down to 45%.
-  \item \textbf{Quality assurance consumes most of the agent budget.} Since preventing bugs saves money, quality assurance activities are often scaled to high effort and therefore dominate the costs for agents. In other words, getting features is cheap, but ensuring their quality is expensive. 
-  % REVIEW: suggest qualifying. On average QA still takes most of the agent bill (Security
-  % 33%, Review 24%, Test 4%, i.e., 61%, vs. Feature 28%), but not for capable agents: at the
-  % high agent tier Feature Implementation takes 42% and QA 49%, and at low bug impact
-  % Security drops to 6-35%. The share of QA is set by the bug impact and the agent tier.
-  % Suggest e.g. "... consumes most of the agent budget when defects are expensive" and
-  % dropping or softening "getting features is cheap", which is least true for the best agents.
+  \item \textbf{Quality assurance consumes most of the agent budget.} Since preventing bugs saves money, quality assurance activities are often scaled to high effort and therefore dominate the costs for agents. In other words, getting features is cheap, but 
 \end{itemize}
-% REVIEW: candidate additional findings from the 2026-09-25 campaign (Section 5):
-% (1) Capable agents turn developers into bug fixers. With medium/high agents the optimal
-%     bug-fixing share f_fix is 75-80% and developers perform 96-100% of all bug fixes, while
-%     with low-capability agents they mostly implement features (f_fix = 0%). This is new
-%     since f_fix became a decision variable and directly speaks to the RQ (how to use humans).
-% (2) Feature freezes are always used. 428/432 optima use the maximal two-sprint freeze with
-%     the shortest cycle permitting it (R = 4); continuous delivery (R = 1) is never optimal.
-%     Only worth listing together with the caveat that the re-inspection is assumed independent
-%     (Section 3.12) and the optimum sits at the edge of the search range.
-% (3) Debt dynamics are the third cost driver (multiplier 4.8, eta^2 = 0.08, up from 2.4/0.02)
-%     and erode most of the agents' advantage over the human-only baseline (see bullet 2).
-% (4) Human-only teams compete by investing in QA rather than in fixing: median f_qa = 40%,
-%     f_fix = 0 in 19/27, which makes them competitive with low-capability agents on escaped
-%     defects (they let fewer defects escape than low/pessimistic agent teams).
 
 % ============================================================
 \section{Related work}
