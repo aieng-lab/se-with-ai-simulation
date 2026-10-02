@@ -81,7 +81,7 @@ Our simulations show that the cost landscape of agentic software development is 
   \item \textbf{Agents enable velocities that are impossible to achieve with human-only teams.} The throughput of agents can be scaled to extreme development speeds, possibly enabling new classes of products and more rapid development than can be achieved by human developers. 
   \item \textbf{In most of our scenarios, costs for human developers exceed those for agents.} Unless extreme or high velocities force a strong reliance on agents, our simulation still favors paying more for human developers than for agents. 
   \item \textbf{Escaped defects, not labor, are the main cost driver.} Since escaped defects are expensive, their prevention is crucial. This drives up team costs to ensure good quality assurance, but escaped (security) defects are still the biggest cost factor. 
-  \item \textbf{Quality assurance consumes most of the agent budget.} Since preventing bugs saves money, quality assurance activities are often scaled to high effort and therefore dominate the costs for agents. In other words, getting features is cheap, but 
+  \item \textbf{Quality assurance consumes most of the agent budget.} Since preventing bugs saves money, quality assurance activities are often scaled to high effort and therefore dominate the costs for agents. In other words, getting features is cheap, but preserving quality is expensive.
 \end{itemize}
 
 % ============================================================
@@ -1717,6 +1717,35 @@ Teams with medium- and high-tier agents are cheaper than human-only teams in alm
 \label{sec:discussion}
 % ============================================================
 
+We now discuss what our results mean for the research question, what they imply for practice and research, and which threats affect the validity of our conclusions.
+
+\subsection{Answer to the research question}
+\label{sec:discussion:rq}
+
+Same as for traditional software development, there is no single optimal team configuration for AI-native development. How costs should be distributed between human developers and agents and for which tasks money should be spent on agents depends on the project. The two key factors that increase the spending into agents are the costs associated with bugs and the overall project velocity. Additionllay, higher debt dynamics require better agents or stronger human involvement. When selecting agents, our results how that capability is more important than the price per token, since better agents inject fewer bugs and require less supervision, which outweighs their higher token costs.
+
+The task distribution between the humans and agents is fairly consistent in our simulations. When agents are capable, developers spend 88--90\% of their coding time on bug fixing, while few (is any) agents are used for bug fixing. In turn, the agents implement features and, above all, detect bugs: on average, 61\% of the agent budget goes to the Security Audit, Code Review, and Test Development Agents, and 28\% to the Feature Implementation Agents. When the agents are less capable, the developers spend about half of their coding time on feature implementation and half on bug fixing, while the agents are used for all tasks, including bug fixing.
+
+As for the costs split between humans and agents, our results show that at realistic velocities, most money is spent on developers. The developer costs exceed the agent costs for 65\% of the optimal teams, with a median ratio of agent to developer costs of 0.32. The spending shifts towards more for agents on high and very high project velocities. Thus, the project velocity determines how much is spent on agents, while the capability of the agents determines whether agents are worth using at all.
+
+\subsection{Revisiting the token budget}
+\label{sec:discussion:huang}
+
+We started this work with Jensen Huang's statement that developers should consume at least half of their salary in tokens. Our results show that this rule is not far off, but also that this depends a lot on the project factors: if the project velocity is low, the agents are not very capable, or the bugs are expensive, then the optimal teams spend less than half of the developer costs on tokens. If the project velocity is high, the agents are capable, and bugs are cheap, then the optimal teams spend more than half of the developer costs on tokens. 
+
+Moreover, our results generally show that high spending of tokens is not a sign of efficient agent use. The highest ratio of agent to developer costs occurs with the pessimistic agents. Yet these are exactly the teams that are cheaper than the human-only baseline in less than half of the scenarios we considered. Instead, high token consumption may simply mean that agents are expensive for what they deliver. We therefore believe that token consumption is a poor indicator for the productivity of AI-native development. The relevant measure is the total cost per delivered feature, including the cost of the defects that reach production.
+
+\subsection{Implications for practice}
+\label{sec:discussion:practice}
+
+Our results have several direct implications for practioners that want to shift towards agentic software development: 
+\begin{itemize}
+  \item Focus on capability, not price per token, since token prices are offset by cost-reductions through the higher output quality.
+  \item Assure that agents have the required capability for your use case, since our simulations shows that the worth of agents depends highly on what you assume is their capability to deliver bug-free code and to detect bugs.
+  \item Spend on quality assurance, since this scales well with agents and can prevent downstream costs of escaped defects.
+  \item Projects that might have been out of reach due to their velocity might be achievable with agents, since throughput can be increased by scaling both implemenation and quality assurance agents.
+  \item Monitor technical debt, since it was shown that agents are prone to increase this, which can lead to long-term increase in costs if not managed properly.
+\end{itemize}
 
 
 % ============================================================
