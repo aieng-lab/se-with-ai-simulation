@@ -1515,7 +1515,7 @@ For the simulation of the human baseline, we only need to consider $(N, R, F_\ma
 \label{sec:results}
 % ============================================================
 
-We now present the results of the experiments. We first analyze whether the searches converged and how precise the reported costs are (Section~\ref{sec:results:convergence}). Then, we analyze how the scenario groups affect the total costs of the optimal teams and how these costs are distributed between the three cost drivers (Section~\ref{sec:results:tradeoffs}). Finally, we analyze the composition of the optimal results, i.e., the staffing level and the agent composition, as well as the release process (Section~\ref{sec:results:composition}).
+We now present the results of the experiments. We first analyze whether the searches converged and how precise the reported costs are (Section~\ref{sec:results:convergence}). Then, we analyze how the scenario groups affect the total costs of the optimal teams and how these costs are distributed between the three cost drivers (Section~\ref{sec:results:tradeoffs}). Afterwards, we analyze the composition of the optimal results, i.e., the staffing level and the agent composition, as well as the release process (Section~\ref{sec:results:composition}). Finally, we compare the optimal mixed teams with the optimal human-only teams (Section~\ref{sec:results:baseline}).
 
 % ---- 5.1 ----
 \subsection{Search convergence}
@@ -1678,6 +1678,38 @@ The optimal teams release every four sprints with a two-sprint feature freeze. A
   \label{fig:results:agentbill}
 \end{figure}
 
+% ---- 5.4 ----
+\subsection{Comparison with human baseline}
+\label{sec:results:baseline}
+
+Now that we understand how the teams are structured and how the costs are distributed, we can further analyze whether the agents actually reduce the costs of software development, using our human-only baseline as reference. Since the baseline does not depend on the debt dynamics and the agent tiers, we compare each baseline to the 12 optimal teams with the same human, project, and bug impact tiers. Table~\ref{tbl:results:baseline} shows the ratio of the costs of the baseline and the costs of the optimal team for this, i.e., a ratio above one means that the team with agents is cheaper. We exclude the very high project tier from this comparison, because the human-only teams cannot achieve the required velocity (Section~\ref{sec:results:convergence}). 
+
+Overall, the teams with agents are cheaper in 71.6\% of the scenarios, with a median cost ratio of 1.93, i.e., almost half of the costs are saved. However, this median hides the strong effect of the agent tier and the project dynamics on the cost-savings: the high-agent tier almost always saves costs (98.8\% of the simulated scenarios), while the low and pessimistic tiers are closer to a coin flip (55.6\% and 44.4\% of the scenarios, respectively). For all tiers, the costs savings increase with the project dynamics, i.e., the more features per sprint, the more the agents help to reduce costs. For all these, the same cost drivers affect the results as we identified above: high bug costs increase the problem of using low-quality agents and high debt-dynamics generally shift the balance towards human developers.
+
+
+\begin{table}[t]
+\caption{Cost ratio between the human-only baseline and the optimal team with agents, as median per project tier and overall median [interquartile range].}
+\label{tab:results:baseline}
+\footnotesize
+\begin{tabularx}{\linewidth}{Xrrrrr}
+\toprule
+ & \multicolumn{3}{c}{Project dynamics} & & Agents \\
+\cmidrule(lr){2-4}
+Agent tier & Low & Medium & High & Overall [IQR] & cheaper \\
+\midrule
+Low         & 0.81 & 0.89 & 4.70  & 1.11 $[0.52, 2.31]$  & 55.6\% \\[2pt]
+Medium      & 1.71 & 3.20 & 15.08 & 3.35 $[1.38, 8.18]$  & 87.7\% \\[2pt]
+High        & 2.18 & 5.66 & 23.79 & 6.13 $[2.40, 15.03]$ & 98.8\% \\[2pt]
+Pessimistic & 0.74 & 0.88 & 2.10  & 0.93 $[0.45, 1.63]$  & 44.4\% \\
+\midrule
+All         & 1.12 & 1.74 & 8.65  & 1.93 $[0.88, 6.50]$  & 71.6\% \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{summarybox}
+Teams with medium- and high-tier agents are cheaper than human-only teams in almost all scenarios, while low-tier and pessimistic agents offer no consistent advantage. The advantage of agents grows with the project velocity.
+\end{summarybox}
 
 
 % ============================================================
