@@ -248,7 +248,7 @@ series = {MSR '18}
   publisher = {Springer Science and Business Media LLC},
   author = {Trautsch,  Alexander and Herbold,  Steffen and Grabowski,  Jens},
   year = {2020},
-  month = Sept,
+  month = sep,
   pages = {5137–5192}
 }
 
@@ -813,4 +813,50 @@ author = {Kalyanmoy Deb}
   author = {Storey,  Margaret-Anne},
   year = {2026},
   month = Mar 
+}
+
+@inproceedings{merrill2026terminal,
+  title={Terminal-bench: Benchmarking agents on hard, realistic tasks in command line interfaces},
+  author={Merrill, Mike and Shaw, Alexander and Carlini, Nicholas and Li, Boxuan and Raj, Harsh and Bercovich, Ivan and Shi, Lin and Shin, Jeong and Walshe, Thomas and Buchanan, E Kelly and others},
+  booktitle={International Conference on Learning Representations},
+  volume={2026},
+  pages={40903--40986},
+  year={2026}
+}
+
+@inproceedings{Hu2026,
+author = {Hu, Ruida and Wang, Xinchen and Wen, Xin-Cheng and Zhang, Zhao and Jiang, Bo and Gao, Pengfei and Peng, Chao and Gao, Cuiyun},
+title = {Benchmarking LLMs for Fine-Grained Code Review with Enriched Context in Practice},
+year = {2026},
+isbn = {9798400726361},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3803437.3805235},
+doi = {10.1145/3803437.3805235},
+abstract = {While large language models (LLMs) have shown efficacy in automated code review, existing benchmarks suffer from three limitations: (1) a lack of rich semantic context like issue descriptions; (2) data quality issues due to insufficient validation; and (3) coarse granularity (file or commit level) that misses fine-grained, line-level nuances. To address these, we present ContextCRBench, a high-quality, context-rich benchmark designed for fine-grained evaluation of LLMs in code review tasks.Our construction pipeline consists of three main modules. First, the Raw Data Crawling module collects over 153.7k issues and PRs from the selected most popular repositories. Next, the Comprehensive Context Extraction module establishes rich context by rigorously linking issue-PR pairs for textual context and extracting the full surrounding function or class for code context. Finally, our Multi-stage Data Filtering module applies a series of checks to remove entries that are outdated, improperly formatted, or identified as low-value by an LLM-based classifier. This rigorous process yields the final benchmark of 67,910 entries. Each entry in our benchmark is enriched with both textual context and code context.Our benchmark supports three evaluation scenarios: hunk-level quality assessment, line-level defect localization, and review comment generation. Evaluations on eight popular LLMs reveal great limitations in current models, and textual context improves performance more than code context alone. Furthermore, when deployed at ByteDance as a reward signal for a self-evolving tool, ContextCRBench guided a 61.98\% performance improvement, demonstrating its practical industrial utility. All scripts and datasets are available at https://github.com/kinesiatricssxilm14/ContextCRBench.},
+booktitle = {Proceedings of the 34th ACM International Conference on the Foundations of Software Engineering},
+pages = {620–631},
+numpages = {12},
+keywords = {code review, benchmark, LLM},
+location = {Montreal, QC, Canada},
+series = {FSE Companion '26}
+}
+
+@misc{pena2026selusoftwareengineeringlanguage,
+      title={SELU: A Software Engineering Language Understanding Benchmark}, 
+      author={Fabian C. Peña and Steffen Herbold},
+      year={2026},
+      eprint={2506.10833},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2506.10833}, 
+}
+
+@misc{bogdanov2026agentadoption,
+  author       = {Bogdanov, Mikhail},
+  title        = {{AI} Coding Agents: Adoption Trends},
+  year         = {2026},
+  month        = aug,
+  howpublished = {{JetBrains Research Blog}, \url{https://blog.jetbrains.com/research/2026/08/ai-coding-agent-adoption-2026/}},
+  note         = {Accessed 2026-10-07}
 }
