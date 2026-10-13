@@ -15,7 +15,7 @@
 \usepackage{algorithmic}
 \usepackage{multirow}
 \usepackage{tabularx}
-\usepackage{url}
+\usepackage{xurl}
 \usepackage{natbib}
 \usepackage[most]{tcolorbox}
 \usepackage{tikz}
@@ -279,8 +279,8 @@ Higher coverage increases the likelihood that introduced bugs are detected and m
 
 Similarly, $N_\mathrm{doc}(t)$ is the cumulative number of documentation items produced by
 the Developer Documentation Agent and grows monotonically each sprint.
-Documentation \emph{coverage} is derived from this count relative to
-$F_\mathrm{completed}(t-1)$ in the same way as test coverage:
+Documentation \emph{coverage} is derived from this count in the same way as test coverage,
+but relative to $F_\mathrm{completed}(t-1)$:
 \begin{equation}
   \mathrm{doc\_cov}(t-1) = \min\!\left(1,\;
     \frac{N_\mathrm{doc}(t-1)}{\max\!\bigl(1,\,F_\mathrm{completed}(t-1)\bigr)}\right),
@@ -515,8 +515,8 @@ fraction $f_\mathrm{fix}$ goes to bug fixing and $(1-f_\mathrm{fix})$ to feature
     \bigl\lfloor N\,(1-f_\mathrm{fix})\,H_\mathrm{after\_esc}(t)\,/\,h_\mathrm{feature}\bigr\rfloor.
   \label{eq:implhuman}
 \end{align}
-During feature-freeze sprints (Section~\ref{sec:model:cycle}), $\mathrm{impl\_human}=0$ and
-all of $H_\mathrm{after\_esc}(t)$ is redirected to bug fixing:
+During feature-freeze sprints (Section~\ref{sec:model:cycle}), no features are implemented, i.e.,
+$\mathrm{impl\_human}=0$, and all of $H_\mathrm{after\_esc}(t)$ is redirected to bug fixing:
 \begin{equation}
   \mathrm{fix\_human}(t)\big|_\mathrm{freeze} =
     \bigl\lfloor N\,H_\mathrm{after\_esc}(t)\,/\,h_\mathrm{fix}\bigr\rfloor.
@@ -600,7 +600,8 @@ implement what remains. The rationale is that the developers' salaries are paid 
   \mathrm{impl\_human}'(t) &= \min\!\bigl(\mathrm{impl\_human}(t),\;\mathrm{demand}(t)\bigr),
   \label{eq:impl_human_capped} \\
   \mathrm{impl\_agents}(t) &= \min\!\Bigl(\mathrm{demand}(t) - \mathrm{impl\_human}'(t),\;
-    \bigl\lfloor r_F\,\delta_D\,a_{\cdot,1}\bigr\rfloor - 5\,\mathrm{arch\_impl}(t)\Bigr).
+    \nonumber \\
+  &\qquad\bigl\lfloor r_F\,\delta_D\,a_{\cdot,1}\bigr\rfloor - 5\,\mathrm{arch\_impl}(t)\Bigr).
   \label{eq:impl_agents}
 \end{align}
 Implementing approved architecture proposals ($\mathrm{arch\_impl}$) consumes agent
@@ -682,20 +683,20 @@ where $\theta_\mathrm{min} = 1 - \theta_\mathrm{maj} - \theta_\mathrm{sec}$.
 Detection proceeds in three sequential stages that model a workflow where first an existing test suite is run against code
 changes (simulating a CI pipeline), then code review is conducted, and finally a security audit is performed by a specialist agent. 
 Which bugs are inspected depends on the phase of the release cycle. During development sprints, the detection inspects the features developed in the current sprint and can hence only detect bugs in those features. The test suite is run first, and the change volume under inspection consists of the features implemented in the sprint. During feature-freeze sprints, the whole code of the current release cycle is re-inspected to detect bugs that are still hidden. This gives us the inspected bugs and the inspected volume as
-\begin{equation}
-  P_x(t) =
+\begin{align}
+  P_x(t) &=
   \begin{cases}
     B_x(t) & \text{development sprints},\\[2pt]
     B_\mathrm{hid,x}(t-1) & \text{feature-freeze sprints},
   \end{cases}
-  \qquad
-  v(t) =
+  \nonumber \\[4pt]
+  v(t) &=
   \begin{cases}
     \mathrm{impl}(t) & \text{development sprints},\\[2pt]
     F_\mathrm{cycle}(t) & \text{feature-freeze sprints},
   \end{cases}
   \label{eq:inspected}
-\end{equation}
+\end{align}
 for $x \in \{\mathrm{min,maj,sec}\}$.
 
 The test suite detects bugs at rate
@@ -733,20 +734,20 @@ Let $T_x(t)$, $\mathrm{CR}_x(t)$ denote the counts detected by tests and code re
 $x$, and $A_\mathrm{sec}(t)$ the count detected by the security audit. These are given by binomial draws with the corresponding detection probabilities:
 \begin{align}
   T_x(t)        &\sim \mathrm{Binomial}\!\bigl(P_x(t),\; p_\mathrm{test}(t)\bigr),
-    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
+    \quad x \in \{\mathrm{min,maj,sec}\}, \nonumber \\
   \mathrm{CR}_x(t)  &\sim \mathrm{Binomial}\!\bigl(P_x(t)-T_x(t),\; d_\mathrm{CR,eff}(t)\bigr),
-    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
+    \quad x \in \{\mathrm{min,maj,sec}\}, \nonumber \\
   A_\mathrm{sec}(t) &\sim \mathrm{Binomial}\!\bigl(P_\mathrm{sec}(t)-T_\mathrm{sec}(t)-\mathrm{CR}_\mathrm{sec}(t),\; d_\mathrm{SA,eff}(t)\bigr).
     \nonumber
 \end{align}
 The known and hidden queues are incremented accordingly:
 \begin{align}
   B_\mathrm{kno,x}(t)   &= B_\mathrm{kno,x}(t-1) + T_x(t) + \mathrm{CR}_x(t),
-    & x &\in \{\mathrm{min,maj}\}, \label{eq:bkno_update} \\
+    \quad x \in \{\mathrm{min,maj}\}, \label{eq:bkno_update} \\
   B_\mathrm{kno,sec}(t) &= B_\mathrm{kno,sec}(t-1) + T_\mathrm{sec}(t) + \mathrm{CR}_\mathrm{sec}(t) + A_\mathrm{sec}(t),
     \nonumber \\
   B_\mathrm{hid,x}(t)   &= B_\mathrm{hid,x}(t-1) + B_x(t) - T_x(t) - \mathrm{CR}_x(t),
-    & x &\in \{\mathrm{min,maj}\}, \nonumber \\
+    \quad x \in \{\mathrm{min,maj}\}, \nonumber \\
   B_\mathrm{hid,sec}(t) &= B_\mathrm{hid,sec}(t-1) + B_\mathrm{sec}(t) - T_\mathrm{sec}(t) - \mathrm{CR}_\mathrm{sec}(t) - A_\mathrm{sec}(t).
     \nonumber
 \end{align}
@@ -895,14 +896,14 @@ escape to production: bugs that were never detected as well as bugs that were de
 These bugs are added to the cumulative escaped counter
 and to the in-production repair queue. Afterwards, the hidden and known queues are reset to zero, and a new release cycle starts:
 \begin{align}
-  B_\mathrm{esc,x}(t)  &= B_\mathrm{esc,x}(t-1) + B_\mathrm{hid,x}(t) + B_\mathrm{kno,x}(t),
-    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  B_\mathrm{rel,x}(t)  &= B_\mathrm{rel,x}(t)   + B_\mathrm{hid,x}(t) + B_\mathrm{kno,x}(t),
-    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  B_\mathrm{hid,x}(t)  &= 0,
-    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
-  B_\mathrm{kno,x}(t)  &= 0,
-    & x &\in \{\mathrm{min,maj,sec}\}, \nonumber \\
+  B_\mathrm{esc,x}(t)  &= B_\mathrm{esc,x}(t-1) + B_\mathrm{hid,x}(t) + B_\mathrm{kno,x}(t),,
+    \quad x \in \{\mathrm{min,maj,sec}\}, \nonumber \\
+  B_\mathrm{rel,x}(t)  &= B_\mathrm{rel,x}(t)   + B_\mathrm{hid,x}(t) + B_\mathrm{kno,x}(t),,
+    \quad x \in \{\mathrm{min,maj,sec}\}, \nonumber \\
+  B_\mathrm{hid,x}(t)  &= 0,,
+    \quad x \in \{\mathrm{min,maj,sec}\}, \nonumber \\
+  B_\mathrm{kno,x}(t)  &= 0,,
+    \quad x \in \{\mathrm{min,maj,sec}\}, \nonumber \\
   F_\mathrm{cycle}(t) &= 0.
   \label{eq:release_update}
 \end{align}
@@ -1019,7 +1020,9 @@ quantified with 95\% percentile bootstrap confidence intervals (CIs).
 \label{sec:model:sosp}
 
 We first define the feasible set $\mathcal{X}$ as the set of all configurations
-$\mathbf{c} = (N,\,\mathbf{A}_\mathrm{dev},\,\mathbf{A}_\mathrm{qa},\,R,\,F_\mathrm{freeze},\,f_\mathrm{fix})$
+\[
+  \mathbf{c} = (N,\,\mathbf{A}_\mathrm{dev},\,\mathbf{A}_\mathrm{qa},\,R,\,F_\mathrm{freeze},\,f_\mathrm{fix})
+\]
 satisfying the structural constraints of Section~\ref{sec:model:team} and the
 human-capacity feasibility condition of Eq.~\eqref{eq:feas_monitoring}.
 
@@ -1334,7 +1337,6 @@ $\theta_\mathrm{sec}$ & 0.07 & 0.07 & 0.07 & 0.07 & \cite{ohira2015highimpact}. 
 The debt dynamics parameters are summarized in Table~\ref{tab:scenario:debt}. There is a limited amount of literature on the impact of documentation and the studies are typically conducted with small sets of developers, limiting their ability to find significant effects. \cite{dzidek2008uml} found an increase in maintenance time of 40\% when no UML documentation was made available based on a group of 20 developers. In a recent eye tracking experiment using 12 (mostly junior) developers, \cite{abdelsalam2026comments} found an increase in program comprehension time of up to 34\% based on code comments, but this effect depended on the complexity of the code and comprehension time was even reduced for simpler code snippets. Based on these studies, we set the low tier to 40\% (the effect found by \cite{dzidek2008uml}), the medium tier to 34\% (the maximum effect found by \cite{abdelsalam2026comments}), and the high tier to 0\% (no effect, due to the lack of significance of the results).
 
 We estimate the addition of technical debt based on data from \cite{he2026cursordebt}, who found that AI-assisted coding increases code complexity and static analysis warnings. We note that this is particular to AI-assisted development as the technical debt otherwise seems to be decreasing over time~\citep{trautsch2020longitudinal}. Since the average treatment effect found that AI-assisted development leads to 28\% more lines, but 30\% more static analysis warnings, we assume that the debt increases by at least 2\% for every feature added. Since \cite{he2026cursordebt} also found that the complexity increases by 41\% due to the use of AI, we assume that the upper bound for the debt increase is 13\% per feature added. We therefore set the low tier to 2\%, the medium tier to 6\% and the high tier to 13\% per feature added. Since \cite{trautsch2023automated} found that there is no detectable difference between the static analysis warnings added by bug fixing commits and other commits, we use the same values for the debt increase due to bug fixing. 
-% We note that at the refactoring throughput $r_\mathrm{refactor}$ of Table~\ref{tab:scenario:agents} a single Refactoring Agent removes more debt per sprint than any of our scenarios accumulates, so $a_{\cdot,4} \geq 1$ holds $D_\mathrm{tech}$ at zero and $\delta_\mathrm{impl}$ and $\delta_\mathrm{fix}$ only bind while the role is unstaffed.
 
 We set the values for the debt amplifier floor $\delta_\mathrm{min}$, i.e., the fraction of the nominal throughput that is retained at maximal debt, based on a developer survey from \cite{besker2018technical}. They found that developers spend on average 23\% of their time dealing with technical debt with a standard deviation of 17\%. We interpret this share $s$ of lost time as the slow-down at maximal debt and hence set $\delta_\mathrm{min} = 1 - s$. We therefore set the low value at $0.94$ (i.e., a slow-down of 6\%, one standard deviation below the average), the medium value at $0.77$ (a slow-down of 23\%, the average), and the high value at $0.60$ (i.e., a slow-down of 40\%, one standard deviation above the average). \cite{martini2017interest} found that technical debt can be contagious, which supports a non-linear effect of the technical debt. Since there is no data on how strong this non-linearity is, we assume a slightly super-linear effect with $\delta_\mathrm{exp} = 1.5$ across all scenarios.
 
@@ -1481,7 +1483,7 @@ The evolutionary search receives a budget of $E = 20{,}000$ candidate evaluation
 \caption{Experiment constants and search range.}
 \label{tab:setup:experiment}
 \footnotesize
-\begin{tabularx}{\linewidth}{p{2.2cm}>{\raggedleft\arraybackslash}p{3.9cm}X}
+\begin{tabularx}{\linewidth}{p{2.0cm}>{\raggedleft\arraybackslash}p{4.2cm}X}
 \toprule
 Symbol & \multicolumn{1}{c}{Value} & Rationale \\
 \midrule
@@ -1494,7 +1496,7 @@ $B$                             & 1{,}000             & Bootstrap resamples for 
 $s_0$                           & 42            & Master seed \\[2pt]
 \midrule
 \multicolumn{3}{l}{\emph{Search range}} \\[2pt]
-$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50,$ \newline $2.00, 3.00, 4.00, 5.00, 7.00, 10.00\}$ & Quarter-FTE to a two-pizza team \\[2pt]
+$\mathcal{N}$                   & $\{0.25, 0.50, 0.75, 1.00, 1.50, 2.00,$ \newline $3.00, 4.00, 5.00, 7.00, 10.00\}$ & Quarter-FTE to a two-pizza team \\[2pt]
 $\mathcal{R}$                   & $\{1,2,4,13\}$      & Continuous, biweekly, monthly, quarterly releases \\[2pt]
 $\mathcal{F}_\mathrm{freeze}$   & $\{0,1,2\}$         & No, one-week, or two-week freeze, at most $R-1$ \\[2pt]
 $\mathcal{F}_\mathrm{fix}$      & $\{0, 0.1, \ldots, 1\}$ & Share of coding time spent on bug fixing \\[2pt]
@@ -1511,7 +1513,10 @@ $n_\mathrm{elite}$              & 100                 & Size of the elite that p
 \end{tabularx}
 \end{table}
 
-For the simulation of the human baseline, we only need to consider $(N, R, F_\mathrm{freeze}, f_\mathrm{fix}, f_\mathrm{qa})$. With the ranges of Table~\ref{tab:setup:experiment} and the constraint $F_\mathrm{freeze} \leq R-1$, these are 10{,}890 configurations in total. This is still small enough to enumerate exhaustively and we evaluate all 10{,}890 configurations with $K'$ replications, followed by the same two-stage selection of Section~\ref{sec:model:selection}, to determine the optimal teams. We run these configurations for all combinations of the human developer parameters, project dynamics, and bug costs, since agent performance and debt dynamics have no influence on this baseline. Where no configuration satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} (e.g., for the very high scenario), we report the least-violating one (i.e., highest throughput), mark it as inadmissible, and report how much throughput was actually achieved to put the result into perspective. 
+For the simulation of the human baseline, we only need to consider $N$, $R$, $F_\mathrm{freeze}$, $f_\mathrm{fix}$, and $f_\mathrm{qa}$. With the ranges of Table~\ref{tab:setup:experiment} and the constraint $F_\mathrm{freeze} \leq R-1$, these are 10{,}890 configurations in total. This is still small enough to enumerate exhaustively and we evaluate all 10{,}890 configurations with $K'$ replications, followed by the same two-stage selection of Section~\ref{sec:model:selection}, to determine the optimal teams. We run these configurations for all combinations of the human developer parameters, project dynamics, and bug costs, since agent performance and debt dynamics have no influence on this baseline. Where no configuration satisfies the throughput constraint of Eq.~\eqref{eq:throughput_constraint} (e.g., for the very high scenario), we report the least-violating one (i.e., highest throughput), mark it as inadmissible, and report how much throughput was actually achieved to put the result into perspective. 
+
+
+\paragraph{Use of generative AI.} \textbf{[TODO: Describe how generative AI was used, e.g., for implementing the simulation and analysis code or drafting text, and how its output was checked.]}
 
 
 % ============================================================
@@ -1768,13 +1773,15 @@ Future work should validate our model against data from real projects that use a
 %\end{acknowledgements}
 
 
-% Authors must disclose all relationships or interests that
-% could have direct or potential influence or impart bias on
-% the work:
-%
-% \section*{Conflict of interest}
-%
-% The authors declare that they have no conflict of interest.
+\section*{Declarations}
+
+\paragraph{Funding.} \textbf{[TODO: Funding sources and grant numbers, or ``No funding was received for conducting this study.'']}
+
+\paragraph{Competing interests.} \textbf{[TODO: e.g., ``The author has no competing interests to declare that are relevant to the content of this article.'']}
+
+\paragraph{Ethics approval and consent to participate.} Not applicable, since this study does not involve human participants or animals.
+
+\paragraph{Data, materials, and code availability.} \textbf{[TODO: Repository and DOI of the replication package with the simulation code, scenario configurations, and campaign results.]}
 
 
 % ============================================================
