@@ -1,0 +1,64 @@
+% Overview of the model structure (Section 3), included from main.tex.
+\pgfdeclarelayer{back}
+\pgfsetlayers{back,background,main}
+\begin{tikzpicture}[
+    font=\scriptsize,
+    >={Stealth[length=4pt]},
+    box/.style={draw, rounded corners=2pt, fill=gray!8, align=center,
+                inner sep=3pt},
+    proc/.style={box, fill=blue!6},
+    frame/.style={draw, rounded corners=4pt, inner sep=5pt},
+    title/.style={font=\scriptsize\bfseries, anchor=north west, inner sep=2pt},
+    flow/.style={->, thick},
+    lbl/.style={font=\tiny, fill=white, inner sep=1pt},
+  ]
+
+  % ---- simulation ----
+  \node[box, text width=2.3cm] (state) at (0,0) {%
+    \textbf{State $S(t)$}\\[1pt]
+    features, bugs, debt, tests, documentation};
+  \node[proc, text width=2.9cm, right=1.3cm of state] (trans) {%
+    \textbf{Sprint transition $\mathcal{T}$}};
+  \draw[flow] ([yshift=4pt]state.east) -- node[lbl, above=1pt] {$S(t-1)$} ([yshift=4pt]trans.west);
+  \draw[flow] ([yshift=-4pt]trans.west) -- node[lbl, below=1pt] {$S(t)$} ([yshift=-4pt]state.east);
+  \node[box, text width=2.9cm, below=0.6cm of trans] (obj) {%
+    \textbf{Cost and value}};
+  \draw[flow] (trans) -- node[lbl, right=2pt] {$S(T)$} (obj);
+
+  \node[title] (mctitle) at ($(state.north west)+(-0.15,0.5)$)
+    {Monte Carlo simulation: $K$ replications of $T$ sprints};
+  \begin{pgfonlayer}{back}
+    \node[frame, fill=gray!3, fit=(mctitle)(state)(trans)(obj)] (mc) {};
+  \end{pgfonlayer}
+
+  % ---- configuration, left of the simulation ----
+  \node[box, text width=2.3cm, left=0.6cm of mc] (config) {%
+    \textbf{Configuration $\mathbf{c}$}\\[1pt]
+    $N$, $f_\mathrm{fix}$,\\ $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$,\\ $R$, $F_\mathrm{freeze}$};
+  \draw[flow] (config) -- (mc.west |- config);
+
+  % ---- selection ----
+  \node[proc, text width=5.0cm, anchor=north east] (select) at ($(mc.south east)+(0,-0.6)$) {%
+    \textbf{Selection}\\[1pt]
+    cheapest $\mathbf{c}^\star$ with $\mathit{value} \geq (1-\epsilon)\,r_\mathrm{arrival}$\\
+    and indistinguishable set $\mathcal{I}^\star$};
+  \draw[flow] (mc.south -| select.north) -- (select.north);
+
+  % ---- feedback: new candidates ----
+  \draw[flow] (select.west) -| node[lbl, pos=0.75] {new $\mathbf{c}$} (config.south);
+
+  \node[title] (searchtitle) at ($(config.west |- mc.north)+(-0.1,0)$)
+    {Evolutionary search};
+  \begin{pgfonlayer}{back}
+    \node[frame, thick, fit=(searchtitle)(config)(mc)(select)] (search) {};
+  \end{pgfonlayer}
+
+  % ---- scenario parameters, fixed outside the search ----
+  \node[box, text width=10.0cm, anchor=south] (params) at ($(search.north)+(0,0.5)$) {%
+    \textbf{Scenario parameters}\\[1pt]
+    human developers, project dynamics, debt dynamics,\\ agent costs and throughput, bug impact};
+  \draw[flow] (params.south -| mc.north) -- (mc.north);
+
+  % ---- output ----
+  \draw[flow] (select.south) -- ++(0,-0.45) node[below, inner sep=1pt] {$\mathbf{c}^\star$, $\mathcal{I}^\star$};
+\end{tikzpicture}

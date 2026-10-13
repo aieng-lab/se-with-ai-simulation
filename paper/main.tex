@@ -17,6 +17,8 @@
 \usepackage{tabularx}
 \usepackage{natbib}
 \usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
 \newtcolorbox{summarybox}{breakable,colback=gray!5,colframe=gray!60,boxrule=0.5pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt,fonttitle=\bfseries,title=Summary}
 
 
@@ -111,9 +113,14 @@ $S(t)$ for $t \geq 1$ is the state produced by sprint $t$. The simulation config
 $\mathbf{c} = (N, \mathbf{A}_\mathrm{dev}, \mathbf{A}_\mathrm{qa}, R, F_\mathrm{freeze}, f_\mathrm{fix})$. The parameters
 $N$, $f_\mathrm{fix}$, $\mathbf{A}_\mathrm{dev}$, $\mathbf{A}_\mathrm{qa}$ define the team structure (Sections~\ref{sec:model:roles} and~\ref{sec:model:team}). The parameters $R$ and $F_\mathrm{freeze}$ define the release cycle and feature freezes (Section~\ref{sec:model:cycle}). The team composition further depends on whether the current sprint is in the development phase or the feature freeze phase of the release cycle (Section~\ref{sec:model:team}). The development team of humans and agents evolves a software project whose state at sprint $t$ is represented by a 22-dimensional state vector $S(t)$ defined in Section~\ref{sec:model:state}. Scenario parameters govern the behavior of the underlying software development process and the capabilities of the agents, such as feature throughput rates, bug injection rates, bug detection probabilities, and cost coefficients (Section~\ref{sec:model:parameters}). The transition from $S(t-1)$ to $S(t)$ is governed by the sprint dynamics $\mathcal{T}$, which consists of ten ordered steps (Section~\ref{sec:model:transition}).
 
-We derive the metrics that describe how well a team configuration performs from the terminal state and the per-sprint record of the work the agents completed (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We formulate a search problem that minimizes the costs, subject to the constraint that a configuration keeps up with the work the project generates (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not only report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe the search strategy we use to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}).
+We derive the metrics that describe how well a team configuration performs from the terminal state and the per-sprint record of the work the agents completed (Section~\ref{sec:model:objectives}): the $value$ as the average number of features completed per sprint, and three cost drivers, namely the cost caused by the bugs that escape to production, the cost of the human developers, and the cost of the agents. We formulate a search problem that minimizes the costs, subject to the constraint that a configuration keeps up with the work the project generates (Section~\ref{sec:model:sosp}). By running multiple simulations with different random seeds for each configuration $\mathbf{c}$, we can establish the uncertainty of the simulation through a Monte Carlo approach and estimate the confidence intervals of the costs (Section~\ref{sec:model:mc}). Since the estimates are noisy, we do not only report a single best configuration, but also the set of configurations that cannot be statistically distinguished from it (Section~\ref{sec:model:selection}). Since the search space is combinatorial and high-dimensional, we further describe the search strategy we use to efficiently explore the space of valid configurations (Section~\ref{sec:model:search}). Figure~\ref{fig:overview} summarizes how these parts fit together.
 
-% TODO - figure with the overall model structure: team composition parameters, scenario parameters, state vector, transition steps, and objective calculations.
+\begin{figure}[t]
+\centering
+\input{figures/overview}
+\caption{Overview of the model. The evolutionary search proposes configurations $\mathbf{c}$, consisting of the human staffing level $N$, the share $f_\mathrm{fix}$ of the developers' coding time spent on bug fixing, the agent compositions $\mathbf{A}_\mathrm{dev}$ and $\mathbf{A}_\mathrm{qa}$ for development and feature-freeze sprints, the number of sprints per release $R$, and the feature-freeze length $F_\mathrm{freeze}$. Each feasible configuration is evaluated with $K$ Monte Carlo replications of a simulation that applies the sprint transition $\mathcal{T}$ to the state $S(t-1)$ to obtain $S(t)$ for $T$ sprints. The costs and the $\mathit{value}$, i.e., the features completed per sprint, are computed from the terminal state $S(T)$. The selection determines the cheapest configuration $\mathbf{c}^\star$ whose value reaches the feature arrival rate $r_\mathrm{arrival}$ up to a tolerance $\epsilon$, and the set $\mathcal{I}^\star$ of configurations that are statistically indistinguishable from it.}
+\label{fig:overview}
+\end{figure}
 
 % ---- 3.1 ----
 \subsection{Roles}
@@ -126,8 +133,8 @@ escalations that agents cannot handle autonomously, and contribute new
 features and bug fixes with the remaining time.
 
 We do not assume that developers dedicate all of their time to the project. $N$ is therefore
-not a headcount but a \emph{staffing level} measured in full-time equivalents (FTE), and it
-need not be an integer: $N = 0.25$ describes one developer who devotes a quarter of their
+not a headcount but a \emph{staffing level} measured in full-time equivalents (FTE), and it does
+not need to be an integer: $N = 0.25$ describes one developer who devotes a quarter of their
 working time to the project, and $N = 2.5$ describes two full-time developers plus one
 half-time developer. Accordingly, $H_\mathrm{capacity}$ is the gross time budget of one FTE
 per sprint, so that the gross budget available to the whole team is $N \cdot
