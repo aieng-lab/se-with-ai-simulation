@@ -240,7 +240,7 @@ direct coding capacity of \textit{Human Developers} reduce it by implementing fe
 
 \subsubsection{Bug queues}
 
-We use the term \emph{bug} for any defect in the code, regardless of whether it has already caused a failure. Our simulation model distinguishes between three mutually exclusive bug types: \emph{minor}, \emph{major}, and \emph{security} bugs. Configuration parameters determine the impact of the different bug types on quality and the rates at which bugs of the different types are introduced, relative to each other (see Section~\ref{sec:model:parameters}). The bugs are tracked in four kinds of queues (hidden, known, released, and escaped) with one counter per bug type, giving twelve bug state variables in total.
+Our simulation model distinguishes between three mutually exclusive bug types: \emph{minor}, \emph{major}, and \emph{security} bugs. Configuration parameters determine the impact of the different bug types on quality and the rates at which bugs of the different types are introduced, relative to each other (see Section~\ref{sec:model:parameters}). The bugs are tracked in four kinds of queues (hidden, known, released, and escaped) with one counter per bug type, giving twelve bug state variables in total.
 
 $B_\mathrm{hid,x}(t)$ (for $x \in \{\mathrm{min, maj, sec}\}$) counts type-$x$ bugs
 that have been injected in the current release cycle but have not been detected yet.
