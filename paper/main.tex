@@ -43,16 +43,7 @@ University of Passau, Passau, Germany.
 
 \maketitle
 
-\begin{abstract}
-\textbf{Context:} AI agents are rapidly adopted in software development, but their token costs are rising and it is unclear how much a team should spend on agents, and on which tasks.\\
-\textbf{Objective:} We determine how teams should divide spending between human developers and AI agents to deliver the features a project demands at the lowest total cost.\\
-\textbf{Method:} We model mixed teams of human developers and AI agents with eight specialized roles as a discrete-time stochastic process covering bug injection and detection, technical debt, human supervision of agents, and release cycles with feature freezes. Using Monte Carlo simulation and evolutionary search, we determine cost-optimal teams for 432 scenarios varying developer capability, project velocity, debt dynamics, agent capability and price, and bug costs, and compare them with a human-only baseline.\\
-\textbf{Results:} Escaped bugs are the dominant cost driver, and 61\% of the agent budget goes to finding bugs. Agent capability matters more than token price, since higher-quality outputs reduce downstream quality assurance costs. In teams with capable agents, human developers mostly fix bugs and leave the implementation of new features to the agents. Teams with high-capability agents are typically cheaper than human-only teams, but low-capability agents offer no consistent advantage. At realistic velocities, the optimal teams still spend more on developers than on agents.\\
-\textbf{Conclusions:} There is neither a universal token budget per developer nor a universal agentic team structure. As in traditional development, this depends on many factors and teams need to be carefully tailored to the project context to achieve the optimal cost-quality trade-off. 
-\end{abstract}
-
-\keywords{AI agents \and software process simulation \and simulation-based optimization
-\and technical debt \and cost of software quality \and team composition}
+\input{abstract}
 
 
 % ============================================================
@@ -1773,15 +1764,7 @@ Future work should validate our model against data from real projects that use a
 %\end{acknowledgements}
 
 
-\section*{Declarations}
-
-\paragraph{Funding.} No funding was received for conducting this study.
-
-\paragraph{Competing interests.} The author has no competing interests to declare that are relevant to the content of this article.
-
-\paragraph{Ethics approval and consent to participate.} Not applicable, since this study does not involve human participants or animals.
-
-\paragraph{Data, materials, and code availability.} All code is available on GitHub: \url{https://github.com/aieng-lab/se-with-ai-simulation}. The raw results of the experiments and the consolidated results from which all tables and figures of Section~\ref{sec:results} are derived are available on Zenodo: \url{https://doi.org/10.5281/zenodo.23358924}.
+\input{declarations}
 
 
 % ============================================================
