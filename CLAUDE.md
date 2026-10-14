@@ -11,8 +11,8 @@ agent token bills + the dollar cost of escaped bugs). Paper target: EMSE (Spring
 
 - **`paper/main.tex` is authoritative** (§3 is the formal model). The code is a rendering of it.
 - **Status:** the §4.2 campaign (E = 20,000, finished 2026-09-25) is complete and the paper
-  is drafted in full. The one open placeholder is the Zenodo DOI for the results archive
-  (data/code availability statement and `README.md`). Code:
+  is drafted in full. Results archive: Zenodo DOI 10.5281/zenodo.23358924 (cited in the
+  data/code availability statement and `README.md`). Code:
   `https://github.com/aieng-lab/se-with-ai-simulation`, Apache-2.0.
 - `README.md` is the user-facing reproduction guide; keep its commands in sync with the CLI.
 

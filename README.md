@@ -79,7 +79,7 @@ Our run took about 520 core-hours. You can test the setup with `LIMIT=2 ./run_ex
 
 ### Our results
 
-The raw results of our experiments and the consolidated results from which all tables and figures of the paper are derived are available on Zenodo: **[DOI will be added]**. To use them instead of running the experiments yourself, extract the archive in the root of the repository, which creates the `results/` folder.
+The raw results of our experiments and the consolidated results from which all tables and figures of the paper are derived are available on Zenodo: [10.5281/zenodo.23358924](https://doi.org/10.5281/zenodo.23358924). The archive is split into `results-analysis.zip` (the consolidated results and the index of all runs) and twelve parts `experiments_h-<human>_p-<project>.zip` with the raw search results, one per human and project tier. To use them instead of running the experiments yourself, extract the parts you need in the root of the repository, which creates the `results/` folder; the consolidated results alone suffice to regenerate the figures with `--figures-only`.
 
 ### Analysis of the results
 
